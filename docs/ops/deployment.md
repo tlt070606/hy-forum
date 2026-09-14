@@ -47,7 +47,7 @@
 VM 内原有**另一个项目**（Spring Cloud Alibaba 微服务栈）的六个容器常驻运行，占用约 **1.2 GB** 内存，并把 **3306 / 6379 / 5672 / 8848 / 7099 / 18080** 全部占满。需求方确认后已执行：
 
 ```bash
-# 已执行（仅 stop，未删除容器与镜像，完全可回滚）
+# 已执行（仅 stop，未删除容器与镜像，基本可回滚）
 docker stop rabbitmq seata-server nacos nginx mysql redis
 
 # 恢复原状（需要时执行，顺序建议先基础设施后应用）
@@ -55,6 +55,21 @@ docker start mysql redis nacos seata-server rabbitmq nginx
 ```
 
 停止后内存占用从 1596 MB 降至 **360 MB**，可用内存 **1606 MB**。
+
+> ⚠️ **必须注意：`redis`（6379）已经启回，并且要保持运行。**
+> 原因：**本机还有另一个项目依赖它** —— `D:\test\hm-dianping` 的 `application.yaml` 里写的是
+> `spring.redis.host=192.168.100.128 / port=6379`。D6 把六个容器一起停掉时**连带把这个项目弄断了**
+> （现象：该进程一直停在 `SYN_SENT` 重连，不报错、只是所有 Redis 相关功能失效），
+> 事后才发现并恢复。当前状态：`Established` 已恢复。
+>
+> **教训**：停别人在用的服务前，要先查清**谁在依赖它**（`Get-NetTCPConnection` 看谁连着这个端口、
+> 或搜一下本机其它工程的配置文件），不能只看"我这个项目不需要它"。这与本项目
+> [`../agents/README.md`](../agents/README.md) §3 交接协议的精神一致：**影响范围要显式确认，不能默认**。
+>
+> 因此正确的"腾空间"命令是**只停本项目确认不需要的**：
+> ```bash
+> docker stop rabbitmq seata-server nacos nginx mysql   # 保留 redis 给 hm-dianping
+> ```
 
 > **顺带得到的证据**：那套栈里的 `hmall` 与 `sentinel-dashboard` 两个容器此前均为 **`Exited (137)`= OOMKilled** —— 即 **2 GiB 跑微服务全家桶（nacos + seata + rabbitmq + sentinel）是不够的**。这从反面支持了本项目的架构选择：**单体 + MySQL + Redis**，而不是拆微服务。
 
