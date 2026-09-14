@@ -15,15 +15,27 @@
 USE hy_forum;
 
 -- ---------------------------------------------------------------
--- 1. 管理员账号
---    ⚠️ password_hash 是占位符，**登录必然失败**（fail-closed，不会误开一个弱口令后门）。
---    替换方式（二选一）：
---      a) M1 完成后，用后端的 BCryptPasswordEncoder 生成 strength=10 的哈希；
---      b) 用任意可信的 BCrypt 工具生成（$2a$10$...，前缀必须是 $2a$ 或 $2b$）。
---    生成后替换下面的字符串，并在首次登录后立即改密。
+-- 1. 管理员账号（默认 admin）
+--
+--    下面存的是 **BCrypt 哈希**（strength=10，与后端 AuthService 一致）。
+--    明文**不在本仓库里**，也不该在 —— 仓库里只放单向哈希。
+--
+--    当前这条哈希对应的口令，由 L1 在 2026-09-14 生成并通过对话告知需求方。
+--    **首次登录后必须修改。**
+--
+--    换环境 / 换口令时自己生成一份（不依赖别人手里的密码）：
+--        cd server
+--        mvn -q dependency:build-classpath -Dmdep.outputFile=target/cp.txt
+--        java -cp (Get-Content target/cp.txt -Raw) ..\scripts\GenBcryptHash.java '你的明文'
+--      GenBcryptHash.java 会用后端**同一个** BCryptPasswordEncoder 生成，
+--      并自校验"哈希能否匹配回明文"，PASS 才可用（避免拿到不兼容的实现）。
+--
+--    注意：本脚本用 INSERT IGNORE，**重跑不会覆盖已存在的管理员行**。
+--    改了哈希想生效，要么删掉 admin 行再跑，要么直接 UPDATE：
+--        UPDATE `admin` SET `password_hash`='<新哈希>' WHERE `username`='admin';
 -- ---------------------------------------------------------------
 INSERT IGNORE INTO `admin` (`username`, `password_hash`, `nickname`, `role`, `status`)
-VALUES ('admin', '<PLACEHOLDER_REPLACE_WITH_BCRYPT_HASH>', '超级管理员', 'SUPER_ADMIN', 1);
+VALUES ('admin', '$2a$10$BLC8C8vsJkFjXXBsNqLI2OvdFHOVC.iD3hzXV85OFrKGd2VQoQQpC', '超级管理员', 'SUPER_ADMIN', 1);
 
 -- ---------------------------------------------------------------
 -- 2. 默认版块（技术方案 §4.3 的 7 个）
