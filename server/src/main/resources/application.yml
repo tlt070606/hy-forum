@@ -98,11 +98,10 @@ hy:
     height: 48
     length: 4
   register:
-    # 注册模式读取 sys_config 的短 TTL 缓存（秒）。
-    # 之所以要缓存：注册/查询注册模式是免登录接口，每次直连 MySQL 会被刷；
-    # 之所以能用缓存：契约要求"切换后行为立即变化，无需重启"（技术方案 §8.8），
-    # 3 秒的最终一致窗口对"管理员切开关"这一人工操作而言是"立即"。
-    register-mode-cache-seconds: 3
+    # 注册模式**不做缓存**：每次注册/查询都直读 sys_config.register_mode，
+    # 以保证"切换后行为立即变化，无需重启"（技术方案 §8.8，DoD 第 5 条）。
+    # 缓存策略的取舍说明见 com.hyforum.auth.mode.RegisterModeService 的类注释。
+    # 这里刻意不放 register-mode-cache-seconds —— 不存在的配置项不该出现在配置里。
   rate-limit:
     # IP 维度请求频率限制（技术方案 §8.7）：同一 IP 每分钟允许的失败/请求次数
     ip-per-minute: 100
