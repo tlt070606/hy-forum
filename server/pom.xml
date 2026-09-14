@@ -205,53 +205,17 @@
       </plugin>
 
       <!-- ============ 4. 接口契约导出（DoD 第 4 条） ============
-           用 springdoc 官方插件抓取 /v3/api-docs 产物写到仓库根 openapi.json。
-           **不手工编辑 openapi.json** —— 它由本插件产出、由 L1 冻结
+           契约文件（仓库根 openapi.json）由 `server/export_openapi.ps1` 产出：
+           启动打包好的 jar → 拉取 /v3/api-docs → 写文件 → 停进程。
+           **不手工编辑 openapi.json** —— 它由脚本产出、由 L1 冻结
            （docs/agents/工作计划.md §2）。
-           放在 generate-openapi profile 内，避免每次 mvn package 都启一次应用。 -->
-      <plugin>
-        <groupId>org.springdoc</groupId>
-        <artifactId>springdoc-openapi-maven-plugin</artifactId>
-        <version>1.4</version>
-        <configuration>
-          <apiDocsUrl>http://localhost:8080/v3/api-docs</apiDocsUrl>
-          <outputFileName>${project.basedir}/../openapi.json</outputFileName>
-          <outputDir>${project.basedir}/..</outputDir>
-          <skip>false</skip>
-        </configuration>
-        <executions>
-          <execution>
-            <id>export-openapi-contract</id>
-            <phase>integration-test</phase>
-            <goals>
-              <goal>generate</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
+
+           为什么不用 springdoc 官方 Maven 插件（springdoc-openapi-maven-plugin:1.4）：
+           实测它在本工程按 <phase>integration-test</phase> 绑定时**不执行也不报错**
+           （mvn package 的插件执行清单里看不到 springdoc:generate），
+           等于给契约产出口留了一个静默失效的环节。脚本走的是同一条
+           "起应用 + 抓 /v3/api-docs" 路径，但行为可观测、失败会以非 0 退出码暴露。
+           留下这段说明是为了防止后来者"顺手把官方插件加回来"。 -->
     </plugins>
   </build>
-
-  <profiles>
-    <!--
-      导出 openapi.json 的专用 profile：
-        $env:JAVA_HOME='D:\develop\jdk21'
-        mvn -Pgenerate-openapi -DskipTests package
-      它会先打包、再启动应用抓取 /v3/api-docs、写入仓库根 openapi.json。
-    -->
-    <profile>
-      <id>generate-openapi</id>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-surefire-plugin</artifactId>
-            <configuration>
-              <skipTests>true</skipTests>
-            </configuration>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-  </profiles>
 </project>

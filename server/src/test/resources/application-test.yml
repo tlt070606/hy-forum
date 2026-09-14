@@ -62,13 +62,16 @@ hy:
     width: 130
     height: 48
     length: 4
-  register:
-    register-mode-cache-seconds: 0
+  # 注意：这里**没有** register-mode-cache-seconds 之类的注册模式缓存配置项。
+  # 注册模式读取刻意不缓存（每次直读 sys_config），以保证契约 §8.8 的
+  # "切换后行为立即变化、无需重启"。配置项本身不存在，就没有"缓存多久"可调，
+  # 也就不会出现"有人把缓存 TTL 调大导致切换延迟"的漂移
+  # （取舍说明见 com.hyforum.auth.mode.RegisterModeService 的类注释）。
   rate-limit:
-    # 测试里把这个值调高：并发/多用例会在同一分钟内打很多请求，
-    # 用生产值（100/分钟）会让无关用例互相踩到限流而随机变红。
-    # 需要验证限流的用例（M1_error_codes_match_contract 的 429）自己把计数打满。
-    ip-per-minute: 100000
+    # 与 M1ErrorCodesTest.RATE_LIMIT_QUOTA 保持一致：需要验证 429 的用例
+    # 自己把这个配额打满；其余用例每次 @BeforeEach 会清掉限流键，
+    # 因此不会出现"上限太低导致无关用例随机变红"。
+    ip-per-minute: 50
 
 sa-token:
   token-name: Authorization

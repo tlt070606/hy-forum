@@ -37,12 +37,11 @@ import java.util.Map;
  * 这不修改任何契约，只是把"部署时要替换占位哈希"这件事在测试里做掉。</p>
  */
 @TestPropertySource(properties = {
-        // 用例数量远小于 50，但同分钟内每个用例都会打若干请求；
-        // 取 50 既能真实覆盖"计数会累加"，又不会让无关用例互相踩到限流。
-        // 限流本身的断言（429）放在专门的用例里做。
-        "hy.rate-limit.ip-per-minute=50",
-        // 注册模式读取不缓存（DoD 第 5 条要求"切换后立即生效"）
-        "hy.register.register-mode-cache-seconds=0"
+        // 与 application-test.yml 的 hy.rate-limit.ip-per-minute=50 保持一致。
+        // 之所以两处都写：application-test.yml 由本任务独占维护、可能被后来者改动，
+        // 而 M1ErrorCodesTest 打满配额的循环次数依赖这个值 —— 在测试类里显式声明一次，
+        // 由 @TestPropertySource 覆盖（优先级更高），可以避免"改了 yml 导致限流用例失效"。
+        "hy.rate-limit.ip-per-minute=50"
 })
 public abstract class AuthApiTestSupport extends WebIntegrationTestBase {
 
@@ -54,6 +53,45 @@ public abstract class AuthApiTestSupport extends WebIntegrationTestBase {
 
     /** 测试用水位密码（满足 8-32 位且含字母与数字）。 */
     protected static final String VALID_PASSWORD = "Passw0rd123";
+
+    /** 用户名的唯一后缀计数器：让用例反复运行时不会撞 uk_username。 */
+    private static final java.util.concurrent.atomic.AtomicInteger USERNAME_SEQ =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** 用户名后缀的随机源（用 SecureRandom 同源的 Random 即可，仅用于去重）。 */
+    private static final java.util.Random USERNAME_RANDOM = new java.util.Random();
+
+    /**
+     * 生成一个测试用户名：{@code m1<前缀>_<序号><随机码>}。
+     *
+     * <p>为什么全项目的 M1 测试都必须用它，而不是直接写字面量：</p>
+     * <ul>
+     *   <li><b>必须带下划线</b>：{@link #restoreM1Baseline()} 靠
+     *       {@code username LIKE '%\_%'} 清掉上一次运行留下的测试用户。
+     *       若某个用例写了不带下划线的用户名（例如 {@code flowuser}），
+     *       它就不在清理范围内 —— 一旦上次运行中途失败，下一次运行会以
+     *       DuplicateKey 报错开头，而那种红最难排查；</li>
+     *   <li><b>必须唯一</b>：避免"上一次运行残留"造成唯一键冲突；</li>
+     *   <li><b>必须 ≤20 字符</b>：契约 §6.2 规定用户名 4–20 位，
+     *       超长会先被 {@code @Size} 拦成 400，用例就测不到想测的那条规则了。
+     *       因此前缀要短（≤6 字符），实现里也对超长做了截断保护。</li>
+     * </ul>
+     *
+     * @param prefix 语义前缀（如 {@code dup}），便于人工排障时认出是哪条用例造的数据；
+     *               <b>请控制在 6 字符以内</b>
+     */
+    protected static String uniqueUsername(String prefix) {
+        String safePrefix = prefix.length() > 6 ? prefix.substring(0, 6) : prefix;
+        int suffix = USERNAME_SEQ.incrementAndGet();
+        // 序号 + 4 位随机码：即使上一次运行残留，也有极大概率不撞（撞了也会被清理逻辑删掉）
+        int randomPad = 1000 + USERNAME_RANDOM.nextInt(9000);
+        String username = "m1" + safePrefix + "_" + suffix + randomPad;
+        if (username.length() > 20) {
+            // 兜底保护：宁可截断，也不要让"用户名超长"这种无关错误掩盖真正的断言
+            username = username.substring(0, 20);
+        }
+        return username;
+    }
 
     /** 测试库里的敏感词：用于验证 2001（内容包含敏感词）。 */
     protected static final String SENSITIVE_WORD = "测试违禁词";
@@ -105,6 +143,20 @@ public abstract class AuthApiTestSupport extends WebIntegrationTestBase {
 
         // ④ 清掉本任务在 Redis 里的残留（验证码、限流计数）
         captcha.clearAuthRedisState();
+
+        // ⑤ 清掉"上一次用例留下的业务数据"。
+        //    为什么需要：基类的清表在 @BeforeEach/@AfterEach 各执行一次，
+        //    正常失败时 @AfterEach 仍会清表；但若整轮运行被中断（Ctrl+C、超时被杀），
+        //    库里会留下已占用的用户名与邀请码，让下一次运行以 DuplicateKey 报错开头。
+        //    这类"环境污染导致的红"最难排查，所以基线恢复要做成**绝对幂等**。
+        //
+        //    匹配口径：本任务造的测试用户名一律带下划线（见 uniqueUsername），
+        //    而真实用户名也允许下划线（技术方案 §6.2），因此用
+        //    `LIKE '%\_%'`（MySQL 中反斜杠默认就是 LIKE 的转义字符，
+        //    所以这里匹配的是**字面下划线**，不需要再写 ESCAPE 子句）。
+        //    刻意不用固定前缀：那样每个用例都要改名，收益不抵可读性损失。
+        jdbcTemplate.update("DELETE FROM user WHERE username LIKE ?", "%\\_%");
+        jdbcTemplate.update("DELETE FROM invite_code");
     }
 
     // ==================================================================

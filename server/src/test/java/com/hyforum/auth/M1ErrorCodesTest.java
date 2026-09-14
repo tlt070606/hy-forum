@@ -42,6 +42,8 @@ class M1ErrorCodesTest extends AuthApiTestSupport {
     /** 触发 429 需要把窗口计数打满；测试配置里 ip-per-minute=50。 */
     private static final int RATE_LIMIT_QUOTA = 50;
 
+
+
     @Test
     void M1_error_codes_match_contract() {
         // ================= ① 契约完整性：12 个码逐个存在且数值一致 =================
@@ -81,14 +83,14 @@ class M1ErrorCodesTest extends AuthApiTestSupport {
         CaptchaTestSupport.Issued forWeak = captcha.issue();
         Response weak = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(registerBody("weak_pass_user", "a123456", "弱密码用户",
+                .body(registerBody(uniqueUsername("weak"), "a123456", "弱密码用户",
                         forWeak.uuid(), forWeak.answer(), true))
                 .post("/api/auth/register");
         assertThat(weak.jsonPath().getInt("code"))
                 .as("弱密码必须是 400：%s", weak.asString()).isEqualTo(400);
 
         // ---- 1001 用户名已存在 ----
-        String dupUsername = "dup_user";
+        String dupUsername = uniqueUsername("dup");
         assertThat(codeOf(registerWithFreshCaptcha(dupUsername, "重复用户")))
                 .as("首次注册应成功").isZero();
         Response dup = registerWithFreshCaptcha(dupUsername, "重复用户2");
@@ -107,17 +109,18 @@ class M1ErrorCodesTest extends AuthApiTestSupport {
         CaptchaTestSupport.Issued forCaptcha = captcha.issue();
         Response wrongCaptcha = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(registerBody("captcha_err_user", VALID_PASSWORD, "验证码错误",
+                .body(registerBody(uniqueUsername("captcha"), VALID_PASSWORD, "验证码错误",
                         forCaptcha.uuid(), "ZZZZ", true))
                 .post("/api/auth/register");
         assertThat(wrongCaptcha.jsonPath().getInt("code"))
                 .as("验证码错误必须是 1003：%s", wrongCaptcha.asString()).isEqualTo(1003);
 
         // ---- 1004 账号已被封禁 ----
-        insertUser("banned_user", VALID_PASSWORD, 0);
+        String bannedUsername = uniqueUsername("ban");
+        insertUser(bannedUsername, VALID_PASSWORD, 0);
         Response banned = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(loginBody("banned_user", VALID_PASSWORD))
+                .body(loginBody(bannedUsername, VALID_PASSWORD))
                 .post("/api/auth/login");
         assertThat(banned.jsonPath().getInt("code"))
                 .as("封禁账号必须是 1004：%s", banned.asString()).isEqualTo(1004);
@@ -126,7 +129,7 @@ class M1ErrorCodesTest extends AuthApiTestSupport {
         CaptchaTestSupport.Issued forSensitive = captcha.issue();
         Response sensitive = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(registerBody("sensitive_user", VALID_PASSWORD, "昵称含" + SENSITIVE_WORD,
+                .body(registerBody(uniqueUsername("sens"), VALID_PASSWORD, "昵称含" + SENSITIVE_WORD,
                         forSensitive.uuid(), forSensitive.answer(), true))
                 .post("/api/auth/register");
         assertThat(sensitive.jsonPath().getInt("code"))
@@ -143,7 +146,7 @@ class M1ErrorCodesTest extends AuthApiTestSupport {
         CaptchaTestSupport.Issued forClosed = captcha.issue();
         Response closed = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(registerBody("closed_mode_user", VALID_PASSWORD, "关闭注册用户",
+                .body(registerBody(uniqueUsername("closed"), VALID_PASSWORD, "关闭注册用户",
                         forClosed.uuid(), forClosed.answer(), true))
                 .post("/api/auth/register");
         assertThat(closed.jsonPath().getInt("code"))

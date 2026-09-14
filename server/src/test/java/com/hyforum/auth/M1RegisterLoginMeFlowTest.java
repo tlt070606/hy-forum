@@ -20,7 +20,7 @@ class M1RegisterLoginMeFlowTest extends AuthApiTestSupport {
 
     @Test
     void M1_register_login_me_flow() {
-        String username = "flow_user";
+        String username = uniqueUsername("flow");
         String nickname = "主链路用户";
 
         // ---------- ① 取验证码（自动化测试无法识别图片，从 Redis 取正确答案） ----------

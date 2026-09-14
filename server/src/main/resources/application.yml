@@ -101,7 +101,19 @@ hy:
     # 注册模式**不做缓存**：每次注册/查询都直读 sys_config.register_mode，
     # 以保证"切换后行为立即变化，无需重启"（技术方案 §8.8，DoD 第 5 条）。
     # 缓存策略的取舍说明见 com.hyforum.auth.mode.RegisterModeService 的类注释。
-    # 这里刻意不放 register-mode-cache-seconds —— 不存在的配置项不该出现在配置里。
+    # 刻意不放 register-mode-cache-seconds 之类的配置项：
+    # 配置项不存在，就没有"缓存多久"可调，也就不会有人把它调大而悄悄破坏"立即生效"。
   rate-limit:
     # IP 维度请求频率限制（技术方案 §8.7）：同一 IP 每分钟允许的失败/请求次数
     ip-per-minute: 100
+
+# ---------------------------------------------------------------
+# 接口文档（Knife4j / springdoc）
+#   /v3/api-docs 是**契约导出入口**（server/export_openapi.ps1 抓的就是它），
+#   路径刻意保持默认值：一旦有人改这里，契约脚本与 CI 漂移检查会同时失效。
+# ---------------------------------------------------------------
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

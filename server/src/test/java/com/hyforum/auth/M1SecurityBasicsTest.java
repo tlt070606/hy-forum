@@ -32,7 +32,7 @@ class M1SecurityBasicsTest extends AuthApiTestSupport {
 
     @Test
     void M1_password_never_returned() {
-        String username = "pwd_leak_user";
+        String username = uniqueUsername("pwd");
 
         // ---------- ① 注册响应 ----------
         CaptchaTestSupport.Issued issued = captcha.issue();
@@ -79,23 +79,27 @@ class M1SecurityBasicsTest extends AuthApiTestSupport {
     @Test
     void M1_agree_protocol_required() {
         // ---------- agreeProtocol=false → 拒绝 ----------
+        // 用户名先算一次再复用：uniqueUsername() 每次调用都产出新值，
+        // 若在断言里再调一次，查的就是另一个用户名，断言会永远为 0（假绿）。
+        String noAgreeUser = uniqueUsername("noagr");
         CaptchaTestSupport.Issued issuedFalse = captcha.issue();
         Response disagree = io.restassured.RestAssured.given()
                 .contentType(io.restassured.http.ContentType.JSON)
-                .body(registerBody("no_agree_user", VALID_PASSWORD, "未同意协议用户",
+                .body(registerBody(noAgreeUser, VALID_PASSWORD, "未同意协议用户",
                         issuedFalse.uuid(), issuedFalse.answer(), false))
                 .post("/api/auth/register");
         assertThat(disagree.jsonPath().getInt("code"))
                 .as("agreeProtocol=false 必须被拒（合规 C1）：%s", disagree.asString())
                 .isEqualTo(400);
-        assertThat(countUser("no_agree_user"))
+        assertThat(countUser(noAgreeUser))
                 .as("未同意协议不得落库（否则后端校验形同虚设）").isZero();
 
         // ---------- agreeProtocol 缺失 → 同样拒绝 ----------
         // 这一点很重要：若实现写成 "不能为 false"，字段缺失就会变成"默认放行"，
         // 而"默认放行"在合规红线上的错误方向。
         CaptchaTestSupport.Issued issuedMissing = captcha.issue();
-        Map<String, Object> body = registerBody("missing_agree_user", VALID_PASSWORD, "缺协议字段用户",
+        String missingAgreeUser = uniqueUsername("magr");
+        Map<String, Object> body = registerBody(missingAgreeUser, VALID_PASSWORD, "缺协议字段用户",
                 issuedMissing.uuid(), issuedMissing.answer(), true);
         body.remove("agreeProtocol");
         Response missing = io.restassured.RestAssured.given()
@@ -105,10 +109,10 @@ class M1SecurityBasicsTest extends AuthApiTestSupport {
         assertThat(missing.jsonPath().getInt("code"))
                 .as("agreeProtocol 字段缺失必须被拒（不得默认放行）：%s", missing.asString())
                 .isEqualTo(400);
-        assertThat(countUser("missing_agree_user")).isZero();
+        assertThat(countUser(missingAgreeUser)).isZero();
 
         // ---------- agreeProtocol=true → 通过（反证校验没写死拒绝） ----------
-        Response agree = registerWithFreshCaptcha("agree_user", "同意协议用户");
+        Response agree = registerWithFreshCaptcha(uniqueUsername("agr"), "同意协议用户");
         assertThat(agree.jsonPath().getInt("code"))
                 .as("同意协议应注册成功：%s", agree.asString()).isZero();
     }
