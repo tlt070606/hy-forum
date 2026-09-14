@@ -1,0 +1,80 @@
+# =============================================================
+# Hy论坛 后端 —— 测试配置（profile = test）
+#
+# 归属：W1-M1 任务独占（见 docs/agents/工作计划.md §2）。
+# 共享测试基类（com.hyforum.support.**）只引用本文件、不另建一份。
+#
+# 环境事实（docs/agents/README.md §7.2，均为实测过的事实，不要臆改）：
+#   - MySQL 8.0.34 在本机 127.0.0.1:3306，root/1234；测试库 hy_forum_test
+#     由 scripts/init_test_db.ps1 每次重建（DDL 从 docs/db/schema.sql 派生）
+#   - Redis 在 VMware VM 里：192.168.100.128:6380（本机 Windows 无 Redis，
+#     且已决策不装 Docker Desktop；不使用 Testcontainers，见 docs/testing/README.md §3.1）
+#
+# ⚠️ 本文件里的口令只针对**本机开发实例**的测试库，与 docs/agents/README.md §7.2
+#    登记的开发环境事实一致；它不是生产密钥，也不允许被复制到主配置里
+#    （铁律 5：部署连接信息一律走环境变量，见 main/resources/application.yml）。
+# =============================================================
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/hy_forum_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 1234
+    hikari:
+      # 测试串行执行，连接池只要够用即可；
+      # 并发测试（M4 的 20 线程点赞）会临时占满，10 已有余量
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  data:
+    redis:
+      host: 192.168.100.128
+      port: 6380
+      password:
+      database: 0
+      timeout: 3s
+
+  # 让"无匹配 handler"也抛异常，从而走全局异常处理器返回契约里的 404
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+logging:
+  level:
+    # 测试跑起来时不要被 MyBatis-Plus / Sa-Token 的 INFO 淹没；
+    # 出问题时把这两行临时改成 DEBUG 即可
+    com.hyforum: INFO
+    com.baomidou.mybatisplus: WARN
+    cn.dev33.satoken: WARN
+
+hy:
+  captcha:
+    # 契约值 300s（技术方案 §6.2 / §7）。
+    # 测试**显式**配置成 300，而不是依赖默认值 —— 这样 M1_captcha_ttl_is_300s
+    # 断言的就是"契约要求的值真的被配置进来了"，而不是"代码里的兜底默认值"。
+    ttl-seconds: 300
+    width: 130
+    height: 48
+    length: 4
+  register:
+    register-mode-cache-seconds: 0
+  rate-limit:
+    # 测试里把这个值调高：并发/多用例会在同一分钟内打很多请求，
+    # 用生产值（100/分钟）会让无关用例互相踩到限流而随机变红。
+    # 需要验证限流的用例（M1_error_codes_match_contract 的 429）自己把计数打满。
+    ip-per-minute: 100000
+
+sa-token:
+  token-name: Authorization
+  timeout: 604800
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false

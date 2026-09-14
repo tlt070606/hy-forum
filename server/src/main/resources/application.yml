@@ -1,0 +1,108 @@
+# =============================================================
+# Hy论坛 后端主配置（开发 / 本地可用版）
+#
+# ⚠️ 铁律 5：禁止硬编码任何密钥、域名、AccessKey。
+#    因此本文件中**所有**连接信息与口令一律走环境变量占位（${ENV:default}）。
+#    - 数据库口令默认值 1234 只针对本机开发实例（docs/agents/README.md §7.2 登记的事实）；
+#      部署时必须通过环境变量覆盖，不得依赖这里的默认值。
+#    - OSS AccessKey 在 M3 实现直传签名时同样只允许走环境变量，绝不落库/落前端（铁律 5、8）。
+#
+# ⚠️ ADR-0010：单一配置、无档位。本文件不得出现任何"环境档位"分支判断。
+#    测试配置覆盖见 src/test/resources/application-test.yml。
+# =============================================================
+server:
+  port: ${SERVER_PORT:8080}
+  # 中文接口文档与错误信息统一 UTF-8
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: hy-forum-server
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:hy_forum}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:1234}
+    hikari:
+      # 1000 条数据规模 + 本地开发机：连接池不需要大
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.100.128}
+      port: ${REDIS_PORT:6380}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+      timeout: 3s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 1
+
+  # 让"没有对应 handler"也抛 NoHandlerFoundException → 由全局异常处理器转成契约里的 404
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+mybatis-plus:
+  configuration:
+    # 下划线列名 → 驼峰属性（user_id → userId）
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      # 本项目所有表的主键统一 BIGINT UNSIGNED AUTO_INCREMENT（docs/db/README.md 基线）
+      id-type: auto
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ---------------------------------------------------------------
+# Sa-Token（技术方案 §7 Redis 设计、§9 安全设计）
+#   - token 统一存 Redis：key 前缀 hy:token:*
+#   - 请求头 Authorization: {token}
+#   - 前后台隔离靠两套独立 StpLogic（见 com.hyforum.common.config.SaTokenLogicConfig），
+#     不靠 token 前缀
+# ---------------------------------------------------------------
+sa-token:
+  token-name: Authorization
+  # 7 天（单位秒）：本地可用版的登录态时长
+  timeout: 604800
+  # 最低活跃频率 -1 = 不检查活跃，避免用户滚动浏览被踢出
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+# ---------------------------------------------------------------
+# 业务开关（非环境档位，属于业务配置）
+# ---------------------------------------------------------------
+hy:
+  captcha:
+    # 图形验证码 TTL，契约硬性要求 300s（技术方案 §6.2 / §7）
+    ttl-seconds: 300
+    width: 130
+    height: 48
+    length: 4
+  register:
+    # 注册模式读取 sys_config 的短 TTL 缓存（秒）。
+    # 之所以要缓存：注册/查询注册模式是免登录接口，每次直连 MySQL 会被刷；
+    # 之所以能用缓存：契约要求"切换后行为立即变化，无需重启"（技术方案 §8.8），
+    # 3 秒的最终一致窗口对"管理员切开关"这一人工操作而言是"立即"。
+    register-mode-cache-seconds: 3
+  rate-limit:
+    # IP 维度请求频率限制（技术方案 §8.7）：同一 IP 每分钟允许的失败/请求次数
+    ip-per-minute: 100

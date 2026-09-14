@@ -1,0 +1,280 @@
+# =============================================================================
+#  CI 流水线（Hy论坛）
+#
+#  依据：docs/testing/README.md §4「CI 流水线（按耗时排序）」
+#    1. 重建测试库（DDL 由 docs/db/schema.sql 派生）→ 校验表数/字符集/外键/CHECK
+#    2. mvn test（含 ArchUnit：铁律 3 / 铁律 7）
+#    3. openapi.json 漂移检查（重新导出并与仓库比对）
+#    4. 覆盖率缺口脚本（scripts/check_test_coverage_gaps.ps1）
+#
+#  铁律 6 说明：**CI 跑在 GitHub 的机器上，不是项目服务器**，因此不违反
+#  「禁止在服务器上构建」，铁律本身也建议使用 CI（见 docs/agents/README.md §6）。
+#
+#  为什么测试库用 GitHub `services:` 而不是 Testcontainers：
+#  docs/testing/README.md §3.1 —— 本机 Windows 不装 Docker Desktop，
+#  因此本地用常驻测试库 + 每次重建；**CI 侧用 services 容器，效果等价于 Testcontainers**，
+#  且不需要本地 Docker（GitHub runner 自带 Docker daemon）。
+#
+#  ⚠️ 本文件由「W1 测试基建」任务产出，按工作计划 §2 需 **L1 复核**。
+#  ⚠️ 尚未在 GitHub 上真正跑过：仓库当前**不是 git 仓库、也没有 remote**
+#     （`git rev-parse --is-inside-work-tree` → fatal: not a git repository）。
+#     因此本文件只做过本地静态检查（YAML 解析 + actionlint 级别的人工核对），
+#     真实 run 链接见交付报告说明。
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的重复推送取消旧运行，避免排队堆积
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与本地约定一致：集成测试连独立测试库 hy_forum_test（不是开发库 hy_forum）
+  #
+  # ⚠️ 铁律 5（禁止硬编码密钥）说明：下面这些 root/root 是 **GitHub Actions 为本次运行
+  #    临时拉起的 service 容器**的口令（用完即销毁、无任何真实数据），不是生产/开发密钥。
+  #    项目真实连接信息一律走环境变量，见 server/src/main/resources/application.yml；
+  #    本地开发库口令也不落进本文件。
+  TEST_DB: hy_forum_test
+  MYSQL_ROOT_PASSWORD: root
+  MYSQL_HOST: 127.0.0.1
+  MYSQL_PORT: '3306'
+  REDIS_HOST: 127.0.0.1
+  REDIS_PORT: '6379'
+  # server/src/main/resources/application.yml 用 ${DB_HOST}/${DB_NAME}/... 占位
+  # （铁律 5：连接信息不硬编码），这里一并对齐 —— 否则 CI 会去连默认库名 hy_forum
+  DB_HOST: 127.0.0.1
+  DB_PORT: '3306'
+  DB_NAME: hy_forum_test
+  DB_USER: root
+  DB_PASSWORD: root
+
+jobs:
+  test:
+    name: 构建与测试（JDK 21 + MySQL 8 + Redis 7）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # MySQL 8.0：schema.sql 的 CHECK 约束需要 8.0.16+ 才会被真正强制执行
+      # （否则 5.3 的 CHECK 测试会**假通过** —— 见任务书 §7 提示）
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: hy_forum_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      # Redis 7：本地在 VM（192.168.100.128:6380），CI 侧用 service 容器
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 21（Temurin）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # ---------------------------------------------------------------------
+      # 步骤 1：重建测试库
+      #   放弃 Testcontainers 后的**隔离补偿**（docs/testing/README.md §3.1）：
+      #   干净起点靠「每次运行前 DROP + CREATE 测试库」，DDL 只从 schema.sql 派生。
+      #
+      #   为什么这里用 bash 而不是 scripts/init_test_db.ps1：
+      #   该脚本内部用 `cmd.exe /c "mysql ... < file"` 做字节级重定向，
+      #   而 cmd.exe 只存在于 Windows，GitHub ubuntu runner 上没有。
+      #   **DDL 的唯一事实来源仍然是 docs/db/schema.sql**（下面只做库名替换，
+      #   不维护第二份建表脚本），并复刻了脚本里的三条改写守卫。
+      # ---------------------------------------------------------------------
+      - name: 重建测试库（DDL 由 docs/db/schema.sql 派生）
+        run: |
+          set -euo pipefail
+
+          if ! command -v mysql >/dev/null 2>&1; then
+            echo "runner 上没有 mysql 客户端，尝试安装"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq mysql-client
+          fi
+
+          # 与 init_test_db.ps1 相同的改写规则：把 hy_forum 全部替换为 hy_forum_test
+          {
+            echo "DROP DATABASE IF EXISTS ${TEST_DB};"
+            sed "s/hy_forum/${TEST_DB}/g" docs/db/schema.sql
+          } > /tmp/${TEST_DB}.sql
+
+          # —— 改写守卫（否则测试库可能悄悄连到开发库）——
+          grep -q "CREATE DATABASE IF NOT EXISTS ${TEST_DB}" /tmp/${TEST_DB}.sql
+          grep -q "USE ${TEST_DB};" /tmp/${TEST_DB}.sql
+          if grep -qP 'hy_forum(?!_test)' /tmp/${TEST_DB}.sql; then
+            echo "::error::改写结果中仍残留生产库名 hy_forum"
+            exit 1
+          fi
+          echo "[PASS] DDL 改写完成（唯一来源 docs/db/schema.sql）"
+
+          # 字节级重定向喂给 mysql（不用管道，避免编码被改坏）
+          mysql --default-character-set=utf8mb4 \
+                -h "${MYSQL_HOST}" -P "${MYSQL_PORT}" -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+                < /tmp/${TEST_DB}.sql
+          echo "[PASS] DROP + CREATE 执行成功"
+
+      - name: 校验测试库基线（表数 16 / utf8mb4 / 无外键 / CHECK 约束存在）
+        run: |
+          set -euo pipefail
+          q() {
+            mysql -h "${MYSQL_HOST}" -P "${MYSQL_PORT}" -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+                  --default-character-set=utf8mb4 -N -B -e "$1"
+          }
+          fail=0
+          check() { # check <描述> <实际> <期望>
+            if [ "$2" = "$3" ]; then echo "[PASS] $1 = $2"; else echo "[FAIL] $1 = $2（期望 $3）"; fail=1; fi
+          }
+
+          check "测试库表数量" \
+            "$(q "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${TEST_DB}' AND TABLE_TYPE='BASE TABLE';")" "16"
+          check "非 utf8mb4 的表数" \
+            "$(q "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${TEST_DB}' AND TABLE_TYPE='BASE TABLE' AND TABLE_COLLATION NOT LIKE 'utf8mb4%';")" "0"
+          check "非 InnoDB 的表数" \
+            "$(q "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${TEST_DB}' AND TABLE_TYPE='BASE TABLE' AND ENGINE<>'InnoDB';")" "0"
+          check "外键数量" \
+            "$(q "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='${TEST_DB}' AND CONSTRAINT_TYPE='FOREIGN KEY';")" "0"
+          check "chk_comment_two_levels 存在" \
+            "$(q "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='${TEST_DB}' AND CONSTRAINT_NAME='chk_comment_two_levels';")" "1"
+          # 约束定义本身也要核对：MySQL 会把 CHECK 重写成带反引号的形式，故做模糊匹配
+          check "CHECK 约束体已生效（非 1=0 之类空转约束）" \
+            "$(q "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='${TEST_DB}' AND CONSTRAINT_NAME='chk_comment_two_levels' AND CHECK_CLAUSE LIKE '%parent_id%' AND CHECK_CLAUSE LIKE '%root_id%';")" "1"
+
+          exit $fail
+
+      # ---------------------------------------------------------------------
+      # 步骤 2：mvn test（含 ArchUnit：铁律 3 禁跨模块调用 / 铁律 7 禁重组件）
+      #
+      # 依赖：server/pom.xml（**由 W1-M1 任务独占**）。它不存在时本步会明确失败，
+      # 这是期望行为（CI 里没有 pom 就没有可测的构建），不是本任务引入的问题。
+      #
+      # 环境变量覆盖：application-test.yml 是 M1 独占文件，我**不改它**；
+      # CI 与本地只差「连哪台 MySQL/Redis + 密码」，故用 Spring Boot 的
+      # relaxed binding 由环境变量覆盖。若 M1 用了非标准前缀，这里需同步调整。
+      # ---------------------------------------------------------------------
+      - name: mvn test（含 ArchUnit）
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:mysql://${{ env.MYSQL_HOST }}:${{ env.MYSQL_PORT }}/${{ env.TEST_DB }}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+          SPRING_DATASOURCE_USERNAME: root
+          SPRING_DATASOURCE_PASSWORD: root
+          SPRING_DATA_REDIS_HOST: ${{ env.REDIS_HOST }}
+          SPRING_DATA_REDIS_PORT: ${{ env.REDIS_PORT }}
+        run: mvn -B -f server/pom.xml test
+
+      - name: 上传 surefire 报告（失败时排查用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: |
+            server/target/surefire-reports/**
+            server/target/failsafe-reports/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ---------------------------------------------------------------------
+      # 步骤 3：openapi.json 漂移检查
+      #   重新从运行中的应用导出 /v3/api-docs，与仓库里的 openapi.json 逐字节
+      #   （规范化 JSON 后）比对；不一致 → 失败。防止「注解改了、契约没更新」。
+      #
+      #   ⚠️ 临时状态（任务书 §5.4-3）：openapi.json 由 W1-M1 任务产出，
+      #      目前 **尚不存在** → 本步骤按 `if: hashFiles(...)` 直接跳过并打 warning。
+      #      文件出现后自动生效（届时导出逻辑需要真机验证一次）。
+      # ---------------------------------------------------------------------
+      - name: openapi.json 漂移检查
+        if: ${{ hashFiles('openapi.json') != '' }}
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:mysql://${{ env.MYSQL_HOST }}:${{ env.MYSQL_PORT }}/${{ env.TEST_DB }}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+          SPRING_DATASOURCE_USERNAME: root
+          SPRING_DATASOURCE_PASSWORD: root
+          SPRING_DATA_REDIS_HOST: ${{ env.REDIS_HOST }}
+          SPRING_DATA_REDIS_PORT: ${{ env.REDIS_PORT }}
+          SERVER_PORT: '18080'
+        run: |
+          set -euo pipefail
+
+          mvn -B -q -f server/pom.xml -DskipTests package
+          JAR=$(find server/target -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)
+          if [ -z "$JAR" ]; then echo "::error::没找到可执行的 jar"; exit 1; fi
+
+          java -jar "$JAR" > /tmp/app.log 2>&1 &
+          APP_PID=$!
+          trap 'kill $APP_PID 2>/dev/null || true' EXIT
+
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:${SERVER_PORT}/v3/api-docs" -o /tmp/openapi.exported.json; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::60 次重试后仍拿不到 /v3/api-docs，应用日志尾部如下"
+            tail -n 80 /tmp/app.log
+            exit 1
+          fi
+
+          # 规范化后比对：格式/键序差异不算漂移，只有**内容**差异才算
+          python3 - <<'PY'
+          import json, sys, difflib
+
+          def load(path):
+              with open(path, encoding='utf-8') as f:
+                  doc = json.load(f)
+              return json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2).splitlines(keepends=True)
+
+          repo = load('openapi.json')
+          now  = load('/tmp/openapi.exported.json')
+          if repo != now:
+              sys.stderr.writelines(difflib.unified_diff(repo, now, '仓库/openapi.json', '运行时导出'))
+              print('::error title=openapi drift::openapi.json 与运行时导出不一致（注解改了但契约没更新）')
+              sys.exit(1)
+          print('[PASS] openapi.json 与运行时导出一致')
+          PY
+
+      - name: openapi.json 尚未产出时的提示
+        if: ${{ hashFiles('openapi.json') == '' }}
+        run: echo "::warning title=openapi drift check skipped::仓库根 openapi.json 尚不存在（W1-M1 任务产出前）——本步骤临时跳过，属已知临时状态"
+
+      # ---------------------------------------------------------------------
+      # 步骤 4：覆盖率缺口检查
+      #   默认不卡口（W1 阶段缺口必然大量存在）；等 M2–M6 收敛后可加 -FailOnGap。
+      # ---------------------------------------------------------------------
+      - name: 验收项覆盖缺口检查
+        run: pwsh -NoProfile -File scripts/check_test_coverage_gaps.ps1 -Detailed
+
+      # ---------------------------------------------------------------------
+      # 尚未接入的后续步骤（等对应产物出现再加，**不要在没产物时写空转步骤**）：
+      #   · 前端 tsc --noEmit + 生成类型是否最新 → 依赖 web/**（M2 任务）与
+      #     web/src/api/generated/**（L1 独占，由 openapi.json 生成）
+      #   · 黄金路径 E2E → 依赖 tests/golden-path/**（L1 独占）
+      #   · 变异测试（nightly，不阻塞 PR）→ 由独立 L3 Agent 手工改坏实现完成
+      #     （docs/testing/README.md §2 纪律三）
+      # ---------------------------------------------------------------------

@@ -1,0 +1,40 @@
+# AGENTS.md
+
+本文件是 AI agent 与协作者的准入说明。开始任何工作前必须阅读。
+
+## 项目定位
+
+Hy论坛 —— 中文综合论坛，含资源分享版块（发帖可附网盘链接与提取码）。
+交付形态：网站（Vue 3 SPA + PWA）+ 安卓 APK（WebView 壳）。**不含微信小程序**。
+后端：Java 21 + Spring Boot 3，模块化单体。
+
+## 铁律
+
+1. **文档先行**：先改文档再改代码。`docs/` 是唯一事实来源；本文件与 `docs/PLAN.md` 冲突时以 `docs/PLAN.md` 为准。
+2. **零代码分叉**：低配档位与高性能档位必须共用同一份构建产物，差异**只允许**出现在 `.env` 与 compose override 文件。
+3. **禁止跨模块调用**：业务模块之间只允许依赖 `hy-common` 与 `hy-domain`，禁止调用其他模块的 Mapper 或 Service 实现。
+4. **禁止跨模块建表改表**：schema 变更必须走 `docs/db/README.md` 的冻结流程，先改 `docs/db/schema.sql` 再改库。
+5. **禁止硬编码密钥**：AccessKey、密钥、域名一律走环境变量。APK 可被反编译，**前端只允许使用服务端签名**，绝不持有 AccessKey。
+6. **禁止在服务器上构建**：`mvn package` 与 `npm run build` 内存峰值均超过 1G，2 GiB 服务器会 OOM。
+7. **禁止在低配档位引入重组件**：Elasticsearch、RabbitMQ、Kafka、服务注册中心一律不用。
+8. **文件上传必须走 OSS 服务端签名直传**，禁止后端中转。
+9. 上述规则由代码评审与 ArchUnit 单测共同保证。
+
+## 开工前必须确认的四份文档
+
+- [`docs/PLAN.md`](docs/PLAN.md) 范围与验收标准
+- [`docs/db/README.md`](docs/db/README.md) 表设计规范
+- [`docs/db/schema.sql`](docs/db/schema.sql) 表结构基线
+- [`docs/ops/deployment.md`](docs/ops/deployment.md) 部署档位与约束
+
+**四份缺一份就不要开工。**
+
+## 提交规范
+
+Conventional Commits：`type(scope): 描述`
+type 取 `feat` `fix` `docs` `refactor` `test` `chore`；scope 用模块名。
+示例：`feat(post): 支持资源版块网盘链接归一化`
+
+## 分支
+
+`main` 保持可发布，功能开发走 `feature/<module>-<short-desc>`。

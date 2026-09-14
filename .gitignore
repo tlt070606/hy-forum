@@ -1,0 +1,77 @@
+# =============================================================
+# Hy论坛 .gitignore
+# 原则：**构建产物、临时文件、凭据一律不入库**。
+# 与 AGENTS.md 铁律 5（禁止硬编码密钥）同源：仓库里不能出现任何凭据。
+# =============================================================
+
+# ---------- Java / Maven 构建产物 ----------
+target/
+**/target/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+
+# ---------- 临时与测试产物 ----------
+.tmp/
+*.log
+*.log.*
+logs/
+surefire-reports/
+failsafe-reports/
+
+# ---------- 本地环境与凭据（**绝不能提交**）----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+credentials*.json
+application-local.yml
+application-local.yaml
+application-local.properties
+
+# ---------- 前端（M2 起会用到）----------
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# ---------- Android（M7 起会用到）----------
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.jks
+android/*.keystore
+android/.idea/
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# ---------- 操作系统 ----------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+*~
+
+# ---------- 说明 ----------
+# `scripts/toolchain-check/target/` 已被上面的 `**/target/` 覆盖。
+# `docs/` 下的文档与 `scripts/*.ps1` 必须入库（它们是项目的唯一事实来源）。
+# 注意：`.ps1` 文件必须保持 UTF-8 with BOM（见 docs/agents/README.md §7.1），
+#       git 的 autocrlf 可能影响行尾 —— 本仓库统一使用 LF。

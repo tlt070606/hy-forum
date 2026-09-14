@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hy论坛 后端工程 pom
+  ============================================================
+  口径来源：
+    - docs/技术方案.md §3.1 技术选型、§3.3 v1.8 包结构（单 Maven 模块 + 分层 package）
+    - docs/agents/tasks/W1-M1-后端骨架与认证.md §2（必须含完整测试依赖 + maven-enforcer）
+    - docs/testing/README.md §3 工具链（jqwik / ArchUnit / REST Assured）
+  明确不做：
+    - 不引入 Testcontainers（D6 决策，见 docs/testing/README.md §3.1）
+    - 不引入任何重组件（Elasticsearch / MQ / 注册中心客户端）—— 铁律 7，
+      由 ARCH_no_heavy_components 测试守门
+  ============================================================
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.hyforum</groupId>
+  <artifactId>hy-forum-server</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <name>hy-forum-server</name>
+  <description>Hy论坛 后端（模块化单体：单 Maven 模块 + 分层 package）</description>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- 第三方版本集中管理，避免散落在各依赖里 -->
+    <sa-token.version>1.38.0</sa-token.version>
+    <mybatis-plus.version>3.5.7</mybatis-plus.version>
+    <knife4j.version>4.5.0</knife4j.version>
+    <archunit.version>1.3.0</archunit.version>
+    <jqwik.version>1.9.2</jqwik.version>
+    <rest-assured.version>5.5.0</rest-assured.version>
+  </properties>
+
+  <dependencies>
+    <!-- ===================== 基础 Web ===================== -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!-- 参数校验（@Valid / @Pattern）：注册校验规则的落地方式 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- 健康检查 /actuator/health（技术方案 §11 监控项） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+
+    <!-- ===================== 持久层 ===================== -->
+    <!-- MyBatis-Plus：Spring Boot 3 必须用 spring-boot3-starter -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+      <version>${mybatis-plus.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.mysql</groupId>
+      <artifactId>mysql-connector-j</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- ===================== 缓存 / 鉴权 ===================== -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- Sa-Token：Spring Boot 3 必须用 spring-boot3-starter；
+         前后台隔离由两套独立 StpLogic 实现（技术方案 §9），不引入 sa-token-jwt -->
+    <dependency>
+      <groupId>cn.dev33</groupId>
+      <artifactId>sa-token-spring-boot3-starter</artifactId>
+      <version>${sa-token.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>cn.dev33</groupId>
+      <artifactId>sa-token-redis-jackson</artifactId>
+      <version>${sa-token.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-pool2</artifactId>
+    </dependency>
+    <!-- BCrypt（strength=10，技术方案 §9）。只取 crypto，不引入整个 Spring Security -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+
+    <!-- ===================== 接口文档 ===================== -->
+    <dependency>
+      <groupId>com.github.xiaoymin</groupId>
+      <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+      <version>${knife4j.version}</version>
+    </dependency>
+
+    <!-- ===================== 测试 ===================== -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- 接口级集成测试（真随机端口 + 真实 filter 链） -->
+    <dependency>
+      <groupId>io.rest-assured</groupId>
+      <artifactId>rest-assured</artifactId>
+      <version>${rest-assured.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- 架构约束：铁律 3（禁跨模块调用）、铁律 7（禁重组件） -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- 属性测试（docs/testing/README.md §3：用于幂等/并发类不变量） -->
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik</artifactId>
+      <version>${jqwik.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- ============ 1. JDK 版本守门：把"环境踩坑"变成"自解释失败" ============
+           任务书 §5 DoD 第 1 条明确要求。
+           背景：本机宿主进程仍持旧 JAVA_HOME=jdk17，用错 JDK 时
+           <release>21</release> 只会报难懂的 "invalid target release"。
+           加了这个插件后，失败信息直接是"需要 JDK 21 以上"。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-java-version</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                  <message>
+                    Hy论坛后端要求 JDK 21 及以上。请先执行：$env:JAVA_HOME='D:\develop\jdk21'
+                    （本机宿主进程仍持旧环境 jdk17，子进程会继承它 —— 见 docs/agents/README.md §7.2）
+                  </message>
+                </requireJavaVersion>
+              </rules>
+              <fail>true</fail>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- ============ 2. Spring Boot 打包 ============ -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.hyforum.HyForumApplication</mainClass>
+        </configuration>
+      </plugin>
+
+      <!-- ============ 3. 依赖树落盘（供 ARCH_no_heavy_components 读取） ============
+           铁律 7 禁的是**依赖**，而不是"classpath 上出现过某个类"：
+           某个 starter 可能只把客户端 jar 拉进来、启动时并不加载它。
+           因此架构测试必须解析"解析后的依赖树"，那才是权威答案。
+           这里把依赖树输出到 target/dependency-tree.txt，测试直接读文件
+           （读不到时会就地调用 mvn dependency:tree 兜底，见 ArchitectureRulesTest）。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>report-dependency-tree</id>
+            <phase>process-test-classes</phase>
+            <goals>
+              <goal>tree</goal>
+            </goals>
+            <configuration>
+              <outputType>text</outputType>
+              <outputFile>${project.build.directory}/dependency-tree.txt</outputFile>
+              <appendOutput>false</appendOutput>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- ============ 4. 接口契约导出（DoD 第 4 条） ============
+           用 springdoc 官方插件抓取 /v3/api-docs 产物写到仓库根 openapi.json。
+           **不手工编辑 openapi.json** —— 它由本插件产出、由 L1 冻结
+           （docs/agents/工作计划.md §2）。
+           放在 generate-openapi profile 内，避免每次 mvn package 都启一次应用。 -->
+      <plugin>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-maven-plugin</artifactId>
+        <version>1.4</version>
+        <configuration>
+          <apiDocsUrl>http://localhost:8080/v3/api-docs</apiDocsUrl>
+          <outputFileName>${project.basedir}/../openapi.json</outputFileName>
+          <outputDir>${project.basedir}/..</outputDir>
+          <skip>false</skip>
+        </configuration>
+        <executions>
+          <execution>
+            <id>export-openapi-contract</id>
+            <phase>integration-test</phase>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+      导出 openapi.json 的专用 profile：
+        $env:JAVA_HOME='D:\develop\jdk21'
+        mvn -Pgenerate-openapi -DskipTests package
+      它会先打包、再启动应用抓取 /v3/api-docs、写入仓库根 openapi.json。
+    -->
+    <profile>
+      <id>generate-openapi</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <skipTests>true</skipTests>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
