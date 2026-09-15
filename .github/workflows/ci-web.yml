@@ -1,0 +1,128 @@
+# =============================================================================
+#  前端 CI（Hy论坛 web/ —— uni-app，一套代码编译 H5 / 安卓 / 微信小程序·仅练习）
+#
+#  依据：docs/testing/README.md §4「CI 流水线」第 4 步，以及
+#        docs/agents/前端仓库归属对比.md §7（需求方选定「合并到一个仓库，
+#        但前后端走两条独立流水线」）。
+#
+#  为什么独立成一个文件而不是塞进 ci.yml 的一个 job：
+#    需求方要的是「回滚前端不影响后端」。要说清的是 —— **回滚独立性取决于
+#    产物与发布流程，不取决于两者是否在同一个仓库**：前端产物是一个静态目录、
+#    后端产物是一个 jar，各回滚各的。这里用独立的 workflow 表达同一件事，
+#    让两侧的构建、缓存与失败原因互不缠绕。
+#
+#  ⚠️ 与 ci.yml 的一处**刻意不对称**：
+#    · 本文件用 `paths:` 过滤 —— 只改 web/** 或 openapi.json 时才跑。
+#    · ci.yml **不过滤**，任何推送都跑后端 job。
+#    理由：这个项目已经被「静默跳过」坑过一次（Surefire 默认不跑 `*IT.java`，
+#    测试全绿却从未执行）。后端 job 是项目的主闸门，**不允许它被静默跳过**；
+#    前端 job 是附加的、便宜的，过滤掉冗余运行没有风险。
+#
+#  本流水线守住的核心一件事：**契约漂移**。
+#    契约的唯一事实来源是**仓库根** `openapi.json`。前端的类型由它派生
+#    （当前经 `web/src/api/generated/openapi.snapshot.json` 中转到 `schema.d.ts`）。
+#    两者不一致 → 说明后端改了契约而前端没跟上 → 直接红。
+#    **在合并进同一仓库之前，这一步物理上做不到**（契约在另一个仓库、
+#    而前端的脚本只能比对"本机正在运行的后端"，CI 里没有后端）。
+#
+#  当前**尚未接入**的（等机制具备再加，不要在没产物时写空转步骤）：
+#    · `npm run e2e`（Playwright 黄金路径）—— 需要一个**活着的后端**
+#      （JDK 21 + MySQL + Redis + 打包 + 启动）。放 CI 里的成本高于收益，暂留本地手跑。
+#      它的 5 个用例已在本地跑通（test-results/.last-run.json = passed）。
+#    · 三端构建产物（build:h5 / build:mp-weixin / build:app）—— 属 M7。
+#    · 「生成类型是否最新」的严格检查 —— 当前由上面的契约漂移检查覆盖；
+#      等快照退役（见 docs/agents/M3-计划与前置.md §5.1）后改为
+#      从仓库根 openapi.json 直接生成再 `git diff --exit-code`。
+# =============================================================================
+
+name: CI (web)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'openapi.json'
+      - '.github/workflows/ci-web.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'openapi.json'
+      - '.github/workflows/ci-web.yml'
+  workflow_dispatch:
+
+# 同一分支的重复推送取消旧运行，避免排队堆积（与 ci.yml 同策略）
+concurrency:
+  group: ci-web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: 前端类型与契约一致性（uni-app）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # Node 版本：本机实测是 v26.4.0（且 uni-app 工具链在 26 上可用）。
+      # CI 这里取 22：它在 setup-node 上是稳定可用的 LTS，而本流水线只跑
+      # `npm ci` + `vue-tsc`，对 Node 大版本不敏感。
+      # 若将来跑三端构建（M7）后出现与 Node 版本相关的怪问题，再来对齐这一行。
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        working-directory: web
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # 步骤 1：契约漂移检查（本流水线的核心，也是唯一"能挡住真问题"的一步）
+      #
+      #   两侧都摘掉 `servers` 再比 —— `servers[0].url` 是从请求的 Host 现推的、
+      #   带着监听端口，属环境推出来的值而非契约内容。口径与 ci.yml 第 3 步一致。
+      #   ⚠️ 这个坑真的让后端 CI 假红过（CI 起在 18080、仓库文件是 8080）。
+      # -----------------------------------------------------------------------
+      - name: 契约漂移检查（仓库根 openapi.json ↔ 前端快照）
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys, difflib
+
+          def load(path):
+              with open(path, encoding='utf-8') as f:
+                  doc = json.load(f)
+              # 端口不属于契约内容，两侧一致地摘掉（见脚本上方注释）
+              doc.pop('servers', None)
+              return json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2).splitlines(keepends=True)
+
+          repo = load('openapi.json')
+          snap = load('web/src/api/generated/openapi.snapshot.json')
+          if repo != snap:
+              sys.stderr.writelines(
+                  difflib.unified_diff(repo, snap, 'openapi.json（唯一事实来源）', 'web 快照')
+              )
+              print('::error title=web contract drift::后端契约改了但前端快照没跟上 —— '
+                    '前端的类型与真实接口已经不一致')
+              print('  处理步骤：')
+              print('    1. 用仓库根 openapi.json 覆盖 web/src/api/generated/openapi.snapshot.json')
+              print('    2. cd web && npm run gen:api      # 重新生成 schema.d.ts')
+              print('    3. npm run type-check             # 类型不匹配会在这里报出来')
+              sys.exit(1)
+          print('[PASS] 前端快照与仓库根 openapi.json 一致')
+          PY
+
+      # -----------------------------------------------------------------------
+      # 步骤 2：类型检查
+      #   契约一致之后，这一步查的是"业务代码有没有按生成的类型写"。
+      #   契约一改、类型一变，用错字段的地方会在这里编译报错 ——
+      #   这就是 docs/agents/README.md §1.1 说的「编译器级契约校验」。
+      # -----------------------------------------------------------------------
+      - name: 类型检查（vue-tsc --noEmit）
+        working-directory: web
+        run: npm run type-check

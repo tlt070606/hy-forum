@@ -109,11 +109,21 @@
    └─ chk_comment_two_levels 存在且强制
 2. mvn test（含 ArchUnit：铁律 3 / 铁律 7）—— CI 侧用 GitHub `services: mysql` + `services: redis`
 3. openapi.json 漂移检查：重新导出并与仓库比对，不一致 → 失败
-4. 前端 tsc --noEmit + 生成的类型是否为最新
+   （**比对前两侧都摘掉 `servers`** —— 它的 url 带着监听端口，属环境推出来的值，不是契约内容）
+4. 前端 `web/`：`vue-tsc --noEmit` + 生成的类型是否为最新（类型由**仓库根** `openapi.json` 生成）
 5. 黄金路径 E2E（REST Assured / Playwright）
 6. 变异测试（nightly，不阻塞 PR）
 7. 铁律审计（workflow 扇出）：无硬编码密钥（铁律 5）、无重组件依赖（铁律 7）
 ```
+
+> **第 4 步曾经是一句空话**：前端一度在**独立仓库**里，这一步"永远跑不起来"。
+> 2026-09-15 前端已用 `git subtree` 合并进本仓库 `web/`（见 [`../agents/前端仓库归属对比.md`](../agents/前端仓库归属对比.md) §7），
+> 契约回到仓库根一份，这一步才真正成立 —— 而且它现在是**契约漂移的主要防线**：
+> 契约一变 → 重新生成 `web/src/api/generated/schema.d.ts` → `vue-tsc` 对业务代码报错。
+>
+> **前后端是两条独立流水线**（用 `paths:` 过滤触发）：改 `server/**` 只跑后端 job，改 `web/**` 只跑前端 job。
+> 这样"回滚前端不影响后端"仍然成立 —— **回滚独立性取决于产物与发布流程，不取决于它们是否在同一个仓库**。
+
 
 ---
 

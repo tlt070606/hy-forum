@@ -273,9 +273,9 @@ jobs:
           print('[PASS] openapi.json 与运行时导出一致')
           PY
 
-      - name: openapi.json 尚未产出时的提示
+      - name: openapi.json 缺失时的提示（兜底，正常不该出现）
         if: ${{ hashFiles('openapi.json') == '' }}
-        run: echo "::warning title=openapi drift check skipped::仓库根 openapi.json 尚不存在（W1-M1 任务产出前）——本步骤临时跳过，属已知临时状态"
+        run: echo "::warning title=openapi drift check skipped::仓库根 openapi.json 不存在，漂移检查无法执行。它由 scripts/export_openapi.ps1 产出、由 L1 冻结，正常状态不应缺失 —— 缺失本身就是一个需要处理的问题"
 
       # ---------------------------------------------------------------------
       # 步骤 4：覆盖率缺口检查
@@ -286,9 +286,15 @@ jobs:
 
       # ---------------------------------------------------------------------
       # 尚未接入的后续步骤（等对应产物出现再加，**不要在没产物时写空转步骤**）：
-      #   · 前端 tsc --noEmit + 生成类型是否最新 → 依赖 web/**（M2 任务）与
-      #     web/src/api/generated/**（L1 独占，由 openapi.json 生成）
+      #   · 前端（web/**）的契约一致性与 type-check → **已拆到独立文件
+      #     `.github/workflows/ci-web.yml`**（需求方选定"前后端两条独立流水线"，
+      #     见 docs/agents/前端仓库归属对比.md §7）。本文件不再重复那两步。
       #   · 黄金路径 E2E → 依赖 tests/golden-path/**（L1 独占）
       #   · 变异测试（nightly，不阻塞 PR）→ 由独立 L3 Agent 手工改坏实现完成
       #     （docs/testing/README.md §2 纪律三）
+      #
+      # ⚠️ 本文件**刻意不加 `paths:` 过滤**：后端 job 是项目的主闸门，
+      #    **不允许它被静默跳过** —— 这个项目已经被「静默跳过」坑过一次
+      #    （Surefire 默认不跑 `*IT.java`：测试全绿却从未执行）。
+      #    前端的 ci-web.yml 加了过滤（它是附加的、便宜的 job），理由写在那文件里。
       # ---------------------------------------------------------------------
