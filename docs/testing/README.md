@@ -71,6 +71,7 @@
 | 属性测试 | **jqwik** | 对幂等/并发类不变量强于手写用例。例：「任意调用序列下，`post_collect` 行数 == 去重后的 `(post_id,user_id)` 组合数」 |
 | 架构约束 | **ArchUnit** | 铁律 3（禁跨模块调用）、铁律 7（禁重组件依赖） |
 | 接口测试 | REST Assured / MockMvc | 对齐 `openapi.json` |
+| 人工联调台 | **Apifox**（**只读契约**） | 只允许**导入** `openapi.json`；**禁止**在 Apifox 里手工改接口定义、**禁止**把 Apifox 导出的 OpenAPI 回写仓库 —— 那会造出第二份契约。定位、四条红线与"为什么不用它跑自动化"见 [`../adr/0012`](../adr/0012-接口联调台与自动化测试的分工.md) |
 | 前端 E2E | **Playwright** | 支持移动端设备模拟；能用从 `openapi.json` 生成的 mock 独立跑 |
 | 前端类型 | `openapi-typescript` / `orval` | 从 `openapi.json` 生成类型，**契约变了前端就编译报错** |
 | 变异测试（可选） | pitest | 慢，放 nightly |
