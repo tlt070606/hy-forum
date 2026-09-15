@@ -1,0 +1,191 @@
+<template>
+  <view class="page">
+    <!-- 顶部品牌区 -->
+    <view class="hero">
+      <text class="hero__title">Hy论坛</text>
+      <text class="hero__subtitle">中文综合论坛 · 含资源分享版块</text>
+    </view>
+
+    <!-- 登录态卡片：已登录显示用户信息，未登录给出登录/注册入口 -->
+    <view class="hy-card user-card">
+      <template v-if="auth.isLoggedIn">
+        <view class="user-card__row">
+          <image class="user-card__avatar" :src="avatarSrc" mode="aspectFill" />
+          <view class="user-card__info">
+            <text class="user-card__name" data-testid="index-nickname">{{ auth.displayName }}</text>
+            <text class="user-card__meta">已登录</text>
+          </view>
+        </view>
+        <wd-button type="info" size="small" plain block @click="onLogout">退出登录</wd-button>
+      </template>
+
+      <template v-else>
+        <text class="user-card__hint">登录后可发帖、评论与收藏</text>
+        <view class="user-card__actions">
+          <wd-button type="primary" block @click="goLogin">登录</wd-button>
+          <wd-button v-if="registerMode !== 'closed'" plain block @click="goRegister">
+            注册
+          </wd-button>
+        </view>
+        <!-- 关闭注册时明确告知，避免用户到处找入口 -->
+        <text v-if="registerMode === 'closed'" class="user-card__closed">
+          当前暂未开放注册
+        </text>
+      </template>
+    </view>
+  </view>
+</template>
+
+<script setup lang="ts">
+/**
+ * 首页。
+ *
+ * M2 阶段定位：**工程骨架的落地页 + 登录态入口 + 契约缺口的可视化说明**。
+ * 真正的帖子双流（关注/全部）依赖 M3 的 `/api/posts`，后端尚未交付，故此页暂不发起该请求。
+ */
+import { onShow } from '@dcloudio/uni-app'
+import { ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { fetchRegisterMode } from '@/api/auth'
+import type { RegisterMode } from '@/api/types'
+
+const auth = useAuthStore()
+
+/** 注册模式。默认按 closed 保守处理，拿到真实值后再决定是否显示注册入口 */
+const registerMode = ref<RegisterMode>('closed')
+
+/** 头像地址：用户没设头像时用本地占位图，避免 <image> 空 src 的告警 */
+const avatarSrc = ref('/static/avatar-default.png')
+
+onShow(async () => {
+  // 注册模式：每次进入首页刷新一次，管理员切换后无需用户重开应用
+  registerMode.value = await fetchRegisterMode()
+
+  // 已登录则校准用户信息（token 失效会自动降级为未登录）
+  if (auth.isLoggedIn) {
+    try {
+      const me = await auth.ensureProfile()
+      if (me?.avatarUrl) avatarSrc.value = me.avatarUrl
+    } catch (e) {
+      // 网络问题不该阻塞首页渲染，仅提示
+      console.warn('[index] 获取用户信息失败', e)
+    }
+  } else {
+    // 未登录时确保不残留上一个账号的信息
+    avatarSrc.value = '/static/avatar-default.png'
+  }
+})
+
+function goLogin() {
+  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
+}
+
+function goRegister() {
+  uni.navigateTo({ url: '/pages/auth/index?mode=register' })
+}
+
+async function onLogout() {
+  const res = await uni.showModal({
+    title: '退出登录',
+    content: '确定要退出当前账号吗？',
+  })
+  if (res.confirm) {
+    await auth.logout()
+    /*
+     * 退出后回到登录页。
+     * 为什么不是留在首页：登录页现在是应用入口，退出登录的语义就是"回到未登录起点"。
+     * 留在首页会让用户看不出自己已经退出（首页未登录态与已登录态差别不明显）。
+     */
+    uni.reLaunch({ url: '/pages/auth/index' })
+  }
+}
+</script>
+
+<style lang="scss" scoped>
+@use '@/styles/variables.scss' as *;
+
+.page {
+  min-height: 100vh;
+  padding: $hy-space-md;
+  box-sizing: border-box;
+}
+
+/* ---------- 品牌区 ---------- */
+.hero {
+  padding: $hy-space-lg $hy-space-sm $hy-space-xl;
+  display: flex;
+  flex-direction: column;
+
+  &__title {
+    font-size: 56rpx;
+    font-weight: 600;
+    color: $hy-color-primary;
+    letter-spacing: 2rpx;
+  }
+
+  &__subtitle {
+    margin-top: $hy-space-xs;
+    font-size: $hy-font-sm;
+    color: $hy-text-secondary;
+  }
+}
+
+/* ---------- 用户卡片 ---------- */
+.user-card {
+  margin-bottom: $hy-space-md;
+
+  &__row {
+    display: flex;
+    align-items: center;
+    margin-bottom: $hy-space-md;
+  }
+
+  &__avatar {
+    width: 96rpx;
+    height: 96rpx;
+    border-radius: 50%;
+    background-color: $hy-bg-hover;
+    flex-shrink: 0;
+  }
+
+  &__info {
+    margin-left: $hy-space-md;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  &__name {
+    font-size: $hy-font-lg;
+    font-weight: 600;
+    color: $hy-text-primary;
+  }
+
+  &__meta {
+    margin-top: 4rpx;
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
+  }
+
+  &__hint {
+    display: block;
+    font-size: $hy-font-md;
+    color: $hy-text-regular;
+    margin-bottom: $hy-space-md;
+  }
+
+  &__actions {
+    display: flex;
+    flex-direction: column;
+    gap: $hy-space-sm;
+  }
+
+  &__closed {
+    display: block;
+    margin-top: $hy-space-sm;
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
+    text-align: center;
+  }
+}
+</style>
