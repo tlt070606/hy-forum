@@ -34,6 +34,16 @@ application-local.yml
 application-local.yaml
 application-local.properties
 
+# 例外：`web/` 的前端 env 是**配置而非凭据**，必须入库。
+# 它们只记录"开发/生产各连哪个后端地址"，缺了前端就构建不出正确产物
+# （`uni build` 只读 `.env` 与 `.env.production`，不读 `.env.development` —— 这是实测过的坑）。
+# ⚠️ 规矩：**真东西放 `.env.local` / `.env.*.local`**，那几个仍被上面的规则忽略
+#    （`web/.gitignore` 里也再忽略了一遍）。不要把任何密钥写进这三个文件 —— 铁律 5。
+# 这几行必须排在 `.env.*` 之后，否则否定规则会被先前的忽略规则盖掉。
+!web/.env
+!web/.env.development
+!web/.env.production
+
 # ---------- 前端（M2 起会用到）----------
 node_modules/
 dist/
