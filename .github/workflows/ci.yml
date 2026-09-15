@@ -202,12 +202,14 @@ jobs:
 
       # ---------------------------------------------------------------------
       # 步骤 3：openapi.json 漂移检查
-      #   重新从运行中的应用导出 /v3/api-docs，与仓库里的 openapi.json 逐字节
-      #   （规范化 JSON 后）比对；不一致 → 失败。防止「注解改了、契约没更新」。
+      #   重新从运行中的应用导出 /v3/api-docs，与仓库里的 openapi.json
+      #   规范化 JSON 后逐字段比对；不一致 → 失败。防止「注解改了、契约没更新」。
       #
-      #   ⚠️ 临时状态（任务书 §5.4-3）：openapi.json 由 W1-M1 任务产出，
-      #      目前 **尚不存在** → 本步骤按 `if: hashFiles(...)` 直接跳过并打 warning。
-      #      文件出现后自动生效（届时导出逻辑需要真机验证一次）。
+      #   ⚠️ 比对前**摘掉 `servers`**（2026-09-15 修复）。原因见下面 python 段的注释：
+      #      servers[0].url 里带着**监听端口**，而本步骤把应用起在 18080、
+      #      仓库文件是 8080 → 逐字比对必然假红，且报错文案指向"注解"，方向是错的。
+      #
+      #   当前状态：`openapi.json` 已产出（M1 版，8 个路径），本步骤已真实生效。
       # ---------------------------------------------------------------------
       - name: openapi.json 漂移检查
         if: ${{ hashFiles('openapi.json') != '' }}
@@ -241,13 +243,25 @@ jobs:
             exit 1
           fi
 
-          # 规范化后比对：格式/键序差异不算漂移，只有**内容**差异才算
+          # 规范化后比对：格式/键序差异不算漂移，只有**内容**差异才算。
+          #
+          # ⚠️ 比对前摘掉 `servers`（2026-09-15）：
+          #   springdoc 的 servers[0].url 是**从请求的 Host 现推**出来的，带监听端口。
+          #   本步骤把应用起在 18080（见上面的 SERVER_PORT），而仓库里的 openapi.json
+          #   是导出时那个端口的产物（8080）→ 逐字比对**必然假红**，而且失败文案写成
+          #   "注解改了但契约没更新"，把人引到一个完全无关的方向（曾据此误判过一次）。
+          #   已在本地复现 18080 vs 8080：唯一差异就是这一行端口。
+          #   **端口不属于契约内容**，故两侧都摘掉再比。
+          #
+          #   代价（必须承认）：将来若真有人给接口文档显式声明 servers（如走网关），
+          #   这一步不会报警 —— 那种情况需要另外补一条断言，而不是把它塞回逐字比对。
           python3 - <<'PY'
           import json, sys, difflib
 
           def load(path):
               with open(path, encoding='utf-8') as f:
                   doc = json.load(f)
+              doc.pop('servers', None)
               return json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2).splitlines(keepends=True)
 
           repo = load('openapi.json')
