@@ -1,0 +1,167 @@
+/**
+ * 认证模块接口（对应 `openapi.json` 的「认证」「用户」两个 tag）。
+ *
+ * 逐条对齐契约的 8 个路径中本前端会用到的 6 个：
+ *   POST /api/auth/register       注册
+ *   POST /api/auth/login          登录
+ *   POST /api/auth/logout         注销
+ *   GET  /api/auth/captcha        图形验证码
+ *   GET  /api/auth/register-mode  注册模式
+ *   GET  /api/user/me             当前登录用户
+ *
+ * （另 2 个是 `/api/admin/login`、`/api/admin/logout`，属管理后台独立前端工程，不在此实现。）
+ *
+ * 路径不写死字符串，统一取 `contract.ts` 的 `ENDPOINTS`，避免出现
+ * "接口改了但某个文件漏改"的漂移。
+ */
+
+import { get, post } from '@/utils/request'
+import { ENDPOINTS } from './contract'
+import type { CaptchaVO, LoginRequest, LoginVO, RegisterMode, RegisterRequest, UserVO } from './types'
+import { ApiError } from '@/utils/request'
+
+/* ---------------------------------------------------------------------------
+ * 图形验证码
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 获取图形验证码。
+ *
+ * ⚠️ 契约把这个响应的 `data` 声明为 `Record<string, any>`（形状缺口），
+ * 因此**必须做运行时校验**：如果后端把 `base64Image` 改名，前端要立刻抛错，
+ * 而不是把 `undefined` 塞进 `<image src>` 导致"验证码区域一片空白"这种
+ * 根因极难定位的现象（小程序端 base64 异常时甚至不报错，只是不显示）。
+ */
+export async function fetchCaptcha(): Promise<CaptchaVO> {
+  const data = await get<Record<string, unknown>>(ENDPOINTS.captcha.path, undefined, {
+    // 验证码是公开接口，但不带 token 也无妨；显式声明意图
+    withAuth: false,
+    // 401 不应清本地登录态：这是个公开接口，返回 401 说明后端异常，
+    // 把用户的正常会话清掉属于误伤
+    clearAuthOn401: false,
+  })
+
+  const uuid = data?.uuid
+  const base64Image = data?.base64Image
+
+  if (typeof uuid !== 'string' || !uuid) {
+    throw new ApiError({
+      kind: 'business',
+      code: -1,
+      message: '验证码服务返回异常（缺少 uuid），请联系管理员',
+    })
+  }
+  if (typeof base64Image !== 'string' || !base64Image) {
+    throw new ApiError({
+      kind: 'business',
+      code: -1,
+      message: '验证码服务返回异常（缺少图片），请联系管理员',
+    })
+  }
+
+  return { uuid, base64Image }
+}
+
+/* ---------------------------------------------------------------------------
+ * 注册模式
+ * ------------------------------------------------------------------------- */
+
+/** 合法的注册模式取值，用于运行时白名单校验 */
+const VALID_MODES: readonly RegisterMode[] = ['open', 'invite', 'closed']
+
+/**
+ * 查询当前注册模式。
+ *
+ * 同样存在形状缺口（`data` 在契约里是 `Record<string, any>`），
+ * 因此这里做**白名单校验 + 安全兜底**。
+ *
+ * 兜底策略（重要）：拿不到或拿到非法值时返回 `'closed'` 还是 `'open'`？
+ * 选择 **`'closed'`**：注册入口是"多给一个按钮"还是"让用户填完表单才被拒"的区别。
+ * 在配置读取异常时宁可少显示入口（保守），也不要让用户白填一遍。
+ * 注意：这只是**前端展示策略**，真正的准入判定在后端，前端兜底不影响安全。
+ */
+export async function fetchRegisterMode(): Promise<RegisterMode> {
+  try {
+    const data = await get<Record<string, unknown>>(ENDPOINTS.registerMode.path, undefined, {
+      withAuth: false,
+      clearAuthOn401: false,
+    })
+
+    // 后端可能直接返回字符串，也可能包成 { mode: 'open' } —— 两种都容忍，
+    // 因为契约没静态声明形状，多容错一点比误判"关闭注册"好
+    const raw = typeof data === 'string' ? data : data?.mode
+    if (typeof raw === 'string' && (VALID_MODES as readonly string[]).includes(raw)) {
+      return raw as RegisterMode
+    }
+
+    console.warn('[auth] register-mode 返回值不在白名单内，按 closed 处理：', data)
+    return 'closed'
+  } catch (e) {
+    console.warn('[auth] 获取注册模式失败，按 closed 处理', e)
+    return 'closed'
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 注册 / 登录 / 注销
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 注册。
+ *
+ * 契约要点（`RegisterRequest` 的 required）：
+ * `username` `password` `nickname` `captchaUuid` `captchaCode` `agreeProtocol` 全部必填；
+ * `inviteCode` 仅在 `invite` 模式下必填。
+ *
+ * 成功后后端返回 `UserVO`，**不返回 token** —— 因此注册后仍需调用登录
+ * （这是契约的既定行为，前端不要自作聪明地"注册即登录"）。
+ */
+export function register(payload: RegisterRequest): Promise<UserVO> {
+  return post<UserVO>(ENDPOINTS.register.path, payload, {
+    withAuth: false,
+    // 注册时若 401，不该清掉已有登录态
+    clearAuthOn401: false,
+  })
+}
+
+/**
+ * 登录。成功返回 `{ token, user }`。
+ *
+ * `clearAuthOn401: false` 是有意的：密码错误的语义虽然可能返回 401，
+ * 但此时用户可能本来就有别的有效会话（例如多标签页），
+ * 清掉会把用户无故踢下线。
+ */
+export function login(payload: LoginRequest): Promise<LoginVO> {
+  return post<LoginVO>(ENDPOINTS.login.path, payload, {
+    withAuth: false,
+    clearAuthOn401: false,
+  })
+}
+
+/**
+ * 注销当前 token。
+ *
+ * ⚠️ 调用方必须在**无论成功失败**都要清理本地登录态：
+ * 服务端注销失败（如 token 已过期）时，本地还留着 token 会让用户
+ * "看着像已登录、实际所有请求都 401"。见 `stores/auth.ts` 的 `logout()`。
+ */
+export function logout(): Promise<void> {
+  return post<void>(ENDPOINTS.logout.path, undefined, {
+    withAuth: true,
+    // 注销接口自己返回 401 时清掉本地态是正确的
+    clearAuthOn401: true,
+  })
+}
+
+/* ---------------------------------------------------------------------------
+ * 当前用户
+ * ------------------------------------------------------------------------- */
+
+/** 获取当前登录用户信息（需要登录态） */
+export function fetchMe(): Promise<UserVO> {
+  return get<UserVO>(ENDPOINTS.me.path, undefined, {
+    withAuth: true,
+    // 401 说明 token 已失效，清本地态让应用回到"未登录"这一致状态
+    clearAuthOn401: true,
+  })
+}

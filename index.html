@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      /**
+       * 视口适配脚本（照抄 uni-app 官方模板）。
+       *
+       * 为什么用 document.write 而不是直接写 meta：
+       * 需要在运行时判断设备是否支持 `env(safe-area-inset-*)`（刘海屏/全面屏安全区），
+       * 只有支持时才加 `viewport-fit=cover`，否则老设备上会出渲染异常。
+       * 这段必须在 <body> 之前同步执行，所以不能放到 Vue 里。
+       */
+      var coverSupport =
+        'CSS' in window &&
+        typeof CSS.supports === 'function' &&
+        (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
+      document.write(
+        '<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0' +
+          (coverSupport ? ', viewport-fit=cover' : '') +
+          '" />'
+      )
+    </script>
+    <title>Hy论坛</title>
+    <!--preload-links-->
+    <!--app-context-->
+  </head>
+  <body>
+    <div id="app"><!--app-html--></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

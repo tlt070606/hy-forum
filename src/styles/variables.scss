@@ -1,0 +1,54 @@
+/**
+ * 全局设计变量（简洁论坛风）。
+ *
+ * 为什么用 SCSS 变量而不是纯 CSS 变量：
+ * 需要在小程序端也生效。小程序对 CSS 自定义属性（var()）的支持随基础库版本而变，
+ * 而 SCSS 变量在**编译期**就被替换成字面值，三端行为完全一致 —— 这是 uni-app 的推荐做法。
+ *
+ * 命名前缀 `hy-` 是项目代号（Hy论坛），避免与 wot-design-uni 的变量冲突。
+ */
+
+/* ---------- 主色 ---------- */
+/*
+ * 选蓝色系：#2b6cff 接近 uni-app/wot-design-uni 默认主色，减少主题覆盖成本；
+ * 论坛类产品用蓝比用红/橙更克制，不会与"警告/错误"语义抢注意力。
+ */
+$hy-color-primary: #2b6cff;
+$hy-color-primary-light: #eaf1ff;
+$hy-color-success: #07c160;
+$hy-color-warning: #fa9d3b;
+$hy-color-danger: #fa5151;
+
+/* ---------- 文字 ---------- */
+$hy-text-primary: #1a1a1a; // 标题、正文主色
+$hy-text-regular: #444444; // 次级正文
+$hy-text-secondary: #888888; // 辅助信息（时间、计数）
+$hy-text-placeholder: #bbbbbb; // 输入占位
+$hy-text-inverse: #ffffff;
+
+/* ---------- 背景 ---------- */
+$hy-bg-page: #f5f6f8; // 页面底色：比纯白灰一档，让白色卡片浮起来
+$hy-bg-card: #ffffff;
+$hy-bg-hover: #f2f3f5;
+
+/* ---------- 边框 ---------- */
+$hy-border-color: #ebedf0;
+
+/* ---------- 间距 ---------- */
+$hy-space-xs: 8rpx;
+$hy-space-sm: 16rpx;
+$hy-space-md: 24rpx;
+$hy-space-lg: 32rpx;
+$hy-space-xl: 48rpx;
+
+/* ---------- 圆角 ---------- */
+$hy-radius-sm: 8rpx;
+$hy-radius-md: 16rpx;
+$hy-radius-lg: 24rpx;
+
+/* ---------- 字号 ---------- */
+$hy-font-xs: 22rpx;
+$hy-font-sm: 24rpx;
+$hy-font-md: 28rpx;
+$hy-font-lg: 32rpx;
+$hy-font-xl: 40rpx;

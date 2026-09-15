@@ -1,0 +1,53 @@
+# ============================================================================
+# 行尾与编码规范
+# ----------------------------------------------------------------------------
+# 为什么需要它：本机是 Windows，而 CI 与将来可能的 Linux 环境是 LF。
+# 若不统一，会出现「本地正常、CI 报错」或「整文件 diff」这类噪音。
+#
+# 参考项目根仓库的做法（docs/agents/工作计划.md 广播区「脚本编码红线」）：
+#   - .ps1 必须带 UTF-8 BOM（PowerShell 5.1 在 GBK 下否则解析失败）
+#   - .sql / .md **不要**带 BOM
+# 本前端工程没有 .ps1 与 .sql，因此这里只统一行尾与文本判定。
+# ============================================================================
+
+# 默认：交给 git 自动判定文本文件，并统一为 LF 入库
+* text=auto eol=lf
+
+# ---- 明确为文本、用 LF ----
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.vue   text eol=lf
+*.json  text eol=lf
+*.jsonc text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.scss  text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+.gitignore    text eol=lf
+.gitattributes text eol=lf
+.npmrc        text eol=lf
+.env*         text eol=lf
+
+# ---- 二进制：禁止任何转换（否则会损坏文件）----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.ttf   binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary
+
+# ---- 生成物/快照：标记为生成，避免 PR 里出现巨大 diff ----
+src/api/generated/schema.d.ts        linguist-generated=true
+src/api/generated/openapi.snapshot.json linguist-generated=true
+
+# ---- 语言统计：把 .vue 归到 Vue，让 GitHub 统计更准 ----
+*.vue linguist-language=Vue

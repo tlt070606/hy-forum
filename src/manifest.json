@@ -1,0 +1,67 @@
+{
+  "name": "Hy论坛",
+  "appid": "",
+  "description": "Hy论坛 —— 中文综合论坛（含资源分享版块）",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+
+  /* 5+App（安卓）特有相关 */
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {},
+    "distribute": {
+      "android": {
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.CHANGE_NETWORK_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.VIBRATE\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.WAKE_LOCK\"/>"
+        ]
+      },
+      "ios": {},
+      "sdkConfigs": {}
+    }
+  },
+
+  "quickapp": {},
+
+  /*
+   * 微信小程序配置。
+   *
+   * ⚠️ 两条硬约束（见 docs/adr/0011 的 C1 / C2 / C4）：
+   *   C1 个人主体小程序不支持 web-view → 页面必须真写，不能套站点
+   *   C2 request 只允许已备案 HTTPS 域名 → 本地后端只能靠开发者工具的
+   *      「不校验合法域名」开关连通，下面 urlCheck:false 就是配套设置
+   *   C4 个人主体类目不允许「论坛/社区」
+   * 因此小程序端**仅用于练习、不上线**，不要为上线投入精力。
+   *
+   * appid 留空：用微信开发者工具打开工程时选「测试号」即可，无需注册主体。
+   * **不要把真实 AppID 之外的任何密钥写进这里** —— 小程序包可被反编译（铁律 5）。
+   */
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "minified": true
+    },
+    "usingComponents": true
+  },
+
+  "uniStatistics": {
+    "enable": false
+  },
+
+  "vueVersion": "3"
+}
