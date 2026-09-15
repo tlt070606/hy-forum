@@ -34,11 +34,14 @@ import uni from '@dcloudio/vite-plugin-uni'
  */
 export default defineConfig(() => {
   /*
-   * 代理目标：优先用环境变量，未设置时回退到本地后端。
-   * 这里不 import `src/utils/env.ts` —— 那是运行时代码（含 import.meta.env 的
-   * 启动期校验与 H5/小程序分支），在 vite 配置阶段加载会引入不必要的耦合。
+   * 代理目标：本机后端地址。
+   *
+   * ⚠️ 这里**不能**复用 `VITE_API_BASE_URL`：那个变量在开发期是 `/api`（相对路径），
+   *    它的职责是"H5 端请求时用的基地址"，不是"代理往哪儿转发"。
+   *    用同一个变量会让代理去转发到 `/api` 自己（死循环）或直接失败。
+   *    （本机实测踩过：小程序端也因此拿到相对地址而连不上后端。）
    */
-  const apiTarget = process.env.VITE_API_BASE_URL || 'http://127.0.0.1:8080'
+  const apiTarget = process.env.VITE_DEV_SERVER_ORIGIN || 'http://127.0.0.1:8080'
 
   /** 开发服务器与预览服务器共用的代理配置 */
   const proxy = {

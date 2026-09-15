@@ -91,7 +91,12 @@ async function onLogout() {
   })
   if (res.confirm) {
     await auth.logout()
-    uni.showToast({ title: '已退出登录', icon: 'none' })
+    /*
+     * 退出后回到登录页。
+     * 为什么不是留在首页：登录页现在是应用入口，退出登录的语义就是"回到未登录起点"。
+     * 留在首页会让用户看不出自己已经退出（首页未登录态与已登录态差别不明显）。
+     */
+    uni.reLaunch({ url: '/pages/auth/index' })
   }
 }
 </script>

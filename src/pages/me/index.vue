@@ -148,7 +148,12 @@ async function onLogout() {
   })
   if (!res.confirm) return
   await auth.logout()
-  uni.showToast({ title: '已退出登录', icon: 'none' })
+  /*
+   * 退出后回登录页（登录页已是应用入口）。
+   * 用 reLaunch 清空页面栈：本页在未登录态下只是一个引导页，
+   * 把它留在栈里没有意义，而且会让"我的"页的未登录态与登录页重复。
+   */
+  uni.reLaunch({ url: '/pages/auth/index' })
 }
 </script>
 

@@ -321,6 +321,10 @@ test('退出登录：token 被清除且回到未登录态', async ({ page }) => 
   // token 必须被清除（无论服务端注销成功与否，本地都必须清 —— 见 stores/auth.ts 注释）
   await expect.poll(async () => readToken(page), { timeout: 10_000 }).toBe('')
 
-  // 页面回到未登录引导
-  await expect(page.getByText('你还没有登录')).toBeVisible({ timeout: 10_000 })
+  /*
+   * 退出后应落到**登录页**（登录页现为应用启动页，退出＝回到未登录起点）。
+   * 断言登录表单可见，而不是断言 URL —— 理由同用例 1（hash 路由的 Tab 不体现在 URL 上）。
+   */
+  await expect(page.getByTestId('login-username')).toBeVisible({ timeout: 10_000 })
+  await expect(uniInput(page, 'login-username')).toHaveValue('')
 })

@@ -8,15 +8,15 @@
 
   "pages": [
     {
-      "path": "pages/index/index",
-      "style": {
-        "navigationBarTitleText": "Hy论坛"
-      }
-    },
-    {
       "path": "pages/auth/index",
       "style": {
         "navigationBarTitleText": "登录 / 注册"
+      }
+    },
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "Hy论坛"
       }
     },
     {

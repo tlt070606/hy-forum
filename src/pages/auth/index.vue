@@ -73,11 +73,20 @@
           登录
         </wd-button>
 
-        <view v-if="registerMode !== 'closed'" class="form__footer">
+        <view v-if="registerAvailable" class="form__footer">
           <text class="form__hint">还没有账号？</text>
           <text class="form__link" data-testid="login-go-register" @click="switchMode('register')">
             立即注册
           </text>
+        </view>
+        <!--
+          区分两种"注册用不了"的情形，文案必须不同：
+          · 状态未知（查询失败）→ 提示网络/配置问题，让用户或开发者知道该查什么
+          · 后端确实关闭 → 明确说明是管理员关闭
+          混为一谈正是上一版的错误（把网络故障显示成"暂未开放注册"）。
+        -->
+        <view v-else-if="registerModeError" class="form__footer">
+          <text class="form__warn" data-testid="register-mode-error">{{ registerModeError }}</text>
         </view>
         <view v-else class="form__footer">
           <text class="form__hint">当前暂未开放注册</text>
@@ -242,11 +251,26 @@
       <text class="auth__note">密码经加盐哈希加密存储，服务端不保存明文</text>
     </view>
 
-    <!-- 关闭注册时的兜底提示（不遮罩，避免用户看不出为什么注册不了） -->
-    <view v-if="registerMode === 'closed' && mode === 'register'" class="closed">
-      <text class="closed__text">
-        管理员已暂时关闭新用户注册。如已有账号可直接登录；若需要账号，请联系管理员。
-      </text>
+    <!--
+      「先逛逛」出口（在卡片**外面**）。
+      ========================================================================
+      为什么必须有它（不是可选的体贴，是**结构性必需**）
+      ========================================================================
+      本页现在是应用的**启动页**（pages.json 第一项），且它靠 `reLaunch` 离开。
+      因此在**微信小程序端**会同时失去两个导航入口：
+        · 本页是页面栈里唯一的页面 → **左上角没有返回箭头**
+        · 本页不是 tabBar 页面 → **底部 TabBar 也不显示**
+      用户会被**困在登录页**，这个链接是唯一的逃生通道。
+
+      H5 端同样需要：浏览器虽然能按后退，但那只回到空白初始页，不能算设计。
+    -->
+    <view class="skip">
+      <text class="skip__link" data-testid="auth-skip" @click="goBrowse">先随便逛逛，暂不登录</text>
+    </view>
+
+    <!-- 注册不可用时的说明（不遮罩，避免用户看不出为什么注册不了） -->
+    <view v-if="!registerAvailable && mode === 'register'" class="closed">
+      <text class="closed__text">{{ registerUnavailableText }}</text>
     </view>
   </view>
 </template>
@@ -277,7 +301,7 @@
  * 若确认要做滑块，正确路径是提 CR 让后端加接口，而不是前端造假控件。
  */
 import { onLoad } from '@dcloudio/uni-app'
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchCaptcha, fetchRegisterMode, register } from '@/api/auth'
 import type { RegisterMode, RegisterRequest } from '@/api/types'
@@ -302,7 +326,35 @@ const TABS: { key: Mode; label: string }[] = [
 const mode = ref<Mode>('login')
 const submitting = ref(false)
 const showPassword = ref(false)
+/** 后端告知的注册模式。仅在 registerModeError 为空时才有意义 */
 const registerMode = ref<RegisterMode>('closed')
+/**
+ * 注册模式查询失败的文案。非空表示**状态未知**，必须向用户报错。
+ *
+ * 为什么单独一个字段而不是把失败也塞进 registerMode：
+ * 上一版就是失败时静默当成 `'closed'`，结果小程序端连不上后端时
+ * 界面显示"当前暂未开放注册"，把网络/配置问题伪装成了业务状态。
+ * 见 `api/auth.ts` 里 `RegisterModeResult` 的说明。
+ */
+const registerModeError = ref('')
+
+/** 注册是否**可用**（已知开放，或已知邀请制）。失败时一律为 false，但不冒充"已关闭" */
+const registerAvailable = computed(
+  () => registerModeError.value === '' && registerMode.value !== 'closed'
+)
+
+/**
+ * 注册不可用时展示给用户的说明。
+ *
+ * 必须区分两类原因，否则又会把"连不上后端"显示成"管理员关闭了注册"：
+ * - 有 `registerModeError` → 查询失败（网络/配置问题），直接把原因说出来
+ * - 无错误且模式为 closed → 后端**确实**关闭了注册
+ */
+const registerUnavailableText = computed(() =>
+  registerModeError.value
+    ? registerModeError.value
+    : '管理员已暂时关闭新用户注册。如已有账号可直接登录；若需要账号，请联系管理员。'
+)
 
 const captchaUuid = ref('')
 const captchaImage = ref('')
@@ -320,29 +372,45 @@ const form = reactive({
 /**
  * 页面加载。
  *
- * `mode` 参数支持从其它页面直接打开注册 Tab（`?mode=register`），
- * 这样"立即注册"入口不必依赖用户再点一次 Tab。
+ * `mode` 参数支持直接打开注册 Tab（`?mode=register`）。
+ * 注意本页现在是**应用的启动页**（pages.json 第一项），因此不带参数时落在登录 Tab。
  */
 onLoad(async (options) => {
   const wanted = (options as Record<string, string> | undefined)?.mode
   if (wanted === 'register') mode.value = 'register'
 
-  registerMode.value = await fetchRegisterMode()
+  const result = await fetchRegisterMode()
 
-  // 已关闭注册时把用户拉回登录 Tab，并提示原因
-  if (mode.value === 'register' && registerMode.value === 'closed') {
+  if (!result.ok) {
+    // 明确报错：注册状态未知，绝不猜成 closed
+    registerModeError.value = result.error
     mode.value = 'login'
-    uni.showToast({ title: '当前暂未开放注册', icon: 'none' })
+    return
   }
 
-  if (registerMode.value !== 'closed') await refreshCaptcha()
+  registerModeError.value = ''
+  registerMode.value = result.mode
+
+  // 后端**确实**关闭了注册：把用户拉回登录 Tab 并说明
+  if (mode.value === 'register' && result.mode === 'closed') {
+    mode.value = 'login'
+  }
+
+  if (result.mode !== 'closed') await refreshCaptcha()
 })
 
-/** 切换 Tab。切到注册且未关闭时确保有验证码 */
+/** 切换 Tab。切到注册时校验可用性并确保有验证码 */
 async function switchMode(next: Mode) {
-  if (next === 'register' && registerMode.value === 'closed') {
-    uni.showToast({ title: '当前暂未开放注册', icon: 'none' })
-    return
+  if (next === 'register') {
+    // 状态未知：提示语必须与"管理员关闭了注册"区分开，否则又是一次误导
+    if (registerModeError.value) {
+      uni.showToast({ title: registerModeError.value, icon: 'none', duration: 2500 })
+      return
+    }
+    if (registerMode.value === 'closed') {
+      uni.showToast({ title: '当前暂未开放注册', icon: 'none' })
+      return
+    }
   }
   mode.value = next
   if (next === 'register' && !captchaImage.value) await refreshCaptcha()
@@ -514,6 +582,17 @@ async function onRegister() {
 function goDoc(name: 'agreement' | 'privacy' | 'disclaimer') {
   uni.navigateTo({ url: `/pages/${name}/index` })
 }
+
+/**
+ * 「先随便逛逛」——离开登录页进入首页。
+ *
+ * 用 `reLaunch` 而不是 `navigateTo`：
+ * 本页是启动页，用 navigateTo 会把它留在页面栈底，用户此后按返回又回到登录页，
+ * 形成"逛到一半被弹回登录"的怪异体验。reLaunch 清空页面栈，行为确定。
+ */
+function goBrowse() {
+  uni.reLaunch({ url: '/pages/index/index' })
+}
 </script>
 
 <style lang="scss" scoped>
@@ -650,6 +729,18 @@ function goDoc(name: 'agreement' | 'privacy' | 'disclaimer') {
     font-size: $hy-font-sm;
     color: $hy-color-primary;
     margin-left: 8rpx;
+  }
+
+  /*
+   * 注册状态查询失败的警告文案。
+   * 用警告色而非普通灰，是为了让"这是异常"一眼可见 ——
+   * 上一版把失败显示成普通的"暂未开放注册"，用户与开发者都无法察觉异常。
+   */
+  &__warn {
+    font-size: $hy-font-xs;
+    color: $hy-color-danger;
+    text-align: center;
+    line-height: 1.6;
   }
 }
 
@@ -840,7 +931,21 @@ function goDoc(name: 'agreement' | 'privacy' | 'disclaimer') {
   }
 }
 
-/* ---------- 关闭注册提示 ---------- */
+/* ---------- 「先随便逛逛」出口 ---------- */
+.skip {
+  padding: $hy-space-lg 0 $hy-space-md;
+  display: flex;
+  justify-content: center;
+
+  &__link {
+    font-size: $hy-font-sm;
+    color: $hy-text-secondary;
+    /* 加下划线，让它明显是"可点的链接"而不是说明文字 */
+    text-decoration: underline;
+  }
+}
+
+/* ---------- 注册不可用提示 ---------- */
 .closed {
   margin: $hy-space-md;
   padding: $hy-space-md;

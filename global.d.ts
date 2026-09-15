@@ -23,8 +23,21 @@ declare module 'vue' {
  * - 本前端**不持有任何 OSS AccessKey / AppSecret**，图片上传走服务端签名直传（铁律 8）
  */
 interface ImportMetaEnv {
-  /** 后端接口基地址。例：`http://127.0.0.1:8080` */
+  /**
+   * 后端接口基地址。
+   *
+   * ⚠️ 形态随平台不同，见 `src/utils/env.ts` 的说明：
+   * - H5：**同源相对路径**（开发期用 `/api`），走 Vite 代理 / Nginx 反代
+   * - 小程序 / App：**绝对地址**（`uni.request` 不支持相对路径）
+   */
   readonly VITE_API_BASE_URL: string
+
+  /**
+   * 本机后端绝对地址，供**小程序 / App 端**与 **Vite 代理转发目标**使用。
+   * 例：`http://127.0.0.1:8080`
+   */
+  readonly VITE_DEV_SERVER_ORIGIN: string
+
   /** 当前构建目标标识，仅用于调试展示，不参与业务逻辑 */
   readonly VITE_APP_ENV: string
 }

@@ -59,23 +59,51 @@ export function getApiBaseUrl(): string {
   // #endif
 
   // eslint-disable-next-line no-unreachable
-  const raw = (import.meta.env.VITE_API_BASE_URL ?? '').trim()
+  /*
+   * ==========================================================================
+   * 非 H5 端（小程序 / App）地址的选取规则 —— 这里的设计改过一次，原因值得记下来
+   * ==========================================================================
+   * ❌ 曾经的错法：用 `import.meta.env.PROD` 判断"生产构建就必读 VITE_API_BASE_URL"。
+   *    结果：**`uni build` 对任何平台都按 production 模式运行**（`uni build -p mp-weixin`
+   *    同样如此），于是小程序构建去读了 `.env.production` 里**故意留空**的
+   *    `VITE_API_BASE_URL`，被编译成 `"".trim()` → 应用一启动就抛错。
+   *    更糟的是构建完全成功，属于典型的"绿构建、白屏应用"。
+   *
+   * ✅ 现在的做法：**优先用已配置的绝对地址，回退到本机地址**。
+   *    - `VITE_API_BASE_URL` 为绝对地址（含 `://`）→ 用它。
+   *      这是**上线时的唯一开关**：在 `.env.production` 里填上已备案的 https 域名即可，
+   *      不需要改任何代码。
+   *    - 否则（留空，或开发期 H5 用的相对路径 `/api`）→ 回退 `VITE_DEV_SERVER_ORIGIN`
+   *      （`.env` 里定义，所有模式都加载，默认 `http://127.0.0.1:8080`）。
+   *      这样本地开发小程序/App 时无需额外配置就能连上本机后端。
+   *
+   * 因此：**.env.production 里 VITE_API_BASE_URL 留空 = 用本机后端；填了 = 用线上域名。**
+   */
+  const configuredApi = (import.meta.env.VITE_API_BASE_URL ?? '').trim()
+  const devOrigin = (import.meta.env.VITE_DEV_SERVER_ORIGIN ?? '').trim()
+
+  const raw = configuredApi.includes('://') ? configuredApi : devOrigin
+
+  if (!raw) {
+    throw new Error(
+      '[env] 非 H5 端（当前构建目标）缺少后端地址配置。\n' +
+        '请在 `.env.production` 里设置 `VITE_API_BASE_URL`（已备案的 https 域名），\n' +
+        '或在 `.env` 里确认 `VITE_DEV_SERVER_ORIGIN`（本机后端地址）。\n' +
+        '原因：小程序的 uni.request **不支持相对路径**，且要求域名已备案（ADR-0011 C2）。\n' +
+        '（铁律 5：地址必须走环境变量，不硬编码）'
+    )
+  }
 
   /*
-   * 非 H5 端（小程序 / App）**必须**是绝对地址：
-   * 这两端的 `uni.request` 不支持相对路径，且小程序端要求域名已备案。
-   *
-   * 开发期的 `.env.development` 写的是 `/api`（供 H5 走代理），
-   * 这在小程序端**不能直接用**，因此这里给出明确的、可操作的报错 ——
-   * 而不是让请求带着相对路径发出去，然后在运行时抛出难以理解的原生错误。
+   * 必须绝对地址。若误填成 `/api` 这类相对路径，小程序端会在运行时
+   * 把它解析到"项目域名"上，表现为请求全部失败、且错误信息难以理解 ——
+   * 本机实测事故：注册模式请求失败 → 界面显示"当前暂未开放注册"、注册 Tab 消失。
+   * 因此这里**在启动时就明确拒绝**，而不是让它带着错误配置跑起来。
    */
-  if (!raw || raw.startsWith('/')) {
+  if (raw.startsWith('/')) {
     throw new Error(
-      `[env] 非 H5 端（当前构建目标）必须配置**绝对地址**的 VITE_API_BASE_URL，当前值为 "${raw}"。\n` +
-        '原因：小程序的 uni.request 不支持相对路径，且要求域名已备案（ADR-0011 C2）。\n' +
-        '开发调试：在 .env.development 里改成绝对地址，例如 http://127.0.0.1:8080，\n' +
-        '          并在微信开发者工具中开启「不校验合法域名」。\n' +
-        '生产：在 .env.production 里填已备案的 https 域名。'
+      `[env] 非 H5 端必须使用**绝对地址**，当前为相对路径 "${raw}"。\n` +
+        '请改为 http://127.0.0.1:8080（开发）或 https://你的域名（生产）。'
     )
   }
 
@@ -84,7 +112,7 @@ export function getApiBaseUrl(): string {
     parsed = new URL(raw)
   } catch {
     throw new Error(
-      `[env] VITE_API_BASE_URL 不是合法 URL："${raw}"。` +
+      `[env] 后端地址不是合法 URL："${raw}"。` +
         '正确示例：http://127.0.0.1:8080 或 https://api.example.com'
     )
   }

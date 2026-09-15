@@ -99,35 +99,68 @@ export async function fetchCaptcha(): Promise<CaptchaVO> {
 const VALID_MODES: readonly RegisterMode[] = ['open', 'invite', 'closed']
 
 /**
+ * 注册模式查询结果。
+ *
+ * ==========================================================================
+ * 为什么是"结果对象"而不是直接返回 RegisterMode（这是一次修正）
+ * ==========================================================================
+ * 上一版实现是：查询失败时 `catch` 里**静默返回 `'closed'`**。
+ * 这个兜底造成了真实事故：小程序端因为地址配置问题连不上后端，
+ * `register-mode` 请求失败 → 被当成"管理员关闭了注册" → 注册 Tab 消失，
+ * 界面只显示"当前暂未开放注册"。**根因（网络/配置问题）被伪装成了业务状态**，
+ * 排查成本极高，而且看起来完全像后端配置错了。
+ *
+ * 所以现在必须区分两种语义：
+ * - `ok: true`  → 后端明确告知的注册模式（包含 `closed`，那是**真的**关闭）
+ * - `ok: false` → **查询失败，状态未知**，必须向用户显式报错，绝不冒充业务状态
+ *
+ * 注意：这只是**前端展示策略**，真正的准入判定始终在后端，前端报错不代表安全问题。
+ */
+export type RegisterModeResult =
+  | { ok: true; mode: RegisterMode }
+  | { ok: false; error: string }
+
+/**
  * 查询当前注册模式。
  *
- * 同样存在形状缺口（`data` 在契约里是 `Record<string, any>`），
- * 因此这里做**白名单校验 + 安全兜底**。
+ * 存在契约形状缺口（`data` 在契约里是 `Record<string, any>`），
+ * 因此对返回值做**白名单校验**：不在 `open / invite / closed` 之列的一律视为异常，
+ * 而不是猜一个默认值。
  *
- * 兜底策略（重要）：拿不到或拿到非法值时返回 `'closed'` 还是 `'open'`？
- * 选择 **`'closed'`**：注册入口是"多给一个按钮"还是"让用户填完表单才被拒"的区别。
- * 在配置读取异常时宁可少显示入口（保守），也不要让用户白填一遍。
- * 注意：这只是**前端展示策略**，真正的准入判定在后端，前端兜底不影响安全。
+ * 不会抛异常（调用方多为页面 `onLoad`，抛出去会导致未处理的 Promise 拒绝）；
+ * 失败信息通过 `{ ok: false, error }` 返回，由页面决定怎么展示。
  */
-export async function fetchRegisterMode(): Promise<RegisterMode> {
+export async function fetchRegisterMode(): Promise<RegisterModeResult> {
   try {
     const data = await get<Record<string, unknown>>(ENDPOINTS.registerMode.path, undefined, {
       withAuth: false,
       clearAuthOn401: false,
     })
 
-    // 后端可能直接返回字符串，也可能包成 { mode: 'open' } —— 两种都容忍，
-    // 因为契约没静态声明形状，多容错一点比误判"关闭注册"好
+    /*
+     * 形状容错：后端实测返回 `{ mode: 'open', inviteRequired: false }`，
+     * 但契约没静态声明字段名，因此同时容忍"直接是字符串"和"包在 mode 字段里"。
+     */
     const raw = typeof data === 'string' ? data : data?.mode
     if (typeof raw === 'string' && (VALID_MODES as readonly string[]).includes(raw)) {
-      return raw as RegisterMode
+      return { ok: true, mode: raw as RegisterMode }
     }
 
-    console.warn('[auth] register-mode 返回值不在白名单内，按 closed 处理：', data)
-    return 'closed'
+    // 白名单外：这是契约形状不一致，必须报出来而不是猜
+    const received = raw === undefined ? '(缺少 mode 字段)' : `"${String(raw)}"`
+    console.warn('[auth] register-mode 返回值不在白名单内：', data)
+    return {
+      ok: false,
+      error: `注册状态异常（后端返回 ${received}），请联系管理员`,
+    }
   } catch (e) {
-    console.warn('[auth] 获取注册模式失败，按 closed 处理', e)
-    return 'closed'
+    // 失败原因要落到用户能看懂的话上；技术细节留给控制台
+    console.warn('[auth] 获取注册模式失败', e)
+    const detail = e instanceof ApiError ? e.message : '网络连接失败'
+    return {
+      ok: false,
+      error: `无法获取注册状态：${detail}`,
+    }
   }
 }
 
