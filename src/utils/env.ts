@@ -107,20 +107,35 @@ export function getApiBaseUrl(): string {
     )
   }
 
-  let parsed: URL
-  try {
-    parsed = new URL(raw)
-  } catch {
+  /*
+   * ==========================================================================
+   * ⚠️ 这里**不能用 `new URL()`** —— 这是本机实测踩过的跨端坑
+   * ==========================================================================
+   * 我最初写的是 `parsed = new URL(raw)`，在 H5/Node 里完全正常，
+   * 但**微信小程序的 JS 运行时不提供标准的 `URL` 构造函数**，
+   * 它抛出的 `TypeError` 被下面的 catch 捕获后，错误信息被包装成
+   * 「后端地址不是合法 URL："http://127.0.0.1:8080"」——
+   * **一个完全合法的地址被判为非法**，还伪装成配置问题，极具误导性。
+   * （这个 bug 只有在小程序端真跑起来才暴露；H5 与构建阶段都看不出来。）
+   *
+   * 因此改用**纯正则**校验：不依赖任何 Web API，三端行为一致。
+   * 校验目标只有两个：① 有 http/https 协议头；② 有非空主机名。
+   * 这足以拦住真实配置错误（漏协议、相对路径、写错变量），又不引入平台依赖。
+   */
+  const urlMatch = /^(https?):\/\/([^/?#\s]+)/i.exec(raw)
+  if (!urlMatch) {
     throw new Error(
       `[env] 后端地址不是合法 URL："${raw}"。` +
         '正确示例：http://127.0.0.1:8080 或 https://api.example.com'
     )
   }
 
+  const protocol = `${urlMatch[1].toLowerCase()}:`
+
   // 生产构建必须是 https（H5 已在上面提前返回，故此处只覆盖小程序 / App）
-  if (IS_PROD && parsed.protocol !== 'https:') {
+  if (IS_PROD && protocol !== 'https:') {
     throw new Error(
-      `[env] 生产构建要求 https，当前为 "${parsed.protocol}"。\n` +
+      `[env] 生产构建要求 https，当前为 "${protocol}"。\n` +
         '原因：小程序端只允许已备案 HTTPS 域名；安卓端默认拒绝明文 http。\n' +
         '（ADR-0011 C2 —— 这不是可以"先上线回头再改"的事项）'
     )
