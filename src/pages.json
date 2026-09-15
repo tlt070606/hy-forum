@@ -14,15 +14,9 @@
       }
     },
     {
-      "path": "pages/login/index",
+      "path": "pages/auth/index",
       "style": {
-        "navigationBarTitleText": "登录"
-      }
-    },
-    {
-      "path": "pages/register/index",
-      "style": {
-        "navigationBarTitleText": "注册"
+        "navigationBarTitleText": "登录 / 注册"
       }
     },
     {

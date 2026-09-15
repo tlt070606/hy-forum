@@ -134,11 +134,11 @@ function onMenuTap(item: (typeof menuItems)[number]) {
 }
 
 function goLogin() {
-  uni.navigateTo({ url: '/pages/login/index' })
+  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
 }
 
 function goRegister() {
-  uni.navigateTo({ url: '/pages/register/index' })
+  uni.navigateTo({ url: '/pages/auth/index?mode=register' })
 }
 
 async function onLogout() {

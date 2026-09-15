@@ -25,6 +25,35 @@ import { ApiError } from '@/utils/request'
  * ------------------------------------------------------------------------- */
 
 /**
+ * 把后端返回的图片载荷规整成可直接放进 `<image src>` 的字符串。
+ *
+ * ==========================================================================
+ * 为什么需要这一步（本机实测踩到的 bug）
+ * ==========================================================================
+ * 后端 `/api/auth/captcha` 返回的 `base64Image` 是**裸 base64**
+ * （形如 `iVBORw0KGgo...`），**不带 `data:` 前缀**。
+ *
+ * 直接塞进 `<image :src>` 时，浏览器/小程序会把整串当作**相对 URL** 去请求，
+ * 于是图片永远出不来 —— 页面上表现为一个空白灰框，且**控制台不报错**
+ * （不是请求 404，是根本没被识别成图片），根因极难定位。
+ *
+ * 契约只声明该字段是 string，没规定格式，所以前端必须两种都兼容：
+ * - 已带 `data:` 前缀 → 原样返回
+ * - 裸 base64 → 补 `data:image/png;base64,` 前缀（后端生成的是 PNG，实测文件头为
+ *   `137,80,78,71,13,10,26,10`）
+ *
+ * 注意用 `indexOf(';base64,')` 判断而不是只判断 `data:`：
+ * 万一后端将来返回 `data:image/svg+xml,...`（非 base64）也能正确原样透传。
+ */
+function toImageSrc(payload: string): string {
+  const raw = payload.trim()
+  if (!raw) return ''
+  // 已是 data URI（含 base64 或非 base64 的 data URI）则原样使用
+  if (raw.startsWith('data:')) return raw
+  return `data:image/png;base64,${raw}`
+}
+
+/**
  * 获取图形验证码。
  *
  * ⚠️ 契约把这个响应的 `data` 声明为 `Record<string, any>`（形状缺口），
@@ -59,7 +88,7 @@ export async function fetchCaptcha(): Promise<CaptchaVO> {
     })
   }
 
-  return { uuid, base64Image }
+  return { uuid, base64Image: toImageSrc(base64Image) }
 }
 
 /* ---------------------------------------------------------------------------

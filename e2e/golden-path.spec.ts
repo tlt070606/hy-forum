@@ -31,11 +31,18 @@ import { readCaptchaAnswer } from './captcha-redis.ts'
 /** 后端基地址。与 .env.development 保持一致 */
 const API_BASE = process.env.E2E_API_BASE || 'http://127.0.0.1:8080'
 
-/** 页面路径。uni-app H5 用 hash 路由（小程序端没有 Vue Router，见 pages.json） */
+/**
+ * 页面路径。uni-app H5 用 hash 路由（小程序端没有 Vue Router，见 pages.json）。
+ *
+ * ⚠️ 登录与注册已合并为**同一个页面**（`pages/auth/index`），用 `mode` 参数切换 Tab。
+ *    这是与设计稿对齐的结果；因此不再有 `pages/login` / `pages/register`。
+ */
 const ROUTES = {
   index: '#/pages/index/index',
-  login: '#/pages/login/index',
-  register: '#/pages/register/index',
+  /** 登录 Tab */
+  login: '#/pages/auth/index?mode=login',
+  /** 注册 Tab */
+  register: '#/pages/auth/index?mode=register',
   me: '#/pages/me/index',
 } as const
 
@@ -160,14 +167,16 @@ test('注册：填写表单含图形验证码，成功后跳转登录页', async
 
   /*
    * 断言注册成功。
-   * 不以 toast 文案作为主要断言（toast 是瞬时元素，时序不稳），
-   * 而是断言**跳转到登录页** —— 这是注册成功后的确定行为（契约不返回 token，
-   * 因此前端必须引导去登录，见 register/index.vue 的注释）。
+   *
+   * ⚠️ 这里**不能断言 URL 变成 `?mode=login`**：登录/注册已合并为同一页，
+   *    注册成功后只是把 Tab 切到登录（组件内部状态），H5 的 hash 不会跟着变。
+   *    因此改为断言**登录表单可见** —— 这才是"切到登录 Tab"的可观察结果。
+   *
+   *    对应地，注册表单的消失通过 `reg-submit` 不可见来验证
+   *    （注册成功后 `v-else` 分支不再渲染）。
    */
-  await expect(page).toHaveURL(new RegExp(ROUTES.login.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), {
-    timeout: 15_000,
-  })
-  await expect(page.getByTestId('login-username')).toBeVisible()
+  await expect(page.getByTestId('login-username')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('[data-testid="reg-submit"]')).toBeHidden()
 
   /*
    * 反向校验：注册**不应**产生登录态。

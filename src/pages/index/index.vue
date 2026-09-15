@@ -33,18 +33,6 @@
         </text>
       </template>
     </view>
-
-    <!--
-      以下版块的接口属于 M3，后端尚未交付（实测 /api/boards 返回 404）。
-      这里**不做假数据展示**，而是如实告知 —— 编造数据会让人误以为功能已完成。
-    -->
-    <view class="hy-card notice-card">
-      <text class="notice-card__title">当前进度</text>
-      <text class="notice-card__line">已完成：注册 / 登录 / 个人资料（M2）</text>
-      <text class="notice-card__line notice-card__line--todo">
-        待后端交付：版块、帖子、评论、通知（M3–M5）
-      </text>
-    </view>
   </view>
 </template>
 
@@ -89,11 +77,11 @@ onShow(async () => {
 })
 
 function goLogin() {
-  uni.navigateTo({ url: '/pages/login/index' })
+  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
 }
 
 function goRegister() {
-  uni.navigateTo({ url: '/pages/register/index' })
+  uni.navigateTo({ url: '/pages/auth/index?mode=register' })
 }
 
 async function onLogout() {
@@ -193,28 +181,6 @@ async function onLogout() {
     font-size: $hy-font-xs;
     color: $hy-text-secondary;
     text-align: center;
-  }
-}
-
-/* ---------- 进度说明卡片 ---------- */
-.notice-card {
-  &__title {
-    display: block;
-    font-size: $hy-font-md;
-    font-weight: 600;
-    color: $hy-text-primary;
-    margin-bottom: $hy-space-sm;
-  }
-
-  &__line {
-    display: block;
-    font-size: $hy-font-sm;
-    color: $hy-text-regular;
-    line-height: 1.8;
-
-    &--todo {
-      color: $hy-text-secondary;
-    }
   }
 }
 </style>
