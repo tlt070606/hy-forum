@@ -12,6 +12,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
 /**
@@ -62,6 +63,27 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleUnreadable(HttpMessageNotReadableException ex) {
         return badRequest(ErrorCode.BAD_REQUEST.message());
+    }
+
+    /**
+     * 路径变量 / 请求参数<b>类型不匹配</b> → 400（交接事项 <b>H12</b>，2026-09-16 补）。
+     *
+     * <p>背景：{@code GET /api/posts/abc}（{@code id} 声明为 {@code long}）会把
+     * {@link MethodArgumentTypeMismatchException} 一路冒到 {@link #handleUnexpected}，
+     * 于是"客户端把参数写错了"被报成 {@code 500 服务器内部错误}。
+     * 后果不是文案难看，而是<b>5xx 是监控口径里的异常信号</b> ——
+     * 被这类必然发生的误用污染后，真故障会被淹没；前端也会按 5xx 去重试与告警。</p>
+     *
+     * <p><b>只回参数名，不回参数值</b>：值来自请求，回显它等于把用户输入反射进响应体
+     * （§6.1 的约束是"响应体只给通用文案"，细节写服务端日志）。
+     * 这里刻意连 WARN 都不打 —— 它是纯粹的用户输入错误，不是需要运维介入的信号。</p>
+     *
+     * <p>刻意<b>不</b>顺手处理其它 Spring MVC 异常（缺参数、请求方法不支持等）：
+     * 本分支是 H12 点名的缺陷修复；范围一放开，"改一个异常分支"就变成"重写全局异常策略"。</p>
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleArgumentTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return badRequest("参数 " + ex.getName() + " 类型不合法");
     }
 
     /** 没有对应 handler → 404（需配合 spring.mvc.throw-exception-if-no-handler-found=true）。 */

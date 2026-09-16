@@ -73,6 +73,22 @@ hy:
     # 因此不会出现"上限太低导致无关用例随机变红"。
     ip-per-minute: 50
 
+# -------------------------------------------------------------
+# OSS 测试占位值（⚠️ 下面两个**不是真实密钥**，只是为了让 `media` 的凭据绑定
+# 通过 @NotBlank 校验：主配置里两个密钥默认为空 = 生产上不设环境变量就起不来
+# （fail-fast，见 application.yml 的说明与任务书 §5 裁决 ②）。
+#
+# 若这里不补占位值，**所有** @SpringBootTest 上下文都会因校验失败而起不来 ——
+# M1 与 M3 第一段的 44 个用例会集体变红，而原因与被测行为毫无关系。
+#
+# 归属说明：本文件原为 W1-M1 任务独占；这两行由 L1 于 2026-09-16 授权
+# M3 第二交付段追加（任务书 §10 的 CR-D 裁决）。
+# -------------------------------------------------------------
+aliyun:
+  oss:
+    access-key-id: test-placeholder-not-a-real-key
+    access-key-secret: test-placeholder-not-a-real-secret
+
 sa-token:
   token-name: Authorization
   timeout: 604800

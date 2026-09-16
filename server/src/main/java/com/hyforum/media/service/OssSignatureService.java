@@ -1,0 +1,195 @@
+package com.hyforum.media.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyforum.common.oss.OssProperties;
+import com.hyforum.media.config.OssCredentialProperties;
+import com.hyforum.media.config.OssUploadProperties;
+import com.hyforum.media.vo.OssSignatureVO;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 直传签名服务（docs/技术方案.md §6.8／§8.4；ADR-0007 的落地）。
+ *
+ * <h2>为什么是 PostObject（表单直传）而不是预签名 URL</h2>
+ * <p>{@code OSS配置清单.md} §2 已写明：服务端签名直传用的是 <b>PostObject</b>。
+ * 两者的区别不是口味问题 —— PostObject 的 policy 可以在<b>服务端</b>把
+ * "只能传到 {@code post/} 目录、单文件 ≤ 5MB、只允许 image/*"这些约束写死，
+ * OSS 会替我们执行；预签名 URL 只能约束"某一个对象路径"。</p>
+ *
+ * <h2>policy 里三条约束都是必须的（不是可选的加固）</h2>
+ * <ol>
+ *   <li>{@code starts-with $key post/}：没有它，拿到签名的用户可以往桶里任意位置写对象；</li>
+ *   <li>{@code content-length-range 0..5MB}：没有它，一个 1GB 的文件也能用这份签名上传（§8.4 单图 ≤ 5MB）；</li>
+ *   <li>{@code starts-with $Content-Type image/}：挡掉把桶当网盘用（上传 exe/zip）。</li>
+ * </ol>
+ * <p>这三条是"OSS 侧"的防线，与回调侧的二次校验（精确白名单 jpeg/png/webp/gif）
+ * 构成纵深 —— 两侧都不依赖对方的正确性。</p>
+ *
+ * <h2>签名算法</h2>
+ * <p>{@code signature = Base64(HMAC-SHA1(accessKeySecret, policy))}。
+ * <b>Secret 只在服务端出现</b>：前端拿到的 policy + signature 无法反推密钥，
+ * 也无法在有效期之外或目录之外使用（post 也读不到本类注入的密钥，
+ * 见 {@code OssCredentialProperties} 的类注释）。</p>
+ */
+@Service
+public class OssSignatureService {
+
+    /** policy 到期时刻的格式：OSS 要求 ISO8601 UTC（带毫秒与 Z）。 */
+    private static final DateTimeFormatter EXPIRATION_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+
+    /** 单图大小上限（§8.4：5MB）。 */
+    private static final long MAX_IMAGE_BYTES = 5L * 1024 * 1024;
+
+    /** 回调端点路径（与 Controller 的映射一致；只在这里写一次）。 */
+    private static final String CALLBACK_PATH = "/api/oss/callback";
+
+    private final OssProperties ossProperties;
+    private final OssCredentialProperties credentials;
+    private final OssUploadProperties uploadProperties;
+    private final ObjectMapper objectMapper;
+
+    public OssSignatureService(OssProperties ossProperties,
+                               OssCredentialProperties credentials,
+                               OssUploadProperties uploadProperties,
+                               ObjectMapper objectMapper) {
+        this.ossProperties = ossProperties;
+        this.credentials = credentials;
+        this.uploadProperties = uploadProperties;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * 签发一次直传签名。
+     *
+     * @param request 当前 HTTP 请求（仅用于在未显式配置回调地址时推导公网回调地址）
+     * @throws IllegalStateException OSS 未配置（前缀为空）—— fail-closed，不给出一份"看起来能用"的签名
+     */
+    public OssSignatureVO issueSignature(HttpServletRequest request) {
+        String publicPrefix = ossProperties.publicUrlPrefix();
+        if (publicPrefix.isEmpty()) {
+            // 与 post 侧的 fail-closed 同一口径：配置不全时不发签名，
+            // 否则前端会拿到一份指向错误地址（或空域名）的签名，上传失败却看不出原因
+            throw new IllegalStateException(
+                    "OSS 未配置（endpoint / bucket 为空），无法签发直传签名；请检查 OSS_ENDPOINT 与 OSS_BUCKET");
+        }
+        String host = stripTrailingSlash(publicPrefix);
+        // dir 由 imageUrlPrefix 反推，**不重复实现一遍归一化**：
+        // 这样"签名的目录"与"post 侧校验的前缀"在构造上就不可能不一致（裁决 ① 的用意）
+        String dir = ossProperties.imageUrlPrefix().substring(publicPrefix.length());
+
+        Instant expiration = Instant.now().plus(uploadProperties.signatureTtl());
+        String policy = encodeBase64(policyJson(expiration, dir));
+        String signature = encodeBase64(hmacSha1(credentials.accessKeySecret(), policy));
+
+        return new OssSignatureVO(
+                host,
+                policy,
+                signature,
+                dir,
+                expiration.getEpochSecond(),
+                encodeBase64(callbackConfigJson(request)));
+    }
+
+    /** policy JSON：有效期 + 三条约束（见类注释）。 */
+    private String policyJson(Instant expiration, String dir) {
+        Map<String, Object> policy = new LinkedHashMap<>();
+        policy.put("expiration", EXPIRATION_FORMAT.format(expiration));
+        policy.put("conditions", List.of(
+                // 只能写到本项目帖子图片目录下
+                List.of("starts-with", "$key", dir),
+                // 单文件大小上限（OSS 侧执行）
+                List.of("content-length-range", 0, MAX_IMAGE_BYTES),
+                // 只允许图片类型（§8.4 的 Content-Type 白名单在 OSS 侧先挡一层，
+                // 精确白名单在回调侧再挡一次）
+                List.of("starts-with", "$Content-Type", "image/"),
+                // 只能写入本 bucket
+                Map.of("bucket", ossProperties.bucketName())));
+        return toJson(policy);
+    }
+
+    /** 回调配置 JSON：回调地址 + 回调体模板 + 回调体类型（前端原样作为 callback 表单字段）。 */
+    private String callbackConfigJson(HttpServletRequest request) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("callbackUrl", resolveCallbackUrl(request));
+        config.put("callbackBody", uploadProperties.callbackBody());
+        config.put("callbackBodyType", uploadProperties.callbackBodyType());
+        return toJson(config);
+    }
+
+    /**
+     * 解析回调地址：<b>显式配置优先，否则从请求推导</b>。
+     *
+     * <p>为什么必须有"显式配置"这条路：后端本地监听 {@code 127.0.0.1}，而
+     * <b>OSS 够不到本机</b>（这是 M3 唯一的阻塞项，见 {@code M3-计划与前置.md} §4）。
+     * 本机开发要收真实回调时，必须让回调查询指向隧道公网地址
+     * （{@code hy.oss.upload.callback-url}，可用环境变量覆盖）。</p>
+     *
+     * <p>推导口径与健康检查里 {@code servers[0].url} 同源：取请求进来的 scheme + host，
+     * 并优先采用反代写入的 {@code X-Forwarded-Proto/Host}（经过 nginx 时 Host 才是公网地址）。</p>
+     */
+    private String resolveCallbackUrl(HttpServletRequest request) {
+        if (uploadProperties.hasExplicitCallbackUrl()) {
+            return uploadProperties.callbackUrl().trim();
+        }
+        String scheme = firstNonBlank(request.getHeader("X-Forwarded-Proto"), request.getScheme());
+        String host = firstNonBlank(request.getHeader("X-Forwarded-Host"), request.getServerName());
+        int port = request.getServerPort();
+        boolean defaultPort = ("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443);
+        return scheme + "://" + host + (defaultPort ? "" : ":" + port) + CALLBACK_PATH;
+    }
+
+    /** Base64（标准字母表，带 padding）——policy 与 signature 都用它。 */
+    private static String encodeBase64(byte[] raw) {
+        return Base64.getEncoder().encodeToString(raw);
+    }
+
+    private static String encodeBase64(String text) {
+        return encodeBase64(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** HMAC-SHA1（OSS PostObject 签名算法）。 */
+    private static byte[] hmacSha1(String secret, String data) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA1");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
+            return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ex) {
+            // 算法缺失/密钥非法属于环境异常，必须显式暴露（静默返回空签名会让上传在 OSS 侧失败）
+            throw new IllegalStateException("计算 OSS 签名失败：" + ex.getMessage(), ex);
+        }
+    }
+
+    private String toJson(Map<String, Object> value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("生成 policy/callback JSON 失败", ex);
+        }
+    }
+
+    private static String stripTrailingSlash(String value) {
+        String result = value;
+        while (result.endsWith("/")) {
+            result = result.substring(0, result.length() - 1);
+        }
+        return result;
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return (first != null && !first.isBlank()) ? first : second;
+    }
+}
