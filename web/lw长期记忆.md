@@ -126,6 +126,25 @@
     拆成两个是"文件仍被检查，只是用合适的类型环境"，两者区别就是
     「检查在跑」与「检查看起来在跑」。
 
+15. **小程序端本地调试必须用 `dev` 产物；`build` 产物必然启动即报错**
+    现象：界面出来了，但一行红字
+    `无法获取注册状态：[env] 生产构建要求 https，当前为 "http:"`，
+    而且**一个网络请求都没发出**（Network 面板是空的）。
+    看起来像：微信的"不在 request 合法域名"校验 → **不是**。
+    实际是：**我们自己的守卫**（`src/utils/env.ts` 第 167 行 `IS_PROD && protocol !== 'https:'`）。
+    `uni build` **对任何平台都按 production 运行** → `import.meta.env.PROD === true` →
+    本地 `http://127.0.0.1:8080` 被拒。
+    **怎么区分是谁报的**：微信的提示里有"合法域名"字样；这条里有 `ADR-0011 C2`（本项目文档编号）。
+    解法：**用 dev 模式**
+    ```bash
+    npm run dev:mp-weixin     # → dist/dev/mp-weixin，常驻 + 热更新
+    ```
+    然后开发者工具打开 `dist/dev/mp-weixin`，**不要打开 `dist/build/mp-weixin`**。
+    ⛔ **不要"把那个判断注释掉"**（网上会给这个建议）：那条守卫拦的正是
+    "打包出指向 http 的正式产物"这个真实事故 —— 小程序正式版连不上、安卓拒明文。
+    注释掉它 = 把响亮的启动失败换成**静默不能用的应用**。
+    （完整说明与验收步骤见 [`小程序端人工验证.md`](小程序端人工验证.md) §0.1。）
+
 ---
 
 ## 四、本前端的实现约定（这些是工程决策，不是项目事实）
@@ -161,9 +180,10 @@
 npm install                                     # .npmrc 已把缓存重定向到工程内
 
 npm run dev:h5
+npm run dev:mp-weixin     # 小程序**本地调试只能用这个** → dist/dev/mp-weixin
 npm run build:h5          # → dist/build/h5
-npm run build:mp-weixin   # → dist/build/mp-weixin
-npm run build:app
+npm run build:mp-weixin   # ⚠️ production 模式，产物本地跑不起来（见 §3.3 第 15 条）
+npm run build:app         # 同上
 
 # 类型检查（两侧一起；改任何类型相关的东西都必须跑）
 npm run type-check

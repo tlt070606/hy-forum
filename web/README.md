@@ -38,10 +38,15 @@ npm install
 # 2) 起 H5 开发服务器（默认 http://localhost:5173）
 npm run dev:h5
 
-# 3) 构建三端产物
+# 3) 本地调试小程序端 —— **只能用 dev**，用 build 产物会启动即报错
+npm run dev:mp-weixin      # → dist/dev/mp-weixin，常驻 + 热更新
+#    然后微信开发者工具打开 dist/dev/mp-weixin（**不要**打开 dist/build/mp-weixin）
+#    原因见 小程序端人工验证.md §0.1
+
+# 4) 构建产物（production 模式；H5 可直接用，小程序/App 只用于将来上线）
 npm run build:h5           # → dist/build/h5
-npm run build:mp-weixin    # → dist/build/mp-weixin
-npm run build:app          # → dist/build/app
+npm run build:mp-weixin    # ⚠️ production：若地址是 http 会启动即抛错
+npm run build:app          #    本地调试请用上面的 dev:mp-weixin
 ```
 
 **前置条件**：后端需运行在 `http://127.0.0.1:8080`（地址在 `.env.development` 配置）。
