@@ -1,152 +1,214 @@
 <template>
   <view class="page">
-    <!-- 顶部品牌区 -->
-    <view class="hero">
-      <text class="hero__title">Hy论坛</text>
-      <text class="hero__subtitle">中文综合论坛 · 含资源分享版块</text>
+    <!--
+      顶部搜索框。
+      ⚠️ 用 `view` 而不是 `uni-input` 做"假输入框"：真实输入发生在
+        `pages/search/index`。这样首页不会因为输入法弹起而抖动，
+        也避免"在首页输入了却没反应"的困惑（点哪都是跳搜索页）。
+    -->
+    <view class="searchbar" data-testid="home-search" @click="goSearch">
+      <text class="searchbar__icon">🔍</text>
+      <text class="searchbar__placeholder">搜索帖子标题或内容</text>
     </view>
 
-    <!-- 登录态卡片：已登录显示用户信息，未登录给出登录/注册入口 -->
-    <view class="hy-card user-card">
-      <template v-if="auth.isLoggedIn">
-        <view class="user-card__row">
-          <image class="user-card__avatar" :src="avatarSrc" mode="aspectFill" />
-          <view class="user-card__info">
-            <text class="user-card__name" data-testid="index-nickname">{{ auth.displayName }}</text>
-            <text class="user-card__meta">已登录</text>
-          </view>
-        </view>
-        <wd-button type="info" size="small" plain block @click="onLogout">退出登录</wd-button>
-      </template>
+    <!-- ================= 版块宫格 ================= -->
+    <view class="section">
+      <view class="section__head">
+        <text class="section__title">版块</text>
+      </view>
 
-      <template v-else>
-        <text class="user-card__hint">登录后可发帖、评论与收藏</text>
-        <view class="user-card__actions">
-          <wd-button type="primary" block @click="goLogin">登录</wd-button>
-          <wd-button v-if="registerAvailable" plain block @click="goRegister">
-            注册
-          </wd-button>
+      <HyState
+        :loading="boardsLoading"
+        :error="boardsError"
+        :empty="boards.length === 0"
+        empty-text="暂无版块"
+        loading-text="正在加载版块…"
+        @retry="loadBoards"
+      />
+
+      <!--
+        两列宫格（需求方 2026-09-16 定）。
+        `isResource` 角标是**口径 9 的可见化**：用户从列表就能看出哪个版块需要填网盘信息，
+        不必进到发帖页才发现表单多了两栏。
+      -->
+      <view v-if="boards.length" class="boards" data-testid="board-grid">
+        <view
+          v-for="board in boards"
+          :key="board.id"
+          class="board"
+          data-testid="board-item"
+          hover-class="board--hover"
+          @click="goBoard(board)"
+        >
+          <view class="board__head">
+            <text class="board__name" data-testid="board-name">{{ text(board.name) }}</text>
+            <text v-if="bool(board.isResource)" class="board__tag" data-testid="board-resource-tag">
+              资源
+            </text>
+          </view>
+          <text class="board__desc">{{ text(board.description) }}</text>
+          <text class="board__count">{{ num(board.postCount) }} 帖</text>
         </view>
+      </view>
+    </view>
+
+    <!-- ================= 最新帖子 ================= -->
+    <view class="section">
+      <view class="section__head">
+        <text class="section__title">最新帖子</text>
         <!--
-          两种"注册入口用不了"的情形必须分开说，文案不能混（与 auth 页同口径）：
-          · registerModeError 非空 → **状态未知**（查询失败），属异常，要让用户与开发者都看见；
-          · 既无错误又是 closed → 后端**确实**关闭了注册，这是正常业务状态。
-          上一版把两者混为一谈（失败被静默当成 closed），正是 `api/auth.ts` 里
-          `RegisterModeResult` 那段设计要避免的事。
+          排序口径：首页固定 `latest`。
+          更多排序（热门/精华）在版块页给，符合"首页看全站最新、版块页细看"的直觉。
         -->
-        <text v-if="registerModeError" class="user-card__warn" data-testid="index-register-mode-error">
-          {{ registerModeError }}
-        </text>
-        <!-- 关闭注册时明确告知，避免用户到处找入口 -->
-        <text v-else-if="registerMode === 'closed'" class="user-card__closed">
-          当前暂未开放注册
-        </text>
-      </template>
+        <text class="section__hint">按发布时间</text>
+      </view>
+
+      <HyState
+        :loading="postsLoading"
+        :error="postsError"
+        :empty="postViews.length === 0"
+        empty-text="还没有人发帖，点右下角「＋」发第一帖"
+        loading-text="正在加载帖子…"
+        @retry="loadPosts"
+      />
+
+      <view v-if="postViews.length" class="post-list" data-testid="home-post-list">
+        <PostListItem v-for="item in postViews" :key="item.id" :item="item" />
+      </view>
+    </view>
+
+    <!--
+      悬浮发帖按钮（需求方 2026-09-16 定：放首页右下角，不动 tabBar）。
+      tabBar 之上要留出高度：H5 端 tabBar 是固定的，贴太下会被盖住。
+    -->
+    <view class="fab" data-testid="home-compose" @click="goCompose">
+      <text class="fab__plus">＋</text>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
 /**
- * 首页。
+ * 首页：搜索入口 + 版块宫格 + 全站最新帖子流 + 悬浮发帖按钮。
  *
- * M2 阶段定位：**工程骨架的落地页 + 登录态入口 + 契约缺口的可视化说明**。
- * 真正的帖子双流（关注/全部）依赖 M3 的 `/api/posts`，后端尚未交付，故此页暂不发起该请求。
+ * ==========================================================================
+ * 为什么首页是"版块宫格 + 全站最新"，而不是《技术方案》§4.1 写的"关注/全部双流"
+ * ==========================================================================
+ * §4.1 的双流依赖 `GET /api/feed?type=follow|all`，而**该路径不在当前契约里**
+ * （`openapi.json` 共 14 个路径，没有 `/api/feed`）。
+ * 契约没有的接口前端不得编造（任务书 §2/§3），因此：
+ * - 「全部流」用 `GET /api/posts`（不传 `boardId` = 全站）等价实现；
+ * - 「关注流」**不做** —— 它同时依赖 `POST/DELETE /api/follow/{userId}`（也不在契约里），
+ *   而且未登录时按 §8.5 本就该引导登录。等 M4 交付 `feed` 与 `follow` 后再补。
+ * 这两条已写进交付报告，供 L1 判断归属。
+ *
+ * ==========================================================================
+ * 数据加载策略
+ * ==========================================================================
+ * 版块与帖子**并行**请求、**各自独立**报错：版块挂了不该让帖子也看不见，
+ * 反之亦然。所以不用一个 `loading`/`error` 覆盖两者（那样任一失败就是整页报错）。
  */
-import { onShow } from '@dcloudio/uni-app'
 import { computed, ref } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
+import HyState from '@/components/HyState.vue'
+import PostListItem from '@/components/PostListItem.vue'
+import { fetchBoards } from '@/api/boards'
+import { fetchPosts } from '@/api/posts'
+import type { BoardVO } from '@/api/types'
+import { ApiError } from '@/utils/request'
+import { bool, num, text, toListItem, type PostListItemView } from '@/utils/format'
 import { useAuthStore } from '@/stores/auth'
-import { fetchRegisterMode } from '@/api/auth'
-import type { RegisterMode } from '@/api/types'
 
 const auth = useAuthStore()
 
-/** 注册模式。默认按 closed 保守处理，拿到真实值后再决定是否显示注册入口 */
-const registerMode = ref<RegisterMode>('closed')
+/* ---------------------------------------------------------------------------
+ * 版块
+ * ------------------------------------------------------------------------- */
+
+const boards = ref<BoardVO[]>([])
+const boardsLoading = ref(false)
+const boardsError = ref('')
+
+async function loadBoards(): Promise<void> {
+  boardsLoading.value = true
+  boardsError.value = ''
+  try {
+    boards.value = await fetchBoards()
+  } catch (e) {
+    /*
+     * 错误文案一律取自 `ApiError.message`（`request` 层已按错误码表映射过，
+     * 见 `utils/error-code.ts`），**不在这里重写一套文案** ——
+     * 两处文案迟早会不一致，而错误码表是契约的一部分（口径 2：必须按码分支）。
+     */
+    boardsError.value = e instanceof ApiError ? e.message : '版块加载失败，请稍后重试'
+  } finally {
+    boardsLoading.value = false
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 帖子
+ * ------------------------------------------------------------------------- */
+
+const posts = ref<PostListItemView[]>([])
+const postsLoading = ref(false)
+const postsError = ref('')
+
+const postViews = computed(() => posts.value)
+
+async function loadPosts(): Promise<void> {
+  postsLoading.value = true
+  postsError.value = ''
+  try {
+    // 不传 boardId = 全站；size 用契约硬上限 20（口径 5，`api/posts.ts` 内部已再截一刀）
+    const page = await fetchPosts({ sort: 'latest', page: 1 })
+    posts.value = page.list.map(toListItem)
+  } catch (e) {
+    postsError.value = e instanceof ApiError ? e.message : '帖子加载失败，请稍后重试'
+  } finally {
+    postsLoading.value = false
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 生命周期与导航
+ * ------------------------------------------------------------------------- */
 
 /**
- * 注册模式**查询失败**的文案。非空表示"状态未知"（网络 / 配置问题），必须让用户看到。
- *
- * 为什么不把失败也塞进 `registerMode`：
- * 上一版查询失败时静默返回 `'closed'`，结果小程序端连不上后端时界面显示
- * "当前暂未开放注册" —— **把环境故障伪装成了业务状态**，排查成本极高。
- * 详见 `api/auth.ts` 里 `RegisterModeResult` 的说明。
+ * 用 `onShow` 而不是 `onLoad`：从详情页返回时 `onLoad` **不会**再触发，
+ * 于是刚发完帖/删完帖回到首页看到的还是旧列表。`onShow` 每次回到本页都刷新，
+ * 这是列表页的正确语义（也让"发帖成功 → 返回首页能看到"这条验收路径成立）。
  */
-const registerModeError = ref('')
-
-/**
- * 注册入口是否显示：只有**明确知道**注册开放（`open` / `invite`）时才显示。
- *
- * 状态未知（`registerModeError` 非空）时一律不显示，但**不冒充"已关闭"** ——
- * 真实原因由 `registerModeError` 单独呈现给用户。
- * 与 `pages/auth/index.vue` 的 `registerAvailable` 同口径。
- */
-const registerAvailable = computed(
-  () => registerModeError.value === '' && registerMode.value !== 'closed'
-)
-
-/** 头像地址：用户没设头像时用本地占位图，避免 <image> 空 src 的告警 */
-const avatarSrc = ref('/static/avatar-default.png')
-
-onShow(async () => {
-  /*
-   * 注册模式：每次进入首页刷新一次，管理员切换后无需用户重开应用。
-   *
-   * ⚠️ 必须按 `ok` 分支取 `result.mode`，**不能**把整个结果对象赋给 `registerMode`。
-   *    `fetchRegisterMode()` 返回的是 `{ok:true,mode} | {ok:false,error}`（见 `api/auth.ts`）；
-   *    上一版直接写 `registerMode.value = await fetchRegisterMode()`，
-   *    于是模板里 `registerMode !== 'closed'` **恒为真**、`registerMode === 'closed'` **恒为假**：
-   *    管理员把注册模式切成 `closed` 之后，注册按钮照样显示、
-   *    「当前暂未开放注册」永远不出现、`ok:false` 这条报错分支等于白写。
-   */
-  const result = await fetchRegisterMode()
-  if (result.ok) {
-    registerModeError.value = ''
-    registerMode.value = result.mode
-  } else {
-    // 查询失败 = 状态未知：不猜成 closed（那是编造业务状态），也不静默 —— 交给模板显式报错。
-    // 注意**不**改写 registerMode：保留上一次已知值无副作用，因为上面有
-    // registerAvailable 把关（有错误文案时注册入口一律不显示）。
-    registerModeError.value = result.error
-  }
-
-  // 已登录则校准用户信息（token 失效会自动降级为未登录）
-  if (auth.isLoggedIn) {
-    try {
-      const me = await auth.ensureProfile()
-      if (me?.avatarUrl) avatarSrc.value = me.avatarUrl
-    } catch (e) {
-      // 网络问题不该阻塞首页渲染，仅提示
-      console.warn('[index] 获取用户信息失败', e)
-    }
-  } else {
-    // 未登录时确保不残留上一个账号的信息
-    avatarSrc.value = '/static/avatar-default.png'
-  }
+onShow(() => {
+  void loadBoards()
+  void loadPosts()
 })
 
-function goLogin() {
-  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
+function goSearch(): void {
+  uni.navigateTo({ url: '/pages/search/index' })
 }
 
-function goRegister() {
-  uni.navigateTo({ url: '/pages/auth/index?mode=register' })
+function goBoard(board: BoardVO): void {
+  // 版块 id 缺失时不该跳到一个异常页面，直接忽略（契约里 id 可选，实际后端都返回）
+  const id = num(board.id)
+  if (!id) return
+  uni.navigateTo({ url: `/pages/board/index?id=${id}` })
 }
 
-async function onLogout() {
-  const res = await uni.showModal({
-    title: '退出登录',
-    content: '确定要退出当前账号吗？',
-  })
-  if (res.confirm) {
-    await auth.logout()
-    /*
-     * 退出后回到登录页。
-     * 为什么不是留在首页：登录页现在是应用入口，退出登录的语义就是"回到未登录起点"。
-     * 留在首页会让用户看不出自己已经退出（首页未登录态与已登录态差别不明显）。
-     */
-    uni.reLaunch({ url: '/pages/auth/index' })
+/**
+ * 发帖入口。
+ *
+ * 未登录 → **跳登录页**（口径 4 / 《技术方案》§8.5「未登录用户点击关注流时引导登录」同源）。
+ * 为什么不在这里弹 toast：能跳转就不要只提示，用户的目标是发帖，引导他去能完成目标的页面。
+ *
+ * ⚠️ 仅做**前端引导**，真正的准入判定始终在后端（`POST /api/posts` 需要登录）。
+ */
+function goCompose(): void {
+  if (!auth.isLoggedIn) {
+    uni.navigateTo({ url: '/pages/auth/index?mode=login' })
+    return
   }
+  uni.navigateTo({ url: '/pages/post/edit' })
 }
 </script>
 
@@ -155,100 +217,152 @@ async function onLogout() {
 
 .page {
   min-height: 100vh;
-  padding: $hy-space-md;
+  /* 底部留白：让悬浮按钮不压住最后一屏内容（按钮自身高约 110rpx） */
+  padding-bottom: 160rpx;
   box-sizing: border-box;
 }
 
-/* ---------- 品牌区 ---------- */
-.hero {
-  padding: $hy-space-lg $hy-space-sm $hy-space-xl;
+/* ---------- 搜索框 ---------- */
+.searchbar {
+  margin: $hy-space-md;
+  padding: 0 $hy-space-md;
+  height: 72rpx;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  background-color: $hy-bg-card;
+  border: 1rpx solid $hy-border-color;
+  border-radius: 36rpx;
 
-  &__title {
-    font-size: 56rpx;
-    font-weight: 600;
-    color: $hy-color-primary;
-    letter-spacing: 2rpx;
+  &__icon {
+    margin-right: $hy-space-xs;
+    font-size: $hy-font-sm;
   }
 
-  &__subtitle {
-    margin-top: $hy-space-xs;
+  &__placeholder {
     font-size: $hy-font-sm;
-    color: $hy-text-secondary;
+    color: $hy-text-placeholder;
   }
 }
 
-/* ---------- 用户卡片 ---------- */
-.user-card {
+/* ---------- 分区 ---------- */
+.section {
   margin-bottom: $hy-space-md;
 
-  &__row {
+  &__head {
+    padding: 0 $hy-space-md $hy-space-sm;
     display: flex;
-    align-items: center;
-    margin-bottom: $hy-space-md;
+    align-items: baseline;
+    justify-content: space-between;
   }
 
-  &__avatar {
-    width: 96rpx;
-    height: 96rpx;
-    border-radius: 50%;
-    background-color: $hy-bg-hover;
-    flex-shrink: 0;
-  }
-
-  &__info {
-    margin-left: $hy-space-md;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  &__name {
+  &__title {
     font-size: $hy-font-lg;
     font-weight: 600;
     color: $hy-text-primary;
   }
 
-  &__meta {
+  &__hint {
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
+  }
+}
+
+/* ---------- 版块宫格 ---------- */
+.boards {
+  padding: 0 $hy-space-md;
+  display: flex;
+  flex-wrap: wrap;
+  /* 用负 margin + 卡片 margin 做两列等宽间隙：
+     兼容性比 gap 好（小程序基础库对 flex gap 支持较晚） */
+  justify-content: space-between;
+}
+
+.board {
+  /* 两列：50% 宽再减去一半的间隙（间隙 $hy-space-sm = 16rpx → 减 8rpx） */
+  width: calc(50% - 8rpx);
+  margin-bottom: $hy-space-sm;
+  padding: $hy-space-sm $hy-space-md;
+  box-sizing: border-box;
+  background-color: $hy-bg-card;
+  border-radius: $hy-radius-md;
+
+  &--hover {
+    background-color: $hy-bg-hover;
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    font-size: $hy-font-md;
+    font-weight: 600;
+    color: $hy-text-primary;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* 资源版块角标：`isResource === true` 时出现（口径 9） */
+  &__tag {
+    flex-shrink: 0;
+    margin-left: $hy-space-xs;
+    padding: 2rpx 10rpx;
+    border-radius: $hy-radius-sm;
+    font-size: $hy-font-xs;
+    line-height: 1.6;
+    color: $hy-text-inverse;
+    background-color: $hy-color-success;
+  }
+
+  &__desc {
+    display: block;
+    margin-top: 4rpx;
+    height: 32rpx;
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  &__count {
+    display: block;
     margin-top: 4rpx;
     font-size: $hy-font-xs;
-    color: $hy-text-secondary;
+    color: $hy-text-placeholder;
   }
+}
 
-  &__hint {
-    display: block;
-    font-size: $hy-font-md;
-    color: $hy-text-regular;
-    margin-bottom: $hy-space-md;
-  }
+/* ---------- 帖子列表 ---------- */
+.post-list {
+  background-color: $hy-bg-card;
+}
 
-  &__actions {
-    display: flex;
-    flex-direction: column;
-    gap: $hy-space-sm;
-  }
+/* ---------- 悬浮发帖按钮 ---------- */
+.fab {
+  position: fixed;
+  /* 44px ≈ 88rpx：tabBar 的高度。加一点余量避免贴住 tabBar 上沿 */
+  right: $hy-space-lg;
+  bottom: 130rpx;
+  z-index: 10;
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: $hy-color-primary;
+  /* 阴影让按钮从内容上"浮"起来：没有它，按钮压在白色卡片上边界会糊在一起 */
+  box-shadow: 0 6rpx 20rpx rgba(43, 108, 255, 0.35);
 
-  &__closed {
-    display: block;
-    margin-top: $hy-space-sm;
-    font-size: $hy-font-xs;
-    color: $hy-text-secondary;
-    text-align: center;
-  }
-
-  /*
-   * 注册状态查询失败的警告文案。
-   * 刻意用危险色而非普通灰：这是**异常**，不是业务状态 ——
-   * 上一版把网络故障显示成普通的"暂未开放注册"，用户与开发者都察觉不到异常。
-   */
-  &__warn {
-    display: block;
-    margin-top: $hy-space-sm;
-    font-size: $hy-font-xs;
-    color: $hy-color-danger;
-    text-align: center;
-    line-height: 1.6;
+  &__plus {
+    font-size: 56rpx;
+    line-height: 1;
+    color: $hy-text-inverse;
   }
 }
 </style>
