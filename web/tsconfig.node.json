@@ -1,0 +1,55 @@
+{
+  // ===========================================================================
+  //  Node 语境文件专用的 tsconfig（H10 新增）
+  // ===========================================================================
+  //  为什么需要"拆成两个 tsconfig"而不是把 `vite.config.ts` / `playwright.config.ts`
+  //  / `e2e/**` 从 app 侧 tsconfig 的 include 里删掉：
+  //    · 删 include = **关掉检查**（这些文件从此没有任何 tsconfig 覆盖）；
+  //    · 拆项目   = **换一套合适的检查**（文件仍然被检查，只是用 node 的类型环境）。
+  //  两者的区别正是「检查在跑」与「检查看起来在跑」的区别 —— 本项目已经因为
+  //  "检查看起来在跑、其实没在跑"吃过三次亏（Surefire 不跑 `*IT.java`、覆盖率脚本的
+  //  幽灵期望、`npm run type-check` 从未通过），不要制造第四次。
+  //
+  //  分工（两边互不重叠，合起来等于原来的全部文件，没有文件被落下）：
+  //    · `tsconfig.json`（app 侧）  → `src/**`、`global.d.ts`，types: @dcloudio/types + vite/client
+  //    · `tsconfig.node.json`（本文件）→ `vite.config.ts`、`playwright.config.ts`、`e2e/**`，types: node
+  //  两边都必须跑：`npm run type-check` = app 侧 + 本文件（见 package.json）。
+  //  ⚠️ 新增 tsconfig 后**必须**让 `npm run type-check` 真的跑两个 ——
+  //     否则本文件等于不存在（`vue-tsc` 默认只读 `tsconfig.json`）。
+  //
+  //  为什么 `types` 要在这里写 `["node"]`：
+  //    `types` 是**替代**默认的 `@types/*` 自动引入，不是追加。app 侧的
+  //    `types: ["@dcloudio/types", "vite/client"]` 因此不会带进 `@types/node`，
+  //    这正是 `process` / `Buffer` / `node:net` 那批错的原因（TS2591 / TS2307）。
+  //    反过来，**也不该**把 `node` 塞进 app 侧 —— 那会让小程序/App 的代码
+  //    误以为 `process`、`Buffer`、`fs` 可用（`uni` 运行时不提供这些），
+  //    属于"为了消错而制造下一个错"。
+  // ===========================================================================
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // DOM 提供给 `@playwright/test` 与 `vite/client` 引用到的 Web 类型；
+    // `node` 类型由下面的 types 显式引入。
+    "lib": ["ESNext", "DOM"],
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "noEmit": true,
+    // `e2e/**` 是在 Node 里直跑的脚本，它按 Node 的写法带 `.ts` 后缀导入
+    // （`import { ... } from './captcha-redis.ts'`）→ 不开这个开关会报
+    // TS5097「An import path can only end with a '.ts' extension when
+    // 'allowImportingTsExtensions' is enabled」。该开关要求 noEmit（本文件已设）。
+    // 注意它只放宽"导入路径可以带 .ts"，不是把检查关掉。
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "playwright.config.ts", "e2e/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/api/generated"]
+}

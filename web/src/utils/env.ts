@@ -53,12 +53,43 @@ export function getApiBaseUrl(): string {
   if (cachedBaseUrl !== null) return cachedBaseUrl
 
   // #ifdef H5
-  // H5：同源相对地址，走 Vite 代理 / Nginx 反代
+  // H5：同源相对地址，走 Vite 代理 / Nginx 反代（不参与下面的绝对地址校验）
   cachedBaseUrl = ''
-  return cachedBaseUrl
   // #endif
 
-  // eslint-disable-next-line no-unreachable
+  /*
+   * --------------------------------------------------------------------------
+   * ⚠️ H5 端在这里结束（`cachedBaseUrl` 已被上面置为 `''`）。这个写法是**刻意**的，
+   *    不要"顺手"把它改回在上面那个 ifdef H5 块里直接 `return ''`。
+   * --------------------------------------------------------------------------
+   * 原因（H10 实测）：**条件编译是文本替换，不是运行时分支** —— 上面那块的
+   * endif 之后的整段非 H5 逻辑在本文件里依然存在，于是 TypeScript 把它判为
+   * **不可达代码**，而**不可达区域里不做类型收窄**：`if (!x) throw` 与赋值收窄
+   * 全部失效，报出两个改不掉也假不了的错：
+   *   src/utils/env.ts(133,23) TS18047: 'urlMatch' is possibly 'null'（判空被无视）
+   *   src/utils/env.ts(146,3)  TS2322:  Type 'string | null' is not assignable to type 'string'
+   * 更糟的是这两个错**看起来像业务代码写错了**，实际根因在条件编译的写法上。
+   *
+   * 换成"赋值 + 统一提前返回"后：
+   * - H5 构建：这里直接返回 `''`，与原来在块内 `return ''` 的行为**一字不变**；
+   * - 小程序 / App 构建：上面那块被整体剥掉，`cachedBaseUrl` 仍为 `null` → 继续往下走，
+   *   与原来完全一致（原来剥掉的也是一个 `return`）。
+   * 唯一的区别是非 H5 那段逻辑重新成为**可达代码**，从而真正被类型检查覆盖 ——
+   * 也就是说，这一改让 type-check **多查出东西**，而不是少查。
+   *
+   * ⚠️ 另一个坑（H10 实测，务必别犯）：**在本文件（以及任何走条件编译的文件）的
+   *    注释里，不要写出"带注释前缀的条件编译指令"**。
+   *    uni-app 的规则见 `uni-cli-shared/lib/preprocess/lib/regexrules.js` 的 `js.if`：
+   *    它**不要求指令位于行首**，行内只要出现"两条斜杠 + 井号 + ifdef/endif"
+   *    就会被当成**一条真指令**。
+   *    H10 第一版注释里就写了带前缀的那两个词，结果该文件凭空多出一条 ifdef、
+   *    配对失衡：`preJs` 抛 `Unexpected token 'return'` → 打印「条件编译失败」→
+   *    **原样返回未处理的代码**，而 `uni build` 依然成功（exit 0）。
+   *    H5 端侥幸没坏，但小程序/App 端会因此保留 H5 分支、拿到相对地址而连不上后端 ——
+   *    典型的"绿构建、坏产物"。所以本文件里一律用不带前缀的写法（如本节）。
+   */
+  if (cachedBaseUrl !== null) return cachedBaseUrl
+
   /*
    * ==========================================================================
    * 非 H5 端（小程序 / App）地址的选取规则 —— 这里的设计改过一次，原因值得记下来

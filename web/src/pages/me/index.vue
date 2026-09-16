@@ -9,8 +9,16 @@
       <text class="guest__desc">登录后可查看个人资料、发帖与收藏</text>
       <view class="guest__actions">
         <wd-button type="primary" block @click="goLogin">登录</wd-button>
-        <wd-button v-if="registerMode !== 'closed'" plain block @click="goRegister">注册</wd-button>
+        <wd-button v-if="registerAvailable" plain block @click="goRegister">注册</wd-button>
       </view>
+      <!--
+        注册模式查询失败（状态未知）时**必须把原因说出来**：
+        这是网络/配置问题，不是"管理员关闭了注册"，混为一谈会把排查方向带偏
+        （见 `api/auth.ts` 里 `RegisterModeResult` 的说明）。
+      -->
+      <text v-if="registerModeError" class="guest__warn" data-testid="me-register-mode-error">
+        {{ registerModeError }}
+      </text>
     </view>
 
     <!-- 已登录：资料卡 + 统计 + 菜单 -->
@@ -96,6 +104,23 @@ import type { RegisterMode } from '@/api/types'
 const auth = useAuthStore()
 const registerMode = ref<RegisterMode>('closed')
 
+/**
+ * 注册模式**查询失败**的文案。非空表示"状态未知"，必须让用户看到。
+ * 与 `pages/index/index.vue`、`pages/auth/index.vue` 同口径：
+ * 失败绝不静默当成 `'closed'`，否则网络故障会被伪装成"管理员关闭了注册"。
+ * 设计依据见 `api/auth.ts` 的 `RegisterModeResult`。
+ */
+const registerModeError = ref('')
+
+/**
+ * 注册入口是否显示：只有**明确知道**注册开放时才显示。
+ * 状态未知（`registerModeError` 非空）时一律不显示，但由上面的文案说明真实原因，
+ * **不冒充"已关闭"**。
+ */
+const registerAvailable = computed(
+  () => registerModeError.value === '' && registerMode.value !== 'closed'
+)
+
 const avatarSrc = computed(() => auth.user?.avatarUrl || '/static/avatar-default.png')
 
 /**
@@ -111,7 +136,22 @@ const menuItems = [
 ] as const
 
 onShow(async () => {
-  registerMode.value = await fetchRegisterMode()
+  /*
+   * ⚠️ 必须按 `ok` 分支取 `result.mode`，**不能**把整个结果对象赋给 `registerMode`。
+   *    `fetchRegisterMode()` 返回 `{ok:true,mode} | {ok:false,error}`（见 `api/auth.ts`）；
+   *    上一版直接写 `registerMode.value = await fetchRegisterMode()`，
+   *    类型上就已经不成立（`RegisterModeResult` 不是 `RegisterMode`），
+   *    运行时更糟：模板里 `registerMode !== 'closed'` **恒为真** →
+   *    管理员关闭注册后注册按钮仍然显示。
+   */
+  const result = await fetchRegisterMode()
+  if (result.ok) {
+    registerModeError.value = ''
+    registerMode.value = result.mode
+  } else {
+    // 状态未知：显式报错（模板里那行 warn 文案），绝不猜成 closed
+    registerModeError.value = result.error
+  }
 
   if (!auth.isLoggedIn) return
 
@@ -206,6 +246,20 @@ async function onLogout() {
     display: flex;
     flex-direction: column;
     gap: $hy-space-sm;
+  }
+
+  /*
+   * 注册状态查询失败的警告文案：用危险色而非普通灰 —— 这是异常，不是业务状态。
+   * 与 `pages/auth/index.vue` 的 `.form__warn`、`pages/index/index.vue` 的
+   * `.user-card__warn` 保持一致。
+   */
+  &__warn {
+    display: block;
+    margin-top: $hy-space-md;
+    font-size: $hy-font-xs;
+    color: $hy-color-danger;
+    text-align: center;
+    line-height: 1.6;
   }
 }
 

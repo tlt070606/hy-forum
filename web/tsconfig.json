@@ -12,7 +12,7 @@
     "paths": {
       "@/*": ["src/*"]
     },
-    "types": ["@dcloudio/types"],
+    "types": ["@dcloudio/types", "vite/client"],
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
     "resolveJsonModule": true,
@@ -24,9 +24,7 @@
     "src/**/*.d.ts",
     "src/**/*.tsx",
     "src/**/*.vue",
-    "*.ts",
-    "e2e/**/*.ts",
     "global.d.ts"
   ],
-  "exclude": ["node_modules", "dist", "src/api/generated"]
+  "exclude": ["node_modules", "dist", "e2e", "src/api/generated"]
 }
