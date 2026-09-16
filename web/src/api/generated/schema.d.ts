@@ -550,6 +550,8 @@ export interface components {
             expire?: number;
             /** @description Base64 编码的回调配置 JSON（前端原样作为 callback 表单字段传给 OSS） */
             callback?: string;
+            /** @description **直传表单必需的 OSSAccessKeyId**：AccessKey 的标识，不是密钥；Secret 只在服务端使用，绝不会出现在本响应里 */
+            accessKeyId?: string;
         };
         ApiResponseListBoardVO: {
             /** Format: int32 */
