@@ -104,6 +104,27 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
                 .as("三个伪造/非法公钥地址的请求都不得落库")
                 .isEqualTo(before);
 
+        // ---------- ③-d 公钥地址**在允许名单内但取不到**（404）→ 必须拒绝 ----------
+        // 打的是"取公钥失败被吞掉"的实现：若失败被忽略（或返回空密钥继续走），
+        // 验签会退化成"永远通过"。这里用允许名单内的地址 + 一个不存在的路径。
+        Response unfetchableKey = postRawCallback(attackerBody, attackerSignature,
+                OssCallbackTestSupport.pubKeyUrlHeaderFor(
+                        OssCallbackTestSupport.allowedPrefix() + "not-found.pem"));
+        assertThat(unfetchableKey.statusCode())
+                .as("公钥取不到时（允许名单内 404）必须拒绝，而不是继续放行：%s",
+                        unfetchableKey.asString())
+                .isEqualTo(403);
+
+        // ---------- ③-e 陈旧请求（Date 过旧）见独立用例 M3_oss_callback_rejects_stale_timestamp ----------
+
+        assertThat(countAllImages())
+                .as("公钥取不到与伪造公钥地址的请求都不得落库")
+                .isEqualTo(before);
+
+        assertThat(countAllImages())
+                .as("公钥取不到与陈旧请求都不得落库")
+                .isEqualTo(before);
+
         // ---------- ④ 反证：同一形态的请求，换成**正确签名**必须成功落库 ----------
         // 没有这一步，"拒绝"可能只是因为验签器永远拒绝（★ 陷阱一）
         byte[] goodBody = OssCallbackTestSupport.callbackBody(
@@ -238,6 +259,52 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
         assertThat(detail.jsonPath().getString("data.coverUrl"))
                 .as("封面 = 首图缩略图")
                 .isEqualTo(String.valueOf(claimed.get("thumb_url")));
+    }
+
+    /**
+     * 验收项：{@code M3_oss_callback_rejects_stale_timestamp}（L1 于 2026-09-16 登记进映射表）。
+     *
+     * <p>验签只证明"签名来自持钥方"，<b>不证明"这个请求是刚发的"</b> ——
+     * 抓到一个合法回调（或它被中间人记下来）就能无限重放，因此要有防重放窗口
+     * （{@code hy.oss.callback.max-age-seconds}，默认 15 分钟）。</p>
+     *
+     * <h2>为什么必须带"新鲜请求应当通过"的反证</h2>
+     * <p>若只断言"30 分钟前的请求被拒"，那么一个<b>永远拒绝</b>的实现照样绿；
+     * 而且若签名本身有问题，"签名不匹配"会先把它拒掉，断言就变成"因为别的原因被拒"——
+     * 看着绿，实际一个字节的防重放逻辑都没验到。因此本用例两次请求<b>用同一份有效签名</b>，
+     * 只改 {@code Date} 头：新鲜的必须 200 且落库，陈旧的必须 403 且不落库。</p>
+     */
+    @Test
+    void M3_oss_callback_rejects_stale_timestamp() {
+        String host = signatureHost();
+        String objectKey = "post/2026/09/16/replay-window.jpg";
+
+        byte[] body = OssCallbackTestSupport.callbackBody(objectKey, IMAGE_CONTENT_TYPE, 2048L, "etag-replay");
+        String signature = OssCallbackTestSupport.sign("/api/oss/callback", null, body);
+
+        // ---------- 反证：新鲜请求（Date = 现在）必须成功 ----------
+        Response fresh = postCallbackWithDate(body, signature, OssCallbackTestSupport.pubKeyUrlHeader(),
+                rfc1123Date(java.time.Duration.ZERO));
+        assertThat(fresh.statusCode())
+                .as("同一份签名 + 新鲜 Date 必须成功（否则下面的拒绝断言说明不了任何事）：%s",
+                        fresh.asString())
+                .isEqualTo(200);
+        assertThat(findImageRowByUrl(imageUrlOf(host, objectKey)))
+                .as("新鲜请求应落库").isNotNull();
+
+        // ---------- 断言：同一份签名 + 陈旧 Date（30 分钟前 > 15 分钟窗口）必须被拒 ----------
+        byte[] staleBody = OssCallbackTestSupport.callbackBody(
+                "post/2026/09/16/stale-replay.jpg", IMAGE_CONTENT_TYPE, 2048L, "etag-stale");
+        String staleSignature = OssCallbackTestSupport.sign("/api/oss/callback", null, staleBody);
+        Response stale = postCallbackWithDate(staleBody, staleSignature,
+                OssCallbackTestSupport.pubKeyUrlHeader(),
+                rfc1123Date(java.time.Duration.ofMinutes(-30)));
+        assertThat(stale.statusCode())
+                .as("陈旧回调（Date 30 分钟前，超过允许窗口）必须被拒：%s", stale.asString())
+                .isEqualTo(403);
+        assertThat(findImageRowByUrl(imageUrlOf(host, "post/2026/09/16/stale-replay.jpg")))
+                .as("被防重放拒掉的请求不得落库")
+                .isNull();
     }
 
     /**

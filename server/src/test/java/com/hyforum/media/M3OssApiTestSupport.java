@@ -128,6 +128,32 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
     }
 
     /**
+     * 带**指定 {@code Date} 头**发一次回调（用于打防重放窗口的拒绝分支）。
+     *
+     * <p>签名本身仍然正确 —— 这样唯一能让请求被拒的原因就是"请求过旧"，
+     * 断言才有指向性。</p>
+     *
+     * @param dateHeader RFC 1123 格式的时间（如 30 分钟前）
+     */
+    protected Response postCallbackWithDate(byte[] body, String authorization, String pubKeyUrl,
+                                            String dateHeader) {
+        return RestAssured.given()
+                .contentType(ContentType.JSON)
+                .header("Authorization", authorization)
+                .header("x-oss-pub-key-url", pubKeyUrl)
+                .header("Date", dateHeader)
+                .body(body)
+                .post("/api/oss/callback");
+    }
+
+    /** 生成 RFC 1123 的 Date 头（UTC），偏移量为负数表示"过去"。 */
+    protected static String rfc1123Date(java.time.temporal.TemporalAmount offset) {
+        java.time.Instant instant = java.time.Instant.now().plus(offset);
+        return java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                .format(instant.atZone(java.time.ZoneOffset.UTC));
+    }
+
+    /**
      * 发一次**签名正确**的回调（内容由参数决定）。
      *
      * <p>用于验证"验签通过但内容不合规"这类分支：签名是对的，所以能走到内容校验；
