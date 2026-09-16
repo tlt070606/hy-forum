@@ -264,15 +264,24 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
     /**
      * 验收项：{@code M3_oss_callback_rejects_stale_timestamp}（L1 于 2026-09-16 登记进映射表）。
      *
-     * <p>验签只证明"签名来自持钥方"，<b>不证明"这个请求是刚发的"</b> ——
-     * 抓到一个合法回调（或它被中间人记下来）就能无限重放，因此要有防重放窗口
-     * （{@code hy.oss.callback.max-age-seconds}，默认 15 分钟）。</p>
+     * <h2>为什么这道窗口是这条链上<b>唯一</b>的防重放控制</h2>
+     * <p><b>{@code Date} 不在官方签名公式里</b>（{@code url_decode(path) + query_string + '\n' + body}）
+     * —— 也就是说它是<b>未被签名覆盖</b>的字段：任何抓到过一次合法回调的人（或中间人）
+     * 都可以把 {@code Date} 改新再投，签名照样成立。因此"验签通过"完全不等于"这不是重放"，
+     * 唯一的防线就是请求时效窗口（{@code hy.oss.callback.max-age-seconds}，默认 15 分钟）。</p>
      *
-     * <h2>为什么必须带"新鲜请求应当通过"的反证</h2>
-     * <p>若只断言"30 分钟前的请求被拒"，那么一个<b>永远拒绝</b>的实现照样绿；
-     * 而且若签名本身有问题，"签名不匹配"会先把它拒掉，断言就变成"因为别的原因被拒"——
-     * 看着绿，实际一个字节的防重放逻辑都没验到。因此本用例两次请求<b>用同一份有效签名</b>，
-     * 只改 {@code Date} 头：新鲜的必须 200 且落库，陈旧的必须 403 且不落库。</p>
+     * <p>这也是为什么"实现了但没断言"在本项目等于没实现（H7 的先例：安全行为没验证过 = 没实现）。</p>
+     *
+     * <h2>两条构成一对（缺一即为假绿）</h2>
+     * <ol>
+     *   <li>反证：窗口内（{@code Date} = 现在）→ <b>200 且真的落库</b>。
+     *       缺了它，一个"永远拒绝"的实现照样绿；而且若签名本身有问题，
+     *       "签名不匹配"会先把它拒掉，断言就变成"因为别的原因被拒"——
+     *       看着绿，实际一个字节的防重放逻辑都没验到。</li>
+     *   <li>断言：偏差超窗 → <b>403 且 post_image 行数不变</b>（两侧都打：
+     *       过去方向与未来方向 —— 实现用的是 {@code abs(偏差)}，
+     *       只测一侧的话"只拦过去、放过未来"这种半截实现测不出来）。</li>
+     * </ol>
      */
     @Test
     void M3_oss_callback_rejects_stale_timestamp() {
@@ -282,29 +291,60 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
         byte[] body = OssCallbackTestSupport.callbackBody(objectKey, IMAGE_CONTENT_TYPE, 2048L, "etag-replay");
         String signature = OssCallbackTestSupport.sign("/api/oss/callback", null, body);
 
-        // ---------- 反证：新鲜请求（Date = 现在）必须成功 ----------
+        // ---------- ① 反证：窗口内（Date = 现在）必须 200 且真的落库 ----------
+        int beforeFresh = countAllImages();
         Response fresh = postCallbackWithDate(body, signature, OssCallbackTestSupport.pubKeyUrlHeader(),
                 rfc1123Date(java.time.Duration.ZERO));
         assertThat(fresh.statusCode())
-                .as("同一份签名 + 新鲜 Date 必须成功（否则下面的拒绝断言说明不了任何事）：%s",
+                .as("同一份签名 + 窗口内的 Date 必须成功（否则下面的拒绝断言说明不了任何事）：%s",
                         fresh.asString())
                 .isEqualTo(200);
         assertThat(findImageRowByUrl(imageUrlOf(host, objectKey)))
-                .as("新鲜请求应落库").isNotNull();
+                .as("窗口内的请求必须真的落库").isNotNull();
+        assertThat(countAllImages())
+                .as("窗口内的请求应当让 post_image 多一行")
+                .isEqualTo(beforeFresh + 1);
 
-        // ---------- 断言：同一份签名 + 陈旧 Date（30 分钟前 > 15 分钟窗口）必须被拒 ----------
-        byte[] staleBody = OssCallbackTestSupport.callbackBody(
-                "post/2026/09/16/stale-replay.jpg", IMAGE_CONTENT_TYPE, 2048L, "etag-stale");
-        String staleSignature = OssCallbackTestSupport.sign("/api/oss/callback", null, staleBody);
-        Response stale = postCallbackWithDate(staleBody, staleSignature,
-                OssCallbackTestSupport.pubKeyUrlHeader(),
-                rfc1123Date(java.time.Duration.ofMinutes(-30)));
+        // ---------- ② 偏差超窗：两侧都必须 403，且 post_image 行数不变 ----------
+        // 每次都用**各自的有效签名**（签名只覆盖 path+query+body，与 Date 无关），
+        // 因此唯一能让它被拒的原因就是"偏差超窗" —— 断言才有指向性。
+        int beforeStale = countAllImages();
+        assertStaleRequestRejected("post/2026/09/16/stale-past.jpg", "过去方向（16 分钟前）",
+                java.time.Duration.ofMinutes(-16), beforeStale);
+        assertStaleRequestRejected("post/2026/09/16/stale-future.jpg", "未来方向（16 分钟后）",
+                java.time.Duration.ofMinutes(16), beforeStale);
+
+        assertThat(countAllImages())
+                .as("两次超窗请求都不得落库（行数必须与拒绝前一致）")
+                .isEqualTo(beforeStale);
+    }
+
+    /**
+     * 发一个"签名有效但 {@code Date} 偏差超窗"的回调，断言被拒且不落库。
+     *
+     * @param objectKey        对象 key（必须在 post/ 目录内，否则会因内容校验被拒 —— 那就不是本断言要测的东西）
+     * @param label            断言信息里的方向说明
+     * @param offset           相对现在的偏差（±16 分钟）
+     * @param expectedRowCount 拒绝后应当保持的行数
+     */
+    private void assertStaleRequestRejected(String objectKey, String label,
+                                            java.time.Duration offset, int expectedRowCount) {
+        byte[] body = OssCallbackTestSupport.callbackBody(objectKey, IMAGE_CONTENT_TYPE, 2048L, "etag-stale");
+        String signature = OssCallbackTestSupport.sign("/api/oss/callback", null, body);
+
+        Response stale = postCallbackWithDate(body, signature, OssCallbackTestSupport.pubKeyUrlHeader(),
+                rfc1123Date(offset));
+
         assertThat(stale.statusCode())
-                .as("陈旧回调（Date 30 分钟前，超过允许窗口）必须被拒：%s", stale.asString())
+                .as("%s 超窗（偏差 %d 分钟）必须 403：%s", label, Math.abs(offset.toMinutes()),
+                        stale.asString())
                 .isEqualTo(403);
-        assertThat(findImageRowByUrl(imageUrlOf(host, "post/2026/09/16/stale-replay.jpg")))
-                .as("被防重放拒掉的请求不得落库")
-                .isNull();
+        assertThat(stale.jsonPath().getInt("code"))
+                .as("拒绝时也必须是统一响应体里的 403（CR-008）")
+                .isEqualTo(403);
+        assertThat(countAllImages())
+                .as("%s 被拒后 post_image 行数必须不变（只回错误码却照样落库 = 防重放没生效）", label)
+                .isEqualTo(expectedRowCount);
     }
 
     /**
