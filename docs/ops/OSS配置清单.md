@@ -406,19 +406,65 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://8.138.237.212/api/oss/callback
 ```
 
 
-### 5.5 每次要开发 OSS 回调时，先起隧道
+### 5.6 ✅ 2026-09-16 复验 + 三个会让人白忙一场的坑
+
+**复验（L1 实跑，全部有输出）**：本条链路的**每一环都还活着** ——
 
 ```powershell
-# 另开一个窗口，开着别关
-ssh -N -R 18080:127.0.0.1:8080 -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 myserver
+# ① 隧道（公网 → ECS:80 → ssh -R → 本机 8080）。期望 200，且返回的路径数应等于当前契约
+curl.exe -s -o .tmp\tunnel-health.json http://8.138.237.212/hy-forum-tunnel-health
+python -c "import json,io;d=json.load(io.open(r'.tmp/tunnel-health.json',encoding='utf-8-sig'));print('路径数 =',len(d['paths']))"
+# 实测：HTTP 200，路径数 = 12（= M3 第一交付段重导后的契约）→ 隧道 + nginx + 本机后端三者都通
+
+# ② 回调入口（POST）。M3 第二交付段**尚未实现**该端点，所以期望**我们自己后端的统一 404**
+curl.exe -s -X POST http://8.138.237.212/api/oss/callback
+# 实测：{"code":404,"message":"资源不存在"} ← 注意这是**我们后端**吐的，不是 nginx 的页面
+#       → 证明 OSS 的请求真的到达了开发机（第二段实现后这里应变成验签失败/成功的业务响应）
+
+# ③ 同路径用 GET。期望 **403**
+curl.exe -s -o NUL -w "%{http_code}`n" http://8.138.237.212/api/oss/callback
 ```
 
-然后自查（**这条要能返回 404，就说明整条链是活的**）：
+> ②③ 的判据是**响应体**而不是状态码：**我们自己后端的 JSON**（`{"code":…,"message":…}`）
+> 与 **nginx/静态站的 HTML 错误页** 是两种东西。只看状态码会分不清"到了后端"还是"被 nginx 挡了"。
+
+#### 坑 1：`GET /api/oss/callback` 返回 **403 是设计如此**，不是坏了
+
+见 §5.2 那个 snippet：`limit_except POST { deny all; }` —— **GET 等一律 403**，避免这个路径被当普通页面探测。
+**用浏览器打开它会看到 `403 Forbidden`（nginx 的页面）**，那是**正确行为**。别据此判断隧道断了。
+
+#### 坑 2：**不要在已有隧道时再起一个**
+
+`ssh -R` 带 `ExitOnForwardFailure=yes` 时，一旦远端 18080 已被占用，它会立刻退出：
+
+```
+Error: remote port forwarding failed for listen port 18080
+tunnel exited (code 255); reconnecting in 5s      ← supervisor 会一直重试、一直失败
+```
+
+**2026-09-16 就发生过**：上一个会话留下的隧道 ssh 还活着（它由一个仍存活的 supervisor 管着），
+于是新起的 supervisor 永远绑不上端口。
+**先查有没有人占着**，再决定要不要起：
 
 ```powershell
-curl.exe -s -o NUL -w "%{http_code}`n" -X POST http://8.138.237.212:18091/api/oss/callback -H "Content-Type: application/json" -d "{}"
-# 期望 404（M3 实现后应变成 400/403 —— 因为空 body 过不了验签）
+# 本机：有没有既有的隧道进程
+Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" | Select-Object ProcessId,ParentProcessId,CommandLine
+# ECS：18080 的监听者是谁（是既有隧道的 sshd，还是别的东西）
+ssh myserver "ss -ltnp | grep 18080"
 ```
+
+已经在跑就**复用它**（它转发的就是本机 8080，换后端不用重起）。真要重起：
+
+```powershell
+# 推荐用带自愈的 supervisor（断了会自动重连），而不是裸 ssh
+powershell -NoProfile -File scripts\start_oss_callback_tunnel.ps1
+```
+
+#### 坑 3：隧道健康检查返回的 `servers[0].url` **不是你仓库里的那个值**
+
+它带着**请求进来的 Host**（走公网时是 `http://8.138.237.212`，直连本机时是 `http://127.0.0.1:8080`）。
+这正是 CI 漂移检查曾经**假红**的根因（`servers[0].url` 里带了监听端口/Host）——
+所以两处比对都**两侧摘掉 `servers`** 再比。**端口与 Host 不属于契约。**
 
 
 ---
@@ -496,8 +542,19 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://8.138.237.212:18080/v3/api-docs
 | Bucket 名 / 地域 / 回调地址 | 2026-09-15 | ✅ `hy-forum-2026` / 华北2（北京）`oss-cn-beijing.aliyuncs.com` / `http://8.138.237.212/api/oss/callback` | §6 |
 
 > ⚠️ **另一件要记住的**：§5 那条通道是**开发期的临时设施**。
-> **M3 验收完就应停掉**（或至少在不再需要远程回调时停掉），不要长期挂着：
-> `rm /etc/nginx/sites-enabled/hy-forum-oss-callback && nginx -s reload`。
+> **M3 验收完就应停掉**（或至少在不再需要远程回调时停掉），不要长期挂着。
+>
+> **怎么停（2026-09-16 更正 —— 原来的写法指错了文件，照着做不会有任何效果，而你会以为已经撤掉了）**：
+> 真正的机制是 `personal` 站点里的一行 `include`，指向
+> `/etc/nginx/snippets/hy-forum-oss-callback.conf`（**没有** `sites-enabled/hy-forum-oss-callback` 这个文件）。
+> 三种撤销方式（任选其一，**改完都要 `nginx -s reload`**）：
+> ① **推荐**：把 `personal` 里那行 `include` 注释掉（**不要**直接 `rm` 那个 snippet ——
+>    `include` 指向不存在的文件会让 **nginx 启动失败**，连带把机器上**别人的静态站**一起弄挂）；
+> ② `rm /etc/nginx/snippets/hy-forum-oss-callback.conf` **且**注释掉那行 `include`；
+> ③ **最省事**：停掉隧道（`ssh -R` 那个进程）—— 回调立刻变成 502，公网不再触达开发机，
+>    而 nginx 配置一个字都不用动。
+>
+> **验收口径**：撤掉后 `GET http://8.138.237.212/hy-forum-tunnel-health` 应不再返回我们的 `api-docs`。
 
 ---
 
@@ -505,4 +562,5 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://8.138.237.212:18080/v3/api-docs
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.1 | 2026-09-16 | **§5.6 复验记录 + 三个坑**（L1 实跑）：① **整条链路今天仍全部活着** —— `GET /hy-forum-tunnel-health` → 200 且返回**12 路径**（= 重导后的新契约），`POST /api/oss/callback` → **我们后端自己的统一 404**（端点尚未实现，但**证明了 OSS 的请求真的到达开发机**）。② 记下三个会让人白忙一场的坑：**`GET` 该路径返回 403 是设计如此**（`limit_except POST`，不是隧道断了）；**已有隧道时不要再起一个**（`ExitOnForwardFailure=yes` 会一直报 `remote port forwarding failed for listen port 18080` —— 今天就发生过，上个会话的隧道 ssh 还活着）；**健康检查返回的 `servers[0].url` 带着请求进来的 Host**，那正是 CI 漂移检查曾假红的根因。③ **修掉本节两处会误导人的地方**：删掉**重复且过期**的那份 §5.5（它写的是被放弃的 `:18091`，照着做会打到没放行的端口）；更正"怎么停掉这条通道"的命令 —— 原文让人 `rm sites-enabled/hy-forum-oss-callback`，**那个文件根本不存在**，照着做不会有任何效果而你**会以为已经撤掉了**（真实机制是 `personal` 里一行 `include`，且**直接删 snippet 会让 nginx 启动失败、连带弄挂机器上别人的静态站**） |
 | v1.0 | 2026-09-15 | 首版。三条红线、Bucket、CORS、RAM 最小授权、AccessKey 存放与自查、**`ssh -R` 的 `GatewayPorts` 坑**、三步验证 |
