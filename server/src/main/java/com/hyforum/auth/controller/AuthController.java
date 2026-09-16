@@ -6,7 +6,9 @@ import com.hyforum.auth.dto.RegisterRequest;
 import com.hyforum.auth.mode.RegisterMode;
 import com.hyforum.auth.mode.RegisterModeService;
 import com.hyforum.auth.service.AuthService;
+import com.hyforum.auth.vo.CaptchaVO;
 import com.hyforum.auth.vo.LoginVO;
+import com.hyforum.auth.vo.RegisterModeVO;
 import com.hyforum.common.api.ApiResponse;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.config.RateLimitProperties;
@@ -25,8 +27,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * 认证接口（docs/技术方案.md §6.2）。
@@ -83,18 +83,19 @@ public class AuthController {
 
     /**
      * 获取图形验证码。返回 {@code {uuid, base64Image}}，答案写 Redis 300s（§6.2 / §7）。
+     *
+     * <p><b>CR-005（2026-09-15 批准并实施）</b>：返回类型从 {@code Map<String, Object>}
+     * 改成具名 {@link CaptchaVO}。此前契约里 {@code data} 是 {@code Record<string, any>}，
+     * 字段名没有静态声明，前端被迫加了一层人工窄化 + 运行时校验的临时层。
+     * 字段名与顺序保持不变，前端行为零变化，只是契约从此有了静态形状。</p>
      */
     @GetMapping("/captcha")
     @AllowAnonymous
     @Operation(summary = "获取图形验证码", description = "返回 uuid 与 Base64 图片；答案存 Redis hy:captcha:{uuid}，TTL 300s")
-    public ApiResponse<Map<String, Object>> captcha() {
+    public ApiResponse<CaptchaVO> captcha() {
         CaptchaService.CaptchaChallenge challenge = captchaService.generate();
-        // 用 LinkedHashMap 而不是 Map.of：字段顺序稳定，便于人工比对与快照测试
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("uuid", challenge.uuid());
-        data.put("base64Image", challenge.base64Image());
-        data.put("expireSeconds", challenge.ttlSeconds());
-        return ApiResponse.ok(data);
+        return ApiResponse.ok(new CaptchaVO(
+                challenge.uuid(), challenge.base64Image(), challenge.ttlSeconds()));
     }
 
     /**
@@ -130,17 +131,21 @@ public class AuthController {
 
     /**
      * 查询当前注册模式（§6.2）。前端据此决定是否渲染邀请码输入框，无需发版即可切换（§8.8）。
+     *
+     * <p><b>CR-005（2026-09-15 批准并实施）</b>：返回类型从 {@code Map<String, Object>}
+     * 改成 {@link RegisterModeVO}，其 {@code mode} 是带取值约束的枚举
+     * （契约里导出为 {@code enum: [open, invite, closed]}），前端可以做穷尽分支。
+     * 响应字段名不变（{@code mode} / {@code inviteRequired}），前端行为零变化。</p>
      */
     @GetMapping("/register-mode")
     @AllowAnonymous
     @Operation(summary = "查询注册模式", description = "取值 open / invite / closed，来源为 sys_config.register_mode")
-    public ApiResponse<Map<String, Object>> registerMode() {
-        var mode = registerModeService.currentMode();
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("mode", mode.value());
-        // 冗余一个布尔位，前端渲染条件更直观（值本身仍是唯一事实来源）
-        data.put("inviteRequired", mode == RegisterMode.INVITE);
-        return ApiResponse.ok(data);
+    public ApiResponse<RegisterModeVO> registerMode() {
+        RegisterMode mode = registerModeService.currentMode();
+        return ApiResponse.ok(new RegisterModeVO(
+                RegisterModeVO.RegisterModeValue.from(mode),
+                // 冗余一个布尔位，前端渲染条件更直观（值本身仍是唯一事实来源）
+                mode == RegisterMode.INVITE));
     }
 
     /**
