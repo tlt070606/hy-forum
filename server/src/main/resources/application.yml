@@ -117,3 +117,32 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# ---------------------------------------------------------------
+# 阿里云 OSS（M3 起使用）
+#
+# 🔴 铁律 5：**禁止把 AccessKey 写在这个文件里。**
+#    本文件是**被 git 跟踪**的，一旦提交，密钥就永久留在 git 历史里 ——
+#    删掉那一行也没用，历史里还在。2026-09-15 发生过一次：需求方把真实的
+#    key 写进了这里，**当场发现、尚未提交，代价为零**。同一天 CI 已加上
+#    「铁律 5 审计」步骤扫这类写法（.github/workflows/ci.yml）。
+#
+# 本机怎么给值（三选一，都不要写进本文件）：
+#   ① 起应用前设环境变量（每个新窗口都要重设）：
+#        $env:OSS_ACCESS_KEY_ID     = '...'
+#        $env:OSS_ACCESS_KEY_SECRET = '...'
+#   ② 写进被忽略的 server/src/main/resources/application-local.yml
+#      （根 .gitignore 已忽略 application-local.yml），再用 profile 激活
+#   ③ IDE 的 Run Configuration → Environment variables（**最不容易误提交**，推荐）
+#
+# endpoint 与 bucket-name **不是密钥**，故给了本机开发用的默认值，仍可用同名
+# 环境变量覆盖 —— 与其它非密钥配置一致（同上面的 server.port 写法）。
+# ---------------------------------------------------------------
+aliyun:
+  oss:
+    endpoint: ${OSS_ENDPOINT:oss-cn-beijing.aliyuncs.com}
+    bucket-name: ${OSS_BUCKET:hy-forum-2026}
+    # ↓ 两个密钥**故意留空**：没设环境变量时启动即失败。
+    #   这比"带着空密钥正常启动、直到上传时才失败"好排查得多（快速失败）。
+    access-key-id: ${OSS_ACCESS_KEY_ID:}
+    access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
