@@ -65,6 +65,35 @@ if (-not $mysqlOk -or -not $redisOk) {
     exit 1
 }
 
+# ---------- 0.5 端口占用检查（**必须放在打包之前**）----------
+# 为什么必须拦：本脚本的就绪探针只判断 /v3/api-docs 是否返回 200，
+# 它**分不清"我起的应用"和"别人跑着的旧实例"**。若端口已被占用：
+#   ① 本脚本起的应用会因端口冲突而退出（或退出得慢）；
+#   ② 在它退出之前，探针会先探到**那个旧实例** → 200 → 判定就绪；
+#   ③ 于是脚本把**旧版本的契约**写进 openapi.json，并打印 [PASS]。
+# 这是最坏的一类失败：产物错了，而日志是绿的。所以宁可在启动前显式失败。
+$portBusy = $false
+try {
+    $probe = New-Object System.Net.Sockets.TcpClient
+    $probe.Connect('127.0.0.1', $Port)
+    $probe.Close()
+    $portBusy = $true
+} catch { $portBusy = $false }
+if ($portBusy) {
+    Write-Host ('  [FAIL] 端口 {0} 已被占用，先停掉占用者再导出。' -f $Port) -ForegroundColor Red
+    Write-Host '         必须停掉的原因：本脚本的就绪探针只看 /v3/api-docs 是否 200，' -ForegroundColor Yellow
+    Write-Host '         它分不清"我起的应用"与"别人跑着的旧实例"，会把旧契约写成新契约。' -ForegroundColor Yellow
+    $who = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    foreach ($x in $who) {
+        $pr = Get-Process -Id $x.OwningProcess -ErrorAction SilentlyContinue
+        $pname = '?'
+        # 不用内联 if：PowerShell 5.1 只在语句上下文里允许 if，表达式里会解析失败（见 §5 坑 1）
+        if ($pr) { $pname = $pr.ProcessName }
+        Write-Host ('         占用者: pid={0} name={1}' -f $x.OwningProcess, $pname) -ForegroundColor Yellow
+    }
+    exit 1
+}
+
 # ---------- 1. 打包 ----------
 if (-not $SkipBuild) {
     Write-Host '  [1/5] mvn package ...' -ForegroundColor Cyan

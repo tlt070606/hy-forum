@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/api/posts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 帖子详情
+         * @description 可选鉴权：作者可以看到自己的待审帖；浏览量 +1 走 Redis
+         */
+        get: operations["getPost"];
+        /**
+         * 改帖
+         * @description 仅作者本人，且限发布后 30 分钟内；任何内容变更都会让帖子回到待审（status=0）
+         */
+        put: operations["updatePost"];
+        post?: never;
+        /**
+         * 删帖
+         * @description 仅作者本人；逻辑删除（is_deleted=1）
+         */
+        delete: operations["deletePost"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 帖子列表
+         * @description 可按版块筛选；sort 支持 latest/hot/essence；每页上限 20，只返回摘要（不含正文）
+         */
+        get: operations["listPosts"];
+        put?: never;
+        /**
+         * 发帖
+         * @description 资源版块必须提供 diskType 与 diskUrl；未命中敏感词直接可见，命中则进待审队列
+         */
+        post: operations["createPost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/register": {
         parameters: {
             query?: never;
@@ -124,6 +176,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/posts/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 搜索帖子
+         * @description 参数 keyword，检索标题与正文；只返回正常状态的帖子
+         */
+        get: operations["searchPosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/boards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 版块列表
+         * @description 返回启用的版块，含 isResource 标记（前端据此决定是否显示网盘字段）
+         */
+        get: operations["listBoards"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/register-mode": {
         parameters: {
             query?: never;
@@ -168,6 +260,119 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 改帖请求体（仅作者、仅发布后 30 分钟内；任何内容变更都会让帖子回到待审） */
+        PostUpdateRequest: {
+            /**
+             * @description 标题
+             * @example 分享一套 Java 学习资料（已更新）
+             */
+            title: string;
+            /** @description 正文 */
+            content?: string;
+            /** @description 图片 URL 列表（不传 = 清空图片） */
+            images?: string[];
+            /**
+             * Format: int32
+             * @description 网盘类型：1 百度 / 2 阿里 / 3 夸克 / 4 天翼 / 5 迅雷 / 6 其他
+             */
+            diskType?: number;
+            /** @description 网盘分享链接 */
+            diskUrl?: string;
+            /** @description 提取码，可选 */
+            diskCode?: string;
+        };
+        ApiResponsePostDetailVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PostDetailVO"];
+        };
+        /** @description 帖子详情 */
+        PostDetailVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            boardId?: number;
+            boardName?: string;
+            title?: string;
+            content?: string;
+            coverUrl?: string;
+            /** Format: int32 */
+            imageCount?: number;
+            images?: components["schemas"]["PostImageVO"][];
+            /** Format: int32 */
+            diskType?: number;
+            diskUrl?: string;
+            diskCode?: string;
+            /** Format: int32 */
+            viewCount?: number;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            commentCount?: number;
+            /** Format: int32 */
+            collectCount?: number;
+            /**
+             * Format: int32
+             * @description 0 待审核 / 1 正常 / 2 已屏蔽
+             */
+            status?: number;
+            author?: components["schemas"]["UserBriefVO"];
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            boardIsResource?: boolean;
+            isTop?: boolean;
+            isEssence?: boolean;
+        };
+        /** @description 帖子图片 */
+        PostImageVO: {
+            /** Format: int64 */
+            id?: number;
+            url?: string;
+            thumbUrl?: string;
+            /** Format: int32 */
+            width?: number;
+            /** Format: int32 */
+            height?: number;
+            /** Format: int32 */
+            sort?: number;
+        };
+        /** @description 作者信息摘要 */
+        UserBriefVO: {
+            /** Format: int64 */
+            id?: number;
+            nickname?: string;
+            avatarUrl?: string;
+        };
+        /** @description 发帖请求体 */
+        PostCreateRequest: {
+            /**
+             * Format: int64
+             * @description 版块 id
+             * @example 2
+             */
+            boardId: number;
+            /**
+             * @description 标题
+             * @example 分享一套 Java 学习资料
+             */
+            title: string;
+            /** @description 正文 */
+            content?: string;
+            /** @description 图片 URL 列表（必须是本项目 OSS 目录下的地址，最多 9 张） */
+            images?: string[];
+            /**
+             * Format: int32
+             * @description 网盘类型：1 百度 / 2 阿里 / 3 夸克 / 4 天翼 / 5 迅雷 / 6 其他
+             */
+            diskType?: number;
+            /** @description 网盘分享链接，可带 pwd 参数（后端会拆出提取码并去掉它） */
+            diskUrl?: string;
+            /** @description 提取码，可选 */
+            diskCode?: string;
+        };
         RegisterRequest: {
             username: string;
             password: string;
@@ -242,13 +447,94 @@ export interface components {
             message?: string;
             data?: components["schemas"]["AdminLoginVO"];
         };
-        ApiResponseMapStringObject: {
+        ApiResponsePageResultPostSummaryVO: {
             /** Format: int32 */
             code?: number;
             message?: string;
-            data?: {
-                [key: string]: Record<string, never>;
-            };
+            data?: components["schemas"]["PageResultPostSummaryVO"];
+        };
+        PageResultPostSummaryVO: {
+            list?: components["schemas"]["PostSummaryVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
+        /** @description 帖子列表项（不含正文） */
+        PostSummaryVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            boardId?: number;
+            boardName?: string;
+            title?: string;
+            coverUrl?: string;
+            /** Format: int32 */
+            imageCount?: number;
+            /** Format: int32 */
+            viewCount?: number;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            commentCount?: number;
+            /** Format: int32 */
+            collectCount?: number;
+            author?: components["schemas"]["UserBriefVO"];
+            /** Format: date-time */
+            createdAt?: string;
+            isTop?: boolean;
+            isEssence?: boolean;
+        };
+        ApiResponseListBoardVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["BoardVO"][];
+        };
+        /** @description 版块列表项 */
+        BoardVO: {
+            /** Format: int64 */
+            id?: number;
+            name?: string;
+            slug?: string;
+            description?: string;
+            iconUrl?: string;
+            /** Format: int32 */
+            sort?: number;
+            /** Format: int32 */
+            postCount?: number;
+            /** @description 是否资源版块（发帖表单据此显示网盘字段） */
+            isResource?: boolean;
+        };
+        ApiResponseRegisterModeVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["RegisterModeVO"];
+        };
+        /** @description 注册模式：open / invite / closed */
+        RegisterModeVO: {
+            /**
+             * @description open 开放注册 / invite 邀请码注册 / closed 关闭注册
+             * @enum {string}
+             */
+            mode?: "open" | "invite" | "closed";
+            inviteRequired?: boolean;
+        };
+        ApiResponseCaptchaVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["CaptchaVO"];
+        };
+        /** @description 图形验证码：uuid + 裸 base64 PNG */
+        CaptchaVO: {
+            uuid?: string;
+            base64Image?: string;
+            /** Format: int32 */
+            expireSeconds?: number;
         };
     };
     responses: never;
@@ -259,6 +545,125 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePostDetailVO"];
+                };
+            };
+        };
+    };
+    updatePost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePostDetailVO"];
+                };
+            };
+        };
+    };
+    deletePost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    listPosts: {
+        parameters: {
+            query?: {
+                boardId?: number;
+                sort?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultPostSummaryVO"];
+                };
+            };
+        };
+    };
+    createPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePostDetailVO"];
+                };
+            };
+        };
+    };
     register: {
         parameters: {
             query?: never;
@@ -391,6 +796,50 @@ export interface operations {
             };
         };
     };
+    searchPosts: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultPostSummaryVO"];
+                };
+            };
+        };
+    };
+    listBoards: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseListBoardVO"];
+                };
+            };
+        };
+    };
     registerMode: {
         parameters: {
             query?: never;
@@ -406,7 +855,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseMapStringObject"];
+                    "*/*": components["schemas"]["ApiResponseRegisterModeVO"];
                 };
             };
         };
@@ -426,7 +875,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseMapStringObject"];
+                    "*/*": components["schemas"]["ApiResponseCaptchaVO"];
                 };
             };
         };

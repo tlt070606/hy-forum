@@ -21,6 +21,14 @@
  *
  * 用法：node scripts/test-contract-drift.mjs
  * 退出码：0 = 变异被成功捕获（规则有效）；1 = 未捕获（规则是假绿，不可信）
+ *
+ * ==========================================================================
+ * 2026-09-16 起它会连带报出两条「contract.ts 常量不符」的问题 —— 这是**预期**的
+ * ==========================================================================
+ * 快照被注入假路径后，它的 SHA256 与路径数自然不再等于 `src/api/contract.ts` 里
+ * 手工记录的那两个常量，于是 `checkDeclaredConstants` 也会报漂移。
+ * **不要**因此把它们当成干扰去掉：这恰好证明那条检查在跑。
+ * 断言口径没变 —— 仍然是「`ok=false` 且 problems 里点名了假路径」。
  */
 
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -33,7 +41,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const SNAPSHOT = resolve(__dirname, '../src/api/generated/openapi.snapshot.json')
 const BACKUP = resolve(__dirname, '../.contract-snapshot.bak')
 
-/** 注入的假路径：后端当前**没有**这个接口（实测 /api/posts 返回 404） */
+/** 注入的假路径：后端当前**没有**这个接口（`/api/__drift_probe__` 不在契约的 12 个路径里） */
 const FAKE_PATH = '/api/__drift_probe__'
 
 console.log('=== 契约漂移检测 · 变异测试 ===\n')

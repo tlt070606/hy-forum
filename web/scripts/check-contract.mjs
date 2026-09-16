@@ -67,6 +67,61 @@ export function fingerprint(doc) {
   }
 }
 
+/** `contract.ts` 的位置（两个手写常量声明在那里） */
+const CONTRACT_TS = resolve(__dirname, '../src/api/contract.ts')
+
+/**
+ * 校验 `src/api/contract.ts` 里两个**手写**常量是否与快照一致。
+ *
+ * ==========================================================================
+ * 为什么需要这一段（2026-09-16 实测发现的假保证）
+ * ==========================================================================
+ * `contract.ts` 的注释写着「运行 `npm run check:contract`（校验 SHA256 与下方记录一致，
+ * 防止忘了第 1 步）」—— 但**当时的脚本里根本没有这一段**：它只比对
+ * 快照 ↔ 在线契约，从不读那两个常量。于是：
+ *   · 常量可以无声地停留在旧版本（实测就停在 M1 的 `f641bbf5…` / 路径数 8，
+ *     而快照已是 M3 的 12 路径）；
+ *   · 更糟的是**没有任何东西会因此变红**，所以没人会发现。
+ * 这是本项目反复记录过的同一类缺陷：**一条写在注释里的防线，不是防线**
+ * （先例：`INFRA_table_cleaner_refuses_non_test_database` 的「防线不能只写在注释里」）。
+ *
+ * 因此这里把它变成机器检查：常量与快照不符 → 报漂移。
+ * 另外，`scripts/test-contract-drift.mjs` 的**基线调用**（未变异时必须 ok=true）
+ * 会连带守住这两个常量 —— 本检查自带变异测试。
+ *
+ * @returns {string[]} 问题列表（空数组 = 一致）
+ */
+export function checkDeclaredConstants(snapshotHash, snapshotPathCount) {
+  let text
+  try {
+    text = readFileSync(CONTRACT_TS, 'utf8')
+  } catch {
+    return [`读不到 ${CONTRACT_TS}（它声明了本工程使用的端点与快照指纹）`]
+  }
+
+  const problems = []
+  const hashMatch = text.match(/OPENAPI_SNAPSHOT_SHA256\s*=\s*['"]([0-9a-fA-F]+)['"]/)
+  const countMatch = text.match(/OPENAPI_SNAPSHOT_PATH_COUNT\s*=\s*(\d+)/)
+
+  if (!hashMatch) {
+    problems.push('contract.ts 里找不到 OPENAPI_SNAPSHOT_SHA256 的值（写法变了？本检查需同步）')
+  } else if (hashMatch[1].toLowerCase() !== snapshotHash.toLowerCase()) {
+    problems.push(
+      `contract.ts 的 SHA256 已过期：声明 ${hashMatch[1].toLowerCase()} ≠ 快照实际 ${snapshotHash.toLowerCase()}`,
+    )
+  }
+
+  if (!countMatch) {
+    problems.push('contract.ts 里找不到 OPENAPI_SNAPSHOT_PATH_COUNT 的值（写法变了？本检查需同步）')
+  } else if (Number(countMatch[1]) !== snapshotPathCount) {
+    problems.push(
+      `contract.ts 的路径数与快照不符：声明 ${countMatch[1]} ≠ 快照实际 ${snapshotPathCount}`,
+    )
+  }
+
+  return problems
+}
+
 /**
  * 比对快照与在线契约。
  *
@@ -118,6 +173,13 @@ export async function checkContract({ target = 'http://127.0.0.1:8080', snapshot
         '  该文件由后端导出，不允许手工编辑（否则会破坏契约权威性）。',
       ],
     }
+  }
+
+  // ---- 1.5 校验 contract.ts 里两个手写常量（此前**无人校验**，见 checkDeclaredConstants 的说明）----
+  const snapshotPathCount = Object.keys(snapshot.paths ?? {}).length
+  problems.push(...checkDeclaredConstants(snapshotHash, snapshotPathCount))
+  if (problems.length === 0) {
+    messages.push('contract.ts 常量    : 与快照一致（SHA256 与路径数）')
   }
 
   // ---- 2. 拉取在线契约 ----
