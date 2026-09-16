@@ -80,7 +80,7 @@ Bucket → **数据安全** → **跨域设置** → 创建规则。
     {
       "Effect": "Allow",
       "Action": ["oss:PutObject"],
-      "Resource": ["acs:oss:*:*:你的bucket名/*"]
+      "Resource": ["acs:oss:*:*:hy-forum-2026/*"]
     }
   ]
 }
@@ -99,7 +99,56 @@ Bucket → **数据安全** → **跨域设置** → 创建规则。
 
 ---
 
+### 3.1 🔴 2026-09-15 实测：这一步**没做对**（`ImplicitDeny`）
+
+清单里唯一一项需要"进控制台做且要验证"的事就是这个。2026-09-15 由 Agent 独立验证，
+用真实的 AccessKey 对 Bucket 发了一次带签名的 `PUT`，结果：
+
+```xml
+<Code>AccessDenied</Code>
+<Message>You have no right to access this object because of bucket acl.</Message>
+<AccessDeniedDetail>
+  <PolicyType>ResourceGroupLevelIdentityBasedPolicy</PolicyType>
+  <AuthPrincipalType>SubUser</AuthPrincipalType>
+  <NoPermissionType>ImplicitDeny</NoPermissionType>
+  <AuthAction>oss:PutObject</AuthAction>
+</AccessDeniedDetail>
+<EC>0003-00000001</EC>
+```
+
+**怎么读这个报错**（这是本清单最有用的一段）：
+
+| 看到什么 | 含义 |
+|---|---|
+| **签名被接受**（没有 `SignatureDoesNotMatch` / `InvalidAccessKeyId`） | ✅ **AccessKey 本身是有效的** —— 别去怀疑密钥 |
+| `<NoPermissionType>ImplicitDeny</NoPermissionType>` | ❌ **没有任何策略允许这个动作**。"隐式拒绝"= 没找到允许的语句 |
+| `<AuthAction>oss:PutObject</AuthAction>` | 明确是这一步被拒 |
+| `<Message>...because of bucket acl</Message>` | **误导性文案** —— 它说"bucket acl"，但 `ImplicitDeny` 说明真正原因是**策略没生效**，不是桶权限 |
+
+**只剩两种可能，按概率排序**：
+
+1. **策略创建了，但没"授予"给用户** —— RAM 里**创建策略**与**授予用户**是两步，
+   第二步（用户 → 添加权限 → 选择该策略）最容易漏。
+2. **策略里的 `Resource` 没换成真实 Bucket 名** —— 原文若留着占位符 `你的bucket名`，
+   策略语法合法、也能创建成功，但**匹配不到任何对象**。
+
+> **本清单的 §3 已把 Bucket 名直接写死成 `hy-forum-2026`**（不再留占位符）——
+> 一个"需要手动替换"的占位符就是**一个会被静默漏掉的步骤**。
+
+**修完之后怎么验证**（Agent 可直接跑，不需要再进控制台）：
+
+```powershell
+# 用真实的签名 PUT 打一次；200 = 通过
+node .tmp\oss-probe.mjs
+```
+
+**在那之前不要派 M3 第二交付段** —— 签名与回调实现的正确性无法在"授权不通"的环境上验证，
+会得到一堆指向错误方向的失败（这正是 `ImplicitDeny` 文案误导人的地方）。
+
+---
+
 ## 4. AccessKey 放哪里（**这是唯一涉及密钥的一步**）
+
 
 **规则：只放在你本机的环境变量里，或者一个被 git 忽略的文件里。**
 
