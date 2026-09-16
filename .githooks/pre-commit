@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+# =============================================================================
+#  铁律 5 本地守卫 —— 提交前扫暂存区里有没有硬编码密钥
+#
+#  与 CI 的同名步骤（.github/workflows/ci.yml「铁律 5 审计」）口径一致，
+#  但**早一步**：CI 是推上去之后才拦，这个钩子是 `git commit` 那一刻就拦。
+#
+#  时机很重要：密钥一旦提交，就永久留在 git 历史里 —— 事后删掉那一行**没有用**。
+#  2026-09-15 需求方把真实的阿里云 AccessKey 写进了被跟踪的 application.yml，
+#  那次是当场发现、未提交；但下一次不一定这么幸运。
+#
+#  安装（每个克隆各做一次，因为 core.hooksPath 是本地配置、不随仓库走）：
+#      git config core.hooksPath .githooks
+#
+#  临时绕过（**不推荐**，只在确认是误报时用）：
+#      git commit --no-verify
+# =============================================================================
+
+fail=0
+
+# 只扫**暂存区**（git grep --cached 查的是 index），也就是这次真正要提交的内容。
+# 口径说明：不扫整个工作区 —— .env.local / application-local.yml 本来就该放密钥，
+# 它们已被 .gitignore 排除，扫它们会产生假阳性。
+if out=$(git grep --cached -nE 'LTAI[0-9A-Za-z]{8,}' 2>/dev/null); then
+    echo "🔴 铁律 5：暂存区里发现疑似阿里云 AccessKey ID"
+    echo "$out"
+    fail=1
+fi
+
+# 配置类文件里给密钥赋了**非空字面值**（正确写法是 ${环境变量:}）
+if out=$(git grep --cached -nE '(access-key-id|access-key-secret|accessKeyId|accessKeySecret)[[:space:]]*:[[:space:]]*"?[A-Za-z0-9/+=]{16,}' \
+            -- '*.yml' '*.yaml' '*.properties' '*.json' 2>/dev/null); then
+    echo "🔴 铁律 5：暂存区里出现非空的密钥字面值（应写成 \${环境变量:}）"
+    echo "$out"
+    fail=1
+fi
+
+if [ "$fail" != "0" ]; then
+    cat <<'EOF'
+
+提交已被拦下。原因见上。
+
+处理方式（按顺序）：
+  1. 改成环境变量占位，例如：
+         access-key-id: ${OSS_ACCESS_KEY_ID:}
+  2. 值放进环境变量，或放进被忽略的文件（application-local.yml / web/.env.local）
+  3. 若**确实已经提交过**：改回文件是不够的 —— 密钥已在 git 历史里，
+     必须去控制台轮换（替换后旧密钥作废）。改写历史也救不了已经克隆过的人。
+
+详见 docs/ops/OSS配置清单.md 红线 1、AGENTS.md 铁律 5
+EOF
+    exit 1
+fi
+
+exit 0
