@@ -93,6 +93,41 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
     }
 
     /**
+     * 按任务书 §5.6 列出的**真实 OSS 回调请求头**发一次回调（正向路径用它，保真度更高）。
+     *
+     * <p>带上 {@code Date} 头还有一个副作用是好的：它把"防重放窗口"的<b>通过路径</b>
+     * 也纳入了覆盖（此前那半边只剩"实现了但没断言"）。</p>
+     *
+     * <p>{@code Content-MD5} 只求真实（OSS 确实发它），<b>验签不依赖它</b> ——
+     * 官方公式里没有它，加进来正好把"它不参与签名"这件事写在测试里。</p>
+     */
+    protected Response postOssStyleCallback(byte[] body, String authorization, String pubKeyUrl) {
+        return RestAssured.given()
+                .contentType(ContentType.JSON)
+                .header("Authorization", authorization)
+                .header("x-oss-pub-key-url", pubKeyUrl)
+                .header("Content-MD5", md5Base64(body))
+                .header("x-oss-bucket", "hy-forum-2026")
+                .header("x-oss-signature-version", "1.0")
+                .header("x-oss-tag", "CALLBACK")
+                .header("User-Agent", "aliyun-oss-callback")
+                .header("Date", java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                        .format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)))
+                .body(body)
+                .post("/api/oss/callback");
+    }
+
+    /** Content-MD5（Base64 的 MD5），仅用于让测试请求与真实回调同形。 */
+    private static String md5Base64(byte[] body) {
+        try {
+            return java.util.Base64.getEncoder()
+                    .encodeToString(java.security.MessageDigest.getInstance("MD5").digest(body));
+        } catch (Exception ex) {
+            throw new IllegalStateException("计算 Content-MD5 失败", ex);
+        }
+    }
+
+    /**
      * 发一次**签名正确**的回调（内容由参数决定）。
      *
      * <p>用于验证"验签通过但内容不合规"这类分支：签名是对的，所以能走到内容校验；

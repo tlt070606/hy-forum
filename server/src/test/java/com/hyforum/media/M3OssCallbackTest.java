@@ -47,7 +47,7 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
         byte[] forgedBody = OssCallbackTestSupport.callbackBody(
                 "post/2026/09/16/forged.jpg", IMAGE_CONTENT_TYPE, 12345L, "etag-forged");
         Response forged = postRawCallback(forgedBody,
-                OssCallbackTestSupport.signWithForeignKey("/api/oss/callback", forgedBody),
+                OssCallbackTestSupport.signWithAttackerKey("/api/oss/callback", forgedBody),
                 OssCallbackTestSupport.pubKeyUrlHeader());
 
         assertThat(forged.statusCode())
@@ -68,11 +68,47 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
                 .isEqualTo(403);
         assertThat(countAllImages()).isEqualTo(before);
 
-        // ---------- ③ 反证：同一形态的请求，换成**正确签名**必须成功落库 ----------
+        // ---------- ③ 伪造**公钥地址** + 攻击者自签的"合法"签名 → 必须拒绝 ----------
+        // 任务书 §5.6 的**方向②**，也是那一节里唯一被称为"安全闸门"的一步：
+        // 若实现成"头里给什么 URL 就去取什么公钥"，攻击者自带一对密钥即可让验签**全部通过**
+        // （且顺手构成 SSRF）。只打方向①的话，实现漏掉域名白名单时 ① 照样绿 —— 绿得毫无意义。
+        byte[] attackerBody = OssCallbackTestSupport.callbackBody(
+                "post/2026/09/16/attacker-supplied-key.jpg", IMAGE_CONTENT_TYPE, 2048L, "etag-attacker");
+        String attackerSignature = OssCallbackTestSupport.signWithAttackerKey("/api/oss/callback", attackerBody);
+
+        // ③-a **可达但不在允许名单内**的攻击者公钥服务器 + 与之配对的签名 → 必须拒绝
+        //   ⚠️ 这一条是方向②里**唯一具备区分力**的那条：攻击者公钥必须真的能取到，
+        //   否则"取公钥失败 → 拒绝"会让断言照样绿，用例就永远抓不到"没做域名白名单"这个缺陷。
+        Response attackerKeyServer = postRawCallback(attackerBody, attackerSignature,
+                OssCallbackTestSupport.pubKeyUrlHeaderFor(OssCallbackTestSupport.attackerPublicKeyUrl()));
+        assertThat(attackerKeyServer.statusCode())
+                .as("自带一对密钥（可达的攻击者公钥 + 自签）必须被拒，否则验签可被完全绕过：%s",
+                        attackerKeyServer.asString())
+                .isEqualTo(403);
+
+        // ③-b 仿冒域名（不可达，故这条只证明"域名校验把非白名单地址挡在外面"，区分力弱于 ③-a）
+        Response lookalikeKeyUrl = postRawCallback(attackerBody, attackerSignature,
+                OssCallbackTestSupport.pubKeyUrlHeaderFor(
+                        "https://gosspublic.alicdn.com.evil.example.com/pub.pem"));
+        assertThat(lookalikeKeyUrl.statusCode())
+                .as("与合法域名长得像的仿冒地址必须被拒：%s", lookalikeKeyUrl.asString())
+                .isEqualTo(403);
+
+        // ③-c 公钥地址头的形态本身非法（不是 Base64）
+        Response malformedKeyUrl = postRawCallback(attackerBody, attackerSignature, "%%%not-base64%%%");
+        assertThat(malformedKeyUrl.statusCode())
+                .as("公钥地址头不是合法 Base64 时必须被拒：%s", malformedKeyUrl.asString())
+                .isEqualTo(403);
+
+        assertThat(countAllImages())
+                .as("三个伪造/非法公钥地址的请求都不得落库")
+                .isEqualTo(before);
+
+        // ---------- ④ 反证：同一形态的请求，换成**正确签名**必须成功落库 ----------
         // 没有这一步，"拒绝"可能只是因为验签器永远拒绝（★ 陷阱一）
         byte[] goodBody = OssCallbackTestSupport.callbackBody(
                 "post/2026/09/16/after-reject.jpg", IMAGE_CONTENT_TYPE, 2048L, "etag-good");
-        Response good = postRawCallback(goodBody,
+        Response good = postOssStyleCallback(goodBody,
                 OssCallbackTestSupport.sign("/api/oss/callback", null, goodBody),
                 OssCallbackTestSupport.pubKeyUrlHeader());
         assertThat(good.statusCode())
@@ -86,7 +122,7 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
                 .as("验签通过必须真的落库（只能靠查库证明，不能只看响应）")
                 .isEqualTo(before + 1);
 
-        // ---------- ④ 验签通过但**内容不合规**的四条分支（见下面的私有方法） ----------
+        // ---------- ⑤ 验签通过但**内容不合规**的四条分支（见下面的私有方法） ----------
         assertDisallowedContentIsRejected();
     }
 
