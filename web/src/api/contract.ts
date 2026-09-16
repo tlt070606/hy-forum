@@ -53,13 +53,13 @@
  *    它与快照不符会直接报漂移。改快照就必须改这里，反之亦然。
  */
 export const OPENAPI_SNAPSHOT_SHA256 =
-  'e62390afbf005b65a87f3b724f95d23cfb18f55d5668ead42d1c57453689456f'
+  '910f99c89b4673ef42e13591418c3d53a53c5a6a622acc5c257db1931df6d53e'
 
 /** 快照对应的后端版本，便于人肉核对这场快照是什么时候的。 */
 export const OPENAPI_SNAPSHOT_VERSION = '0.0.1'
 
 /** 快照导出时后端暴露的路径数量（用于冒烟核对，防止残缺快照）。同样由 check:contract 校验。 */
-export const OPENAPI_SNAPSHOT_PATH_COUNT = 12
+export const OPENAPI_SNAPSHOT_PATH_COUNT = 14
 
 /**
  * 本前端工程实际使用的全部端点。
@@ -99,6 +99,19 @@ export const ENDPOINTS = {
   postDetail: { methods: ['GET', 'PUT', 'DELETE'], path: '/api/posts/{id}', status: 'ready' },
   /** 帖子搜索 */
   postSearch: { methods: ['GET'], path: '/api/posts/search', status: 'ready' },
+
+  /*
+   * ---- M3 第二交付段（2026-09-16，`3b1591c`）已交付 ----
+   */
+  /** 上传签名（**需登录**）：返回 PostObject 表单所需的一切 */
+  ossSignature: { methods: ['GET'], path: '/api/oss/signature', status: 'ready' },
+
+  /*
+   * ---- 以下是 OSS 直接调用的端点，**前端不调用** ----
+   * `POST /api/oss/callback` 由 OSS 在上传成功后主动请求后端（匿名 + RSA 验签），
+   * 登记它只是为了让「契约里有哪些路径」这件事在本文档里完整，**不要在前端代码里调它**。
+   */
+  ossCallback: { methods: ['POST'], path: '/api/oss/callback', status: 'ready', calledBy: 'OSS' },
 
   /*
    * ---- 以下端点由《技术方案》§6 规划，**尚未交付**（当前契约里没有这些路径）----

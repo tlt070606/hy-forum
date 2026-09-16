@@ -56,6 +56,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/oss/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * OSS 上传回调
+         * @description OSS 发起，无登录态；必须验签（RSA+MD5，公钥来自 x-oss-pub-key-url）；通过后按 post_id=0、audit_status=0 落 post_image
+         */
+        post: operations["callback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/register": {
         parameters: {
             query?: never;
@@ -188,6 +208,26 @@ export interface paths {
          * @description 参数 keyword，检索标题与正文；只返回正常状态的帖子
          */
         get: operations["searchPosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oss/signature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 获取 OSS 直传签名
+         * @description 返回 {host, policy, signature, dir, expire, callback}；需登录；policy 限定目录 post/、单图 ≤5MB、仅 image/*
+         */
+        get: operations["signature"];
         put?: never;
         post?: never;
         delete?: never;
@@ -373,6 +413,12 @@ export interface components {
             /** @description 提取码，可选 */
             diskCode?: string;
         };
+        ApiResponseVoid: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: Record<string, never>;
+        };
         RegisterRequest: {
             username: string;
             password: string;
@@ -409,12 +455,6 @@ export interface components {
             level?: number;
             /** Format: date-time */
             createdAt?: string;
-        };
-        ApiResponseVoid: {
-            /** Format: int32 */
-            code?: number;
-            message?: string;
-            data?: Record<string, never>;
         };
         LoginRequest: {
             username: string;
@@ -486,6 +526,30 @@ export interface components {
             createdAt?: string;
             isTop?: boolean;
             isEssence?: boolean;
+        };
+        ApiResponseOssSignatureVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["OssSignatureVO"];
+        };
+        /** @description OSS 直传签名（PostObject 表单直传） */
+        OssSignatureVO: {
+            /** @description 直传目标域名：https://{bucket}.{endpoint}（无尾斜杠） */
+            host?: string;
+            /** @description Base64 编码的 policy（含有效期与 key 目录约束） */
+            policy?: string;
+            /** @description Base64 编码的签名：HMAC-SHA1(policy, accessKeySecret) */
+            signature?: string;
+            /** @description 对象 key 的目录前缀，带尾斜杠（如 post/） */
+            dir?: string;
+            /**
+             * Format: int64
+             * @description policy 到期时刻（epoch 秒）
+             */
+            expire?: number;
+            /** @description Base64 编码的回调配置 JSON（前端原样作为 callback 表单字段传给 OSS） */
+            callback?: string;
         };
         ApiResponseListBoardVO: {
             /** Format: int32 */
@@ -664,6 +728,30 @@ export interface operations {
             };
         };
     };
+    callback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": string[];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
     register: {
         parameters: {
             query?: never;
@@ -816,6 +904,26 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponsePageResultPostSummaryVO"];
+                };
+            };
+        };
+    };
+    signature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseOssSignatureVO"];
                 };
             };
         };

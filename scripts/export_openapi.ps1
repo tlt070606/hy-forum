@@ -94,6 +94,20 @@ if ($portBusy) {
     exit 1
 }
 
+# ---------- 0.6 fail-fast 的凭据：导出契约只需要应用**能启动** ----------
+# 2026-09-16 起 media 包的凭据属性带 @NotBlank（裁决 ② 兑现的 fail-fast）：
+# 不设 OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET，应用**启动即失败**（实测 exit 1）。
+# 而本脚本只抓 /v3/api-docs —— **不需要真实凭据**，也从不调用 OSS。
+# 所以在"未设置"时补两个**自曝身份的占位值**，让导出不被一个与契约无关的原因挡住。
+#   ⚠️ 这两个值不能用于任何上传；它们只活在本进程的环境变量里，不落盘、不进仓库。
+#   ⚠️ 若你已经设了真实值，本脚本**不会覆盖**（只在未设置时补）。
+foreach ($credKey in 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET') {
+    if (-not [Environment]::GetEnvironmentVariable($credKey, 'Process')) {
+        [Environment]::SetEnvironmentVariable($credKey, 'export-openapi-placeholder-not-a-real-key', 'Process')
+        Write-Host ('  [i] {0} 未设置 → 本次导出使用占位值（导出不需要真实凭据）' -f $credKey) -ForegroundColor DarkGray
+    }
+}
+
 # ---------- 1. 打包 ----------
 if (-not $SkipBuild) {
     Write-Host '  [1/5] mvn package ...' -ForegroundColor Cyan
