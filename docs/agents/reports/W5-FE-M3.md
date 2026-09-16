@@ -276,7 +276,7 @@ Running 12 tests using 1 worker
 开工时我实测：
 
 ```
-openapi.json                     = 14 路径 / 26 schema / SHA256 910F99C8…
+openapi.json                     = 14 路径 / 27 schema / SHA256 910F99C8…
 OssSignatureVO.properties        = host, policy, signature, dir, expire, callback      ← 没有 accessKeyId
 running 8080 /v3/api-docs        = 同样没有
 ```
@@ -429,7 +429,21 @@ id  post_id  url                                                                
 
 ---
 
-## 10. 变更记录
+## 11. 我自己造的两个瑕疵（一并交代，避免 L1 复核时以为是别人干的）
+
+1. **提交信息带 BOM**：本次提交 `a53074a` 的主题行以 **U+FEFF** 开头
+   （`git log --oneline` 里看起来是 `feat(web): …`）。
+   根因：PowerShell 5.1 的 `Out-File -Encoding UTF8` **会写 BOM**，
+   我拿它生成了 commit message 文件。
+   ⚠️ **任务书 §8.4 禁止 `git commit --amend`，所以我没有修** —— 留给 L1 决定是否在推送前处理。
+   教训与 [`../README.md`](../README.md) §7.1 的 `.ps1` BOM 是**同一条**：
+   本项目里凡是"喂给别的程序读"的文本，都要先想清楚 BOM 会不会成为内容的一部分。
+2. **本报告第一版把 schema 数写成了 26**（实际 **27**）。
+   已改正。根因是我手数而不是解析 JSON —— 与 §5.1 那条"别用文本匹配判定契约差异"是同一类错误。
+
+---
+
+## 12. 变更记录
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
