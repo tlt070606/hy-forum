@@ -109,8 +109,25 @@ class M3OssSignatureTest extends M3OssApiTestSupport {
                 .as("回调地址必须指向本项目的回调端点")
                 .contains("/api/oss/callback");
 
-        // ---------- ⑦ 回调体模板必须能拼出**合法 JSON**（真实回调踩过的坑）----------
-        // OSS 替换 ${...} 时：字符串变量**自带 JSON 引号**，数值变量不带。
+        // ---------- ⑦ CR-F：accessKeyId（PostObject 表单必需）与"不得泄漏 Secret" ----------
+        assertThat(ossAccessKeyIdFromConfig)
+                .as("测试配置里必须提供 key id（否则下面的断言是空转）")
+                .isNotBlank();
+        assertThat(signed.jsonPath().getString("data.accessKeyId"))
+                .as("CR-F：PostObject 表单必须有 OSSAccessKeyId，否则前端根本无法完成一次直传。响应：%s",
+                        signed.asString())
+                .isNotBlank()
+                .as("它必须是**配置里的那个值**（独立读取路径比对：证明值是从配置流到响应，"
+                        + "而不是被测代码里某个常量凑的）")
+                .isEqualTo(ossAccessKeyIdFromConfig);
+        assertThat(signed.jsonPath().getString("data.accessKeyId"))
+                .as("它是标识不是密钥：必须与 Secret 不同（防止有人把 secret 填进这个字段）")
+                .isNotEqualTo(ossAccessKeySecret);
+
+        // Secret 绝不能出现在响应里：查 Secret 的所有 6 字符以上连续子串（见 assertNoSecretLeak 的取舍说明）
+        assertNoSecretLeak(signed.asString());
+
+        // ---------- ⑧ 回调体模板必须能拼出**合法 JSON**（真实回调踩过的坑）----------        // OSS 替换 ${...} 时：字符串变量**自带 JSON 引号**，数值变量不带。
         // 若模板自己又加了一层引号，真实回调体就会变成 {"object":""...""}，
         // 而 OSS 只会报 `CallbackFailed: Error status : 400` —— 完全看不出是 JSON 拼坏了。
         // 这条断言就是那次故障的回归守卫（证据见交付报告证据 #6 的原文）。

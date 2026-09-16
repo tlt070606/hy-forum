@@ -101,7 +101,12 @@ public class OssSignatureService {
                 signature,
                 dir,
                 expiration.getEpochSecond(),
-                encodeBase64(callbackConfigJson(request)));
+                encodeBase64(callbackConfigJson(request)),
+                // CR-F：PostObject 表单必须有 OSSAccessKeyId，否则前端无法完成直传。
+                // 取值**只**来自配置（而配置只来自环境变量 OSS_ACCESS_KEY_ID）——
+                // 这里刻意不写任何兜底/默认值：缺失时应用根本起不来（fail-fast），
+                // 而不是发一份"看起来能用、传上去必失败"的签名。
+                credentials.accessKeyId());
     }
 
     /** policy JSON：有效期 + 三条约束（见类注释）。 */

@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 /**
  * M3 第二交付段（media/OSS）接口测试的公共父类。
  *
@@ -41,6 +43,47 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
     /** 测试用的 OSS 密钥（来自 {@code application-test.yml} 的**测试占位值**，不是真实密钥）。 */
     @Value("${aliyun.oss.access-key-secret:}")
     protected String ossAccessKeySecret;
+
+    /**
+     * 测试用的 AccessKey **标识**，走**独立的读取路径**（{@code @Value} 直读属性）而不是复用
+     * 被测服务注入的那个属性对象。
+     *
+     * <p>这样断言才有意义：它证明 {@code accessKeyId} 是<b>从配置流到响应</b>的，
+     * 而不是被测代码里某个常量/别的字段凑出来的（后者用同一个对象比较是察觉不到的）。</p>
+     */
+    @Value("${aliyun.oss.access-key-id:}")
+    protected String ossAccessKeyIdFromConfig;
+
+    /**
+     * 断言响应报文里<b>没有泄漏 Secret</b>（CR-F 要求 1）。
+     *
+     * <p>口径选择（说明取舍）：要求是"secret 的任何子串"。逐字符长度的子串检查会疯狂误报
+     * （1~2 个字符几乎必然出现在 base64 串里），因此这里检查 <b>Secret 的所有 6 字符以上连续子串</b>：
+     * 6 字符的密钥片段已经足够构成泄漏，同时误报率可接受。</p>
+     *
+     * <p><b>失败信息刻意不打印命中的片段</b>：万一有人拿真实密钥跑测试，
+     * 把片段打进日志/报告就等于再泄漏一次 —— 只报"命中长度"，值本身由人工去查。</p>
+     */
+    protected void assertNoSecretLeak(String responseBody) {
+        assertThat(ossAccessKeySecret)
+                .as("测试配置里必须有 secret 占位值（否则这条断言形同虚设）")
+                .isNotBlank();
+        assertThat(responseBody)
+                .as("响应体不得包含 Secret 本体")
+                .doesNotContain(ossAccessKeySecret);
+
+        String secret = ossAccessKeySecret;
+        int window = 6;
+        for (int i = 0; i + window <= secret.length(); i++) {
+            String fragment = secret.substring(i, i + window);
+            if (responseBody.contains(fragment)) {
+                throw new AssertionError(
+                        "响应体里出现了 AccessKey Secret 的 " + window + " 字符连续片段（位置 " + i
+                                + "）—— 密钥泄漏，必须立刻查 OssSignatureVO 的字段来源。"
+                                + "（此处刻意不回显命中的片段，避免二次泄漏）");
+            }
+        }
+    }
 
     @DynamicPropertySource
     static void ossTestProperties(DynamicPropertyRegistry registry) {

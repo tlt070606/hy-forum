@@ -82,12 +82,16 @@ hy:
 # M1 与 M3 第一段的 44 个用例会集体变红，而原因与被测行为毫无关系。
 #
 # 归属说明：本文件原为 W1-M1 任务独占；这两行由 L1 于 2026-09-16 授权
-# M3 第二交付段追加（任务书 §10 的 CR-D 裁决）。
+# M3 第二交付段追加（任务书 §10 的 CR-D 裁决），值在 CR-F 落地时调整过一次。
+#
+# ⚠️ 两个值**刻意不共享 6 字符以上的共同片段**（早先两者都以 `test-` 开头，导致
+#    "响应体不得含 secret 子串"那条守卫被 key id 里的公共前缀误报 —— 守卫本身是对的，
+#    是这两份 fixture 长得太像）。改值时请保持它们互不包含对方的 6 字符片段。
 # -------------------------------------------------------------
 aliyun:
   oss:
-    access-key-id: test-placeholder-not-a-real-key
-    access-key-secret: test-placeholder-not-a-real-secret
+    access-key-id: TEST-KEYID-1234567890
+    access-key-secret: not-a-real-secret-abcdefghij
 
 sa-token:
   token-name: Authorization
