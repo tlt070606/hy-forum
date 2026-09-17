@@ -133,10 +133,10 @@ class M3PostPublishTest extends M3ApiTestSupport {
         Response afterHidden = getPostDetail(postId);
         List<String> visibleUrls = afterHidden.jsonPath().getList("data.images.url");
         // §12.3 坑 2：对外是签名 URL → 比 base（对象地址）
-        assertThat(visibleUrls.stream().map(M3PostPublishTest::bareUrl).toList())
+        assertThat(visibleUrls.stream().map(M3ApiTestSupport::bareUrl).toList())
                 .as("audit_status=2 的图片必须被前台隐藏（CR-006）")
                 .containsExactly(image1, image2);
-        assertThat(visibleUrls.stream().map(M3PostPublishTest::bareUrl).toList())
+        assertThat(visibleUrls.stream().map(M3ApiTestSupport::bareUrl).toList())
                 .as("audit_status=0 的图片**不得**被隐藏 —— '默认 0' 不等于'必须人工放行才可见'（CR-006）")
                 .doesNotContain(ossImage("2026/09/15/bad.jpg"));
     }

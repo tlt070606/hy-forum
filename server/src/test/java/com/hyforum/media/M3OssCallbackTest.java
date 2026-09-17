@@ -293,6 +293,14 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
                 .as("缩略图 URL 必须仍带 x-oss-process（签名不能把参数吃掉）")
                 .contains("x-oss-process");
 
+        // 有效期必须真的是**配置值**（§12.2 的 ttl-seconds）：这条断言防的是"签名永不过期"
+        // 与"签完立即过期"两种错法 —— 两者都能通过"有 Expires 参数"这种弱断言。
+        // 容差 30 秒：签名在服务端生成、断言在客户端执行，中间有网络与解析耗时。
+        long nowSeconds = java.time.Instant.now().getEpochSecond();
+        assertThat(Long.parseLong(queryParamOf(signedUrl, "Expires")))
+                .as("Expires 必须约等于 现在 + 配置的 TTL(%d 秒)", READ_URL_TTL_SECONDS)
+                .isBetween(nowSeconds + READ_URL_TTL_SECONDS - 30, nowSeconds + READ_URL_TTL_SECONDS + 30);
+
         // 独立重算签名（测试里手写官方 SDK 的 V1 口径）：只签名不覆盖子资源的实现会在这里失败
         assertThat(queryParamOf(signedThumbUrl, "Signature"))
                 .as("缩略图签名必须把 x-oss-process 算进 CanonicalizedResource（否则真实 OSS 上是"

@@ -348,4 +348,60 @@ public abstract class M3ApiTestSupport extends WebIntegrationTestBase {
                 .isNotNull();
         return Long.parseLong(String.valueOf(id));
     }
+
+    // ==================================================================
+    // URL 小工具（§12 读时签名之后，很多断言要"比对象地址"而不是比整串）
+    // ==================================================================
+
+    /** 读时签名会追加的三个查询参数名。 */
+    protected static final java.util.Set<String> SIGNATURE_PARAM_NAMES =
+            java.util.Set.of("OSSAccessKeyId", "Expires", "Signature");
+
+    /**
+     * 去掉读时签名参数（{@code OSSAccessKeyId}/{@code Expires}/{@code Signature}），
+     * 保留其余查询参数（例如 {@code x-oss-process}）。
+     *
+     * <p><b>为什么要比 base 而不是比整串</b>：签名带 {@code Expires}（epoch 秒），
+     * 两次组装恰好跨过一秒就会得到不同的签名字符串 —— 直接比较整串会让用例随机变红
+     * （本项目最忌讳的那种"偶发红"）。比 base 语义完全等价，且结果确定。</p>
+     *
+     * <p>刻意放在这个<b>最底层</b>的测试基类里：post 与 media 两边的测试都要用它。</p>
+     */
+    protected static String bareUrl(String signedUrl) {
+        if (signedUrl == null) {
+            return null;
+        }
+        int q = signedUrl.indexOf('?');
+        if (q < 0) {
+            return signedUrl;
+        }
+        String base = signedUrl.substring(0, q);
+        String kept = java.util.Arrays.stream(signedUrl.substring(q + 1).split("&"))
+                .filter(p -> !p.isEmpty())
+                .filter(p -> {
+                    String name = p.contains("=") ? p.substring(0, p.indexOf('=')) : p;
+                    return !SIGNATURE_PARAM_NAMES.contains(name);
+                })
+                .collect(java.util.stream.Collectors.joining("&"));
+        return kept.isEmpty() ? base : base + "?" + kept;
+    }
+
+    /** 取某个查询参数的值（自动 URL 解码，因为正是签名参数）；不存在返回 null。 */
+    protected static String queryParamOf(String url, String name) {
+        if (url == null) {
+            return null;
+        }
+        int q = url.indexOf('?');
+        if (q < 0) {
+            return null;
+        }
+        for (String pair : url.substring(q + 1).split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && pair.substring(0, eq).equals(name)) {
+                return java.net.URLDecoder.decode(pair.substring(eq + 1),
+                        java.nio.charset.StandardCharsets.UTF_8);
+            }
+        }
+        return null;
+    }
 }

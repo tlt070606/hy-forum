@@ -107,57 +107,10 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
     // ==================================================================
     // 读时签名（§12）相关的小工具
     // ==================================================================
-
-    /** 读时签名会追加的三个查询参数名。 */
-    protected static final java.util.Set<String> SIGNATURE_PARAM_NAMES =
-            java.util.Set.of("OSSAccessKeyId", "Expires", "Signature");
-
-    /**
-     * 去掉读时签名参数（{@code OSSAccessKeyId}/{@code Expires}/{@code Signature}），
-     * 保留其余查询参数（例如 {@code x-oss-process}）。
-     *
-     * <p><b>为什么"封面 = 首图缩略图"这类断言要比 base 而不是比整串</b>：签名带
-     * {@code Expires}（epoch 秒），两次组装恰好跨过一秒就会得到不同的签名字符串 ——
-     * 直接比较整串会让用例随机变红（本项目最忌讳的那种"偶发红"）。
-     * 比 base 语义完全等价，且结果确定。</p>
-     */
-    protected static String bareUrl(String signedUrl) {
-        if (signedUrl == null) {
-            return null;
-        }
-        int q = signedUrl.indexOf('?');
-        if (q < 0) {
-            return signedUrl;
-        }
-        String base = signedUrl.substring(0, q);
-        String kept = java.util.Arrays.stream(signedUrl.substring(q + 1).split("&"))
-                .filter(p -> !p.isEmpty())
-                .filter(p -> {
-                    String name = p.contains("=") ? p.substring(0, p.indexOf('=')) : p;
-                    return !SIGNATURE_PARAM_NAMES.contains(name);
-                })
-                .collect(java.util.stream.Collectors.joining("&"));
-        return kept.isEmpty() ? base : base + "?" + kept;
-    }
-
-    /** 取某个查询参数的值（自动 URL 解码，因为正是签名参数）；不存在返回 null。 */
-    protected static String queryParamOf(String url, String name) {
-        if (url == null) {
-            return null;
-        }
-        int q = url.indexOf('?');
-        if (q < 0) {
-            return null;
-        }
-        for (String pair : url.substring(q + 1).split("&")) {
-            int eq = pair.indexOf('=');
-            if (eq > 0 && pair.substring(0, eq).equals(name)) {
-                return java.net.URLDecoder.decode(pair.substring(eq + 1),
-                        java.nio.charset.StandardCharsets.UTF_8);
-            }
-        }
-        return null;
-    }
+    // 说明：`bareUrl` / `queryParamOf` / `SIGNATURE_PARAM_NAMES` 已上移到**父类**
+    // `M3ApiTestSupport` —— post 侧的测试（继承 M3ApiTestSupport）也要用它们，
+    // 留在 media 这一层会让那批断言编译不过（这是实测踩到的错，见提交信息）。
+    // 这里只保留与"签名算法验证"绑定、且依赖 media 侧密钥/常量的工具。
 
     /** 断言某 URL 是"读时签名过的"（三个签名参数齐全）。 */
     protected void assertSigned(String url, String what) {
