@@ -82,8 +82,15 @@
           </view>
         </view>
 
-        <!-- 编辑过才显示。依据契约的 updatedAt（与 createdAt 差 60 秒以上才算改过） -->
-        <text v-if="editedText" class="edited" data-testid="detail-edited">{{ editedText }}</text>
+        <!--
+          ⚠️ **刻意不显示"编辑于 …"**。
+          契约里能用的只有 `createdAt` / `updatedAt`，而 `updatedAt` **不是**"内容被改过"的信号：
+          `post.updated_at` 这一列带 `ON UPDATE CURRENT_TIMESTAMP`，**任何对该行的写**都会顶它 ——
+          实测证据：一篇从没被编辑过的演示帖，只因为 `view_count` 从 0 涨到 4，
+          `updated_at` 就比 `created_at` 晚了 **94501 秒**，于是页面挂着"编辑于 10 分钟前"。
+          没有可靠的编辑信号时，宁可不显示 —— 显示一个假的业务事实比少一个提示糟得多。
+        -->
+        <text v-if="status === 0" class="hint-line">（本次修改后需重新审核）</text>
       </view>
 
       <!-- ==================== 正文 ==================== -->
@@ -339,18 +346,17 @@ const editable = computed(() => {
   return Date.now() - ts <= 30 * 60 * 1000
 })
 
-/**
- * "编辑于 …" 文案。
- * 用 `updatedAt` 与 `createdAt` 的差值判断（差 60 秒以上才算改过）：
- * 后端写入时两者通常相差毫秒级，直接用 `!==` 会几乎每次都显示"编辑过"。
+/*
+ * ⚠️ 这里**曾经**有一个 `editedText` computed，用 `updatedAt - createdAt > 60s` 推断"编辑过"。
+ * **已删除**，原因是它会产生假阳性：`post.updated_at` 带 `ON UPDATE CURRENT_TIMESTAMP`，
+ * 任何对该行的写都会改它 —— 实测一篇从未编辑过的帖子只因 `view_count` 从 0 变成 4，
+ * `updated_at` 就比 `created_at` 晚了 94501 秒，界面于是长期挂着"编辑于 10 分钟前"。
+ *
+ * 契约里**没有**可靠的"是否被编辑过"信号（`PostDetailVO` 只有这两个时间字段），
+ * 所以正确的做法是**不显示**，而不是拿一个含义不符的字段去猜。
+ * 若将来确实要这个功能，应由后端提供明确的语义字段（例如 `edit_count` 或 `last_edit_at`）——
+ * 那是契约变更，前端不自己造。
  */
-const editedText = computed(() => {
-  const created = Date.parse(text(post.value?.createdAt))
-  const updated = Date.parse(text(post.value?.updatedAt))
-  if (Number.isNaN(created) || Number.isNaN(updated)) return ''
-  if (updated - created < 60_000) return ''
-  return `编辑于 ${relativeTime(post.value?.updatedAt)}`
-})
 
 /** 本端能否直接打开外部链接（H5/App 可以，小程序不行）。平台差异集中在 utils/platform */
 const canOpenLink = computed(() => canOpenExternalLink())
@@ -695,7 +701,7 @@ async function onDelete(): Promise<void> {
   }
 }
 
-.edited {
+.hint-line {
   display: block;
   margin-top: 8px;
   font-size: $hy-font-xs;
