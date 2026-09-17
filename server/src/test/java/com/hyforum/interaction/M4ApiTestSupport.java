@@ -106,9 +106,76 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         //   单一事实来源（本常量）堵掉，而不是靠记得多传一个 -D 参数。
         tableCleaner = new com.hyforum.support.TestTableCleaner(jdbcTemplate, M4_TEST_DATABASE);
         assertConnectedToM4Database();
-        clearRedisKeys("hy:post:view:*");
-        clearRedisKeys("hy:rl:*");
-        clearRedisKeys("hy:token:*");
+
+        // ─────────────────────────────────────────────────────────────
+        // ⚠️ Redis 清理的规矩：**只清本测试类自己写下的键**，绝不清整个命名空间。
+        //
+        // 这里原来写的是 `clearRedisKeys("hy:rl:*")`（删掉所有限流计数），那是**我的 bug**，
+        // 而且它一直在**掩盖一个结构性问题**：
+        //   ① `hy:rl:` 是**全项目共用**的命名空间。M1 的 `M1ErrorCodesTest` 正是靠
+        //      "把 IP 限流窗口打满"来触发 429（`RATE_LIMIT_QUOTA = 50`），
+        //      通配符删除会**替别人清掉配额** → 那条用例的绿是**靠测试类执行顺序侥幸**的。
+        //   ② 反过来更严重：我自己每个用例都要登录 2–3 次造用户，一个 M4 类跑下来接近
+        //      甚至超过 50 次。一旦**不再**删别人的配额，**我自己**就被残余计数打成 429 ——
+        //      实测（删掉通配符清理后，M4 单跑）：
+        //        `登录必须成功 ... {"code":429,"message":"请求过于频繁，请 8 秒后再试"}`
+        //      也就是说：通配符清理把"**整套测试共用一个登录配额**"这件事藏起来了。
+        //   正解不是"继续删别人的键"，而是**只回收自己占用的那一份**：
+        //   本类所有登录都来自 127.0.0.1（RestAssured 打本机），键为
+        //   `hy:rl:{action}:{ip}`，前台登录的 action 是 `login-ip-1m`
+        //   （见 `AuthController.RL_LOGIN`）。那正是本类自己的键，清它是正当的测试自清理。
+        // ─────────────────────────────────────────────────────────────
+        stringRedisTemplate.delete(LOGIN_RATE_LIMIT_KEY);
+
+        // 浏览量增量：键名是 `hy:post:view:{postId}`，只删本用例用到的那条
+        // （精确键而不是通配符 —— 别的测试类也可能有正在累积的浏览量）。
+        stringRedisTemplate.delete(VIEW_KEY_PREFIX + currentPostId());
+
+        // 登录态：M4 用例自己登录过就会留下 token。清表会重置自增 id，
+        // 于是旧 token 可能映射到**新用户**（越权假象的经典来源），因此必须清。
+        // 只清**本类自己发出的**那些（`login()` 里逐个记下），不用通配符。
+        for (String token : issuedTokens) {
+            stringRedisTemplate.delete(TOKEN_KEY_PREFIX + token);
+        }
+        issuedTokens.clear();
+    }
+
+    /**
+     * 本类自己的登录限流键。
+     *
+     * <p>键格式与技术方案 §7 的 {@code hy:rl:{action}:{userId 或 ip}} 一致：
+     * {@code login-ip-1m} 取自 {@code AuthController.RL_LOGIN}；
+     * {@code 127.0.0.1} 是 RestAssured 打本机时 {@code request.getRemoteAddr()} 的值
+     * （该实现优先取 {@code X-Forwarded-For}/{@code X-Real-IP}，本类都不发这两个头）。</p>
+     *
+     * <p><b>为什么清它是正当的、而清 {@code hy:rl:*} 不是</b>：这一条键就是本类自己那 50 次/分钟
+     * 的配额，清它属于"测试自清理"；而通配符清的是**别人的配额**，
+     * 那会让依赖限流的用例假绿（M1 的 429 用例就是受害者）。</p>
+     */
+    private static final String LOGIN_RATE_LIMIT_KEY = "hy:rl:login-ip-1m:127.0.0.1";
+
+    /** 浏览量键前缀（与技术方案 §7 的 {@code hy:post:view:{postId}} 一致）。 */
+    private static final String VIEW_KEY_PREFIX = "hy:post:view:";
+
+    /**
+     * 登录态键前缀。
+     *
+     * <p>前台用户是独立 StpLogic（{@code StpUserUtil.LOGIN_TYPE = "user"}），
+     * 因此键形如 {@code hy:token:user:{tokenValue}}。写成字面量是有意的：
+     * 不引常量就不会因为常量改名而静默删错键（多打一个字面量只影响测试）。</p>
+     */
+    private static final String TOKEN_KEY_PREFIX = "hy:token:user:";
+
+    /** 本测试实例登录时拿到的 token（用于精确清理自己的登录态）。 */
+    private final java.util.List<String> issuedTokens = new java.util.ArrayList<>();
+
+    /** 本类最近一次造帖的 id（供浏览量键的精确清理用）。 */
+    private volatile long lastPostId;
+
+    /** 本用例的浏览量键后缀：优先用真实 postId，没有就取一个不可能撞上的随机值。 */
+    private long currentPostId() {
+        long id = lastPostId;
+        return id > 0 ? id : java.util.concurrent.ThreadLocalRandom.current().nextLong(1, Long.MAX_VALUE);
     }
 
     /**
@@ -148,13 +215,6 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         };
     }
 
-    /** 按 pattern 删除 Redis 键（仅测试用；生产代码用 SCAN，见 PostViewCounter 的说明）。 */
-    protected void clearRedisKeys(String pattern) {
-        java.util.Set<String> keys = stringRedisTemplate.keys(pattern);
-        if (keys != null && !keys.isEmpty()) {
-            stringRedisTemplate.delete(keys);
-        }
-    }
 
     // ==================================================================
     // 造数：用户 / 版块 / 帖子
@@ -185,6 +245,8 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         assertThat(token)
                 .as("登录必须成功，否则后续用例全部无意义。响应：%s", response.asString())
                 .isNotBlank();
+        // 记下本次发出的 token：@BeforeEach 只清这些（绝不按通配符清整个命名空间）
+        issuedTokens.add(token);
         return token;
     }
 
@@ -228,6 +290,8 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
                 "SELECT id FROM post WHERE user_id = ? AND title = ? ORDER BY id DESC LIMIT 1",
                 Long.class, userId, title);
         assertThat(id).as("造帖子后必须能查到 id").isNotNull();
+        // 记下来，供 @BeforeEach 精确清理该帖的浏览量键（**只清自己的键**，见那里的说明）
+        lastPostId = id;
         return id;
     }
 
