@@ -81,68 +81,6 @@ export interface CaptchaVO {
 }
 
 /* ---------------------------------------------------------------------------
- * M3 交付的接口类型（**全部直接来自契约，无人工成分**）
- * ---------------------------------------------------------------------------
- * 依据是冻结的 `openapi.json`（14 路径 / 26 schema）。字段名逐字对应，不增不减。
- *
- * ⚠️ 契约里**所有** schema 都没有 `required` 声明（除了 PostCreateRequest 的
- *    `boardId`/`title` 与 PostUpdateRequest 的 `title`），因此生成类型里
- *    每个字段都是可选的（`title?: string`）。这是**契约的真实形状**，
- *    前端不得靠"我觉得后端一定会返回"就把它断言成必填 ——
- *    口径见《技术方案》§6.1 与任务书 §5。
- *    页面对可选字段一律用 `?? 默认值` 收敛，收敛点集中在 `utils/format.ts`。
- */
-
-/** 版块列表项。`isResource` 用于决定发帖表单是否显示网盘字段（口径 9） */
-export type BoardVO = Schemas['BoardVO']
-
-/** 帖子列表项（**不含正文**，口径 6） */
-export type PostSummaryVO = Schemas['PostSummaryVO']
-
-/** 帖子详情 */
-export type PostDetailVO = Schemas['PostDetailVO']
-
-/** 帖子图片。列表用不到，详情九宫格与发帖预览用 */
-export type PostImageVO = Schemas['PostImageVO']
-
-/** 作者信息摘要（列表项与详情共用） */
-export type UserBriefVO = Schemas['UserBriefVO']
-
-/** 发帖请求体。`boardId`、`title` 在契约里必填 */
-export type PostCreateRequest = Schemas['PostCreateRequest']
-
-/**
- * 改帖请求体。`title` 必填。
- *
- * ⚠️ **PUT 是覆盖语义**（口径 11）：没传的字段视为清空。
- *    因此 `PostUpdateRequest` 的字段**没有一个是可省的** ——
- *    表单必须把当前值原样回填后再提交，不能只提交改动的那一项。
- */
-export type PostUpdateRequest = Schemas['PostUpdateRequest']
-
-/** 分页响应体（列表与搜索共用） */
-export type PageResultPostSummaryVO = Schemas['PageResultPostSummaryVO']
-
-/**
- * 帖子列表排序口径。
- *
- * 依据：《技术方案》§6.5 —— `sort=latest|hot|essence`。
- *
- * ⚠️ **契约缺口（不阻塞，仅记录）**：`openapi.json` 里 `GET /api/posts` 的 `sort`
- *    参数只声明为 `type: string`，**没有 `enum`**，因此这一组取值只能来自文档。
- *    契约若能补上 `enum`，前端就能由生成物得到联合类型、并让后端改取值时自动变红。
- *    已写入交付报告，供 L1 判断是否值得补。
- */
-export type PostSort = 'latest' | 'hot' | 'essence'
-
-/** 排序选项的展示文案。放在这里而不是页面里，避免两处漂移 */
-export const POST_SORT_LABELS: ReadonlyArray<{ value: PostSort; label: string }> = [
-  { value: 'latest', label: '最新' },
-  { value: 'hot', label: '热门' },
-  { value: 'essence', label: '精华' },
-]
-
-/* ---------------------------------------------------------------------------
  * 前端内部类型
  * ------------------------------------------------------------------------- */
 
