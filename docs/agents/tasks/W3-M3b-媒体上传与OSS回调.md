@@ -291,6 +291,88 @@ authorization = base64_encode(rsa_sign(private_key, url_decode(path) + query_str
 
 ---
 
+## 12. 追加任务（2026-09-17）：**读时签名** + CR-G 回调响应体 + 回调地址可见性
+
+> 范围仍是 `media/**`、`common/oss/**`、`post/**`（仅 VO 组装与相关断言）、`common/exception` 不动。
+> 其余规矩（§2 写权／§3 禁止／§10 节奏／§8 提交）全部照旧。
+
+### 12.1 背景（一句话，附实测证据）
+
+**桶是私有的**（匿名 GET 对象 → `403 AccessDenied: You have no right to access this object because of bucket acl`），
+而 `post_image.url` 存的是**裸公网 URL**、前端直接渲染 → **M3 的验收「带图帖详情页正确展示」现在必然失败**
+（本地与线上一样，不是"本地看不到"那么轻）。
+
+L1 实测（2026-09-17）：
+- `GET <object>` → 403（`bucket acl`）
+- 想把桶设公共读 → **被账号级「阻止公共访问」拦住**：`403 Put public bucket acl is not allowed`（EC `0015-00000501`）
+- **需求方裁决：不通融账号安全设置，改为后端"读的时候"签发 URL**（桶保持私有）
+
+### 12.2 任务 A：`common/oss` 增加读签名能力（**不违反铁律 3**）
+
+| 放在哪 | 放什么 |
+|---|---|
+| `common/oss` | **接口** `OssReadUrlSigner`，**不持有凭据**。建议 `String sign(String url)` |
+| `media` | **实现**它（用它已有的 `OssCredentialProperties`），注册为 Bean |
+| `post` | 在组装 `PostDetailVO.images[].url` / `thumbUrl` 与 `PostSummaryVO.coverUrl` 时调用**接口** |
+
+⚠️ **`post` 不得 import `media` 的任何类**（铁律 3，`ARCH_no_cross_module_dependency` 会拦）。
+`post` 只依赖 `common.oss` 的接口，实现由 Spring 注入 —— 这是允许的、也是本项目一直用的做法。
+
+有效期做**配置项**（建议默认 3600 秒，键名你定），并在契约说明里写上"这些 URL 是**临时**的"。
+
+### 12.3 三条必须处理的坑（不处理就是静默错）
+
+1. 🔴 **`x-oss-process` 与签名的顺序**：缩略图 URL 是「裸 URL + `?x-oss-process=image/resize,...`」。
+   OSS Signature **v1** 要求把**子资源**（`x-oss-process`）算进 `CanonicalizedResource`。
+   所以**签名必须覆盖"已经带参数的完整 URL"**，不能"先签名再拼参数"——后者 OSS 会用不同的
+   canonical resource 验签 → 403，**而现象是"详情页大图能看、缩略图 403"**，很容易被当成前端问题。
+   **必须有断言**：用**匿名 GET** 真取一次签好的 `thumbUrl` → **200**，且 `Content-Type` 是图片。
+2. **语义变了 → 已有断言要跟着改**：`PostImageVO.url` / `thumbUrl`、`PostSummaryVO.coverUrl`
+   的取值从"裸 URL"变成"带签名的 URL"。**第一、二交付段里那些"URL 等于原值"的断言必须改** ——
+   **不许改实现去迁就测试**。报告里列出"改了哪几条断言、每条为什么"。
+3. **不要写成"看起来像 OSS URL 就签"**：只签**本项目自己 OSS 目录下**的 URL
+   （用 `OssProperties.imageUrlPrefix()` 判前缀），外部 URL 原样返回。
+
+### 12.4 任务 B：**CR-G（L1 裁决 A）** —— 回调响应体带上落库结果
+
+**现状的毛病**：`POST /api/oss/callback` 按 **CR-007** 只回 `{code:0,message:"ok"}`、**没有 `data`**
+→ 前端拿不到刚上传图片的 URL，**只能自己拼** `${host}${dir}${文件名}` —— 而那违反"前端不自己拼图片 URL"
+（口径 7 的同一理由）。**这两条裁决互相矛盾，是 L1 造成的**：裁 CR-007 时没意识到**该响应体会被 OSS 透传给客户端**。
+
+**新裁决**：响应体带 `data: { id, url, thumbUrl }`。
+- `url` → 前端发帖时用作 `images` 的取值；`thumbUrl` → 列表封面用。
+- **CR-007 其余不变**：仍 HTTP 200 + 统一响应体，仍**显式带 `Content-Length`**（OSS 文档要求）。
+- 顺带修掉一个可用性缺陷：现在前端**无从知道回调是否成功**，只能靠"发帖时后端报 URL 不存在"间接发现。
+
+契约由 L1 重导（**你只加注解与 VO，不要动 `openapi.json`**）。
+
+### 12.5 任务 C：把"回调地址不可达"从**静默**变成**可见**
+
+**现状**：回调地址**从请求推导**（`X-Forwarded-Proto/Host` 优先），可用 `hy.oss.upload.callback-url` 覆盖。
+本机开发经 Vite 代理调用时，它会推出 `http://127.0.0.1:8080/api/oss/callback` —— **OSS 永远够不到**，
+现象是"**上传成功但没有图**"，而**日志里一个错都没有**。
+
+**要求**：当最终回调地址的 host 是**环回地址**（`127.0.0.1` / `localhost` / `::1`）时，
+**启动时与首次生成签名时各打一条 WARN**，写明：OSS 无法访问环回地址、真实回调会失败、
+本机开发要把回调地址指到公网入口（`OSS_CALLBACK_URL` 环境变量）。
+
+⚠️ **不要**改成"启动即失败" —— 测试与 CI 都会被它带崩。**要的是可见，不是拦死。**
+
+### 12.6 DoD（本追加任务）
+
+1. **红 → 绿两次输出**（先写测试跑出失败，再实现跑通）。
+2. **变异验证 ≥2 条**，推荐这两条（都打在 12.3 的坑上）：
+   - 把"先签名再拼 `x-oss-process`"改成"先拼参数再签名"的**反序** → 缩略图用例**必须变红**；
+   - 把签名有效期改成 0（或签名内容改成不含子资源）→ 对应用例**必须变红**。
+3. **全量 `mvn test` 全绿**（含被你改动语义的那几条）。
+4. `powershell -File scripts/check_test_coverage_gaps.ps1` 输出（M3 段应仍 25/25，必要时由 L1 预登记新名字）。
+5. **一条"读得回来"的实测证据**（这是本任务的核心价值）：
+   用**匿名 GET** 取**签名后的** `url` 与 `thumbUrl` → **都 200**，并贴 `Content-Type: image/png` 与字节数。
+   **截图不算，HTTP 输出算。**
+6. `git status --short` + 逐文件清单；提交用**普通 commit**，**不要 `--amend`、不要 push**。
+
+---
+
 ## 变更记录
 
 | 版本 | 日期 | 说明 |
