@@ -6,6 +6,7 @@ import com.hyforum.common.exception.BizException;
 import com.hyforum.common.security.AccountStatusChecker;
 import com.hyforum.common.security.AllowAnonymous;
 import com.hyforum.common.security.CurrentUser;
+import com.hyforum.common.security.OptionalLogin;
 import com.hyforum.common.security.StpAdminUtil;
 import com.hyforum.common.security.StpUserUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -53,6 +54,11 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return true;
         }
+        // 登录可选优先判定：两者同时标注时按"可选"处理（理由见 OptionalLogin 的类注释）
+        if (isOptionalLogin(handlerMethod)) {
+            resolveOptionalUser();
+            return true;
+        }
         if (isAnonymous(handlerMethod)) {
             return true;
         }
@@ -69,6 +75,51 @@ public class AuthInterceptor implements HandlerInterceptor {
     private boolean isAnonymous(HandlerMethod handlerMethod) {
         return AnnotatedElementUtils.hasAnnotation(handlerMethod.getMethod(), AllowAnonymous.class)
                 || AnnotatedElementUtils.hasAnnotation(handlerMethod.getBeanType(), AllowAnonymous.class);
+    }
+
+    private boolean isOptionalLogin(HandlerMethod handlerMethod) {
+        return AnnotatedElementUtils.hasAnnotation(handlerMethod.getMethod(), OptionalLogin.class)
+                || AnnotatedElementUtils.hasAnnotation(handlerMethod.getBeanType(), OptionalLogin.class);
+    }
+
+    /**
+     * 「登录可选」：尽力解析当前用户，解析不到就<b>确定地什么都不写</b>（= 匿名）。
+     *
+     * <p>由 M4 收敛出 {@link OptionalLogin}（H13），见任务书 §5.4。三条边界：</p>
+     * <ol>
+     *   <li><b>没有 token / token 无效</b> → 放行，且<b>不写</b> {@link CurrentUser}，
+     *       业务侧 {@code CurrentUser.idOrNull()} 得到 {@code null}
+     *       —— 刻意的：绝不能"取不到就当 0"，那会把匿名用户伪装成 id=0 的用户；</li>
+     *   <li><b>token 有效但账号被封禁</b> → 仍然按 1004 拒绝（<b>不降级成匿名</b>）。
+     *       降级会让"封禁"变成一条可以绕过的软限制：封了号还能继续匿名看内容、
+     *       且日志里看不出他来过。封禁即时生效是既有规则（见 {@link #checkUser}），
+     *       这里必须保持一致；</li>
+     *   <li><b>不碰后台逻辑</b>：{@code /api/admin} 下的接口不可能标 {@code @OptionalLogin}
+     *       （后台没有"匿名也能看"的语义），因此本分支不区分前后台路径。</li>
+     * </ol>
+     *
+     * <p>本方法<b>不自己写响应、也不抛业务异常以外的异常</b>：需要拒绝时抛
+     * {@link BizException}，由全局异常处理器统一翻译成契约响应体 ——
+     * 与 {@link #checkUser} 同源，避免"两处拼装响应体"的漂移。</p>
+     */
+    private void resolveOptionalUser() {
+        Long userId;
+        try {
+            userId = StpUserUtil.currentUserId();
+        } catch (RuntimeException ex) {
+            // token 存在但形态非法（例如被截断）：按匿名处理，而不是 500。
+            // 这是"登录可选"与"必须登录"的关键差别 —— 前者不该因为一个坏 token 就报错。
+            log.debug("可选登录：token 解析失败，按匿名处理（{}）", ex.getMessage());
+            return;
+        }
+        if (userId == null) {
+            return;
+        }
+        if (!accountStatusChecker.isUserActive(userId)) {
+            StpUserUtil.logout();
+            throw new BizException(ErrorCode.ACCOUNT_DISABLED);
+        }
+        CurrentUser.set(userId);
     }
 
     /** 前台鉴权：登录态 + 账号状态（封禁即时生效，不等 token 过期）。 */
