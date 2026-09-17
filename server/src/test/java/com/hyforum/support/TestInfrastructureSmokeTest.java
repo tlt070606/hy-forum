@@ -36,7 +36,8 @@ class TestInfrastructureSmokeTest extends IntegrationTestBase {
     @DisplayName("集成测试连的是测试库 hy_forum_test（不是开发库 hy_forum）")
     void INFRA_connected_to_test_database() {
         String database = jdbcTemplate.queryForObject("SELECT DATABASE()", String.class);
-        assertThat(TestTableCleaner.isAcceptableTestDatabase(database))
+        assertThat(TestTableCleaner.isAcceptableTestDatabase(
+                        TestTableCleaner.EXPECTED_TEST_DATABASE, database))
                 .as("集成测试必须连以 %s 开头的库（并行流水线各有自己的库，如 hy_forum_test_m4）；"
                         + "连到开发库不仅结果不可信，还可能在清表时抹掉开发数据。实际连的是 [%s]",
                         TestTableCleaner.EXPECTED_TEST_DATABASE, database)
@@ -44,15 +45,21 @@ class TestInfrastructureSmokeTest extends IntegrationTestBase {
 
         // 2026-09-17 新增：把"该拒的必须拒"变成断言。
         // 为什么不直接拿开发库跑一遍：万一防线失效，开发库当场被清空 —— 用纯函数判定名字才安全。
-        assertThat(TestTableCleaner.isAcceptableTestDatabase("hy_forum"))
+        final String prefix = TestTableCleaner.EXPECTED_TEST_DATABASE;
+        assertThat(TestTableCleaner.isAcceptableTestDatabase(prefix, "hy_forum"))
                 .as("开发库 hy_forum 必须被拒（它不以 hy_forum_test 开头）")
                 .isFalse();
-        assertThat(TestTableCleaner.isAcceptableTestDatabase(null))
+        assertThat(TestTableCleaner.isAcceptableTestDatabase(prefix, null))
                 .as("取不到库名（连接串没写库）必须被拒")
                 .isFalse();
-        assertThat(TestTableCleaner.isAcceptableTestDatabase("hy_forum_test_m4"))
+        assertThat(TestTableCleaner.isAcceptableTestDatabase(prefix, "hy_forum_test_m4"))
                 .as("并行流水线的库（hy_forum_test_m4）必须被接受，否则两条流水线无法同时开工")
                 .isTrue();
+        // 这条是"防线的防线"：期望前缀本身必须真的参与判定，
+        // 否则 EXPECTED_TEST_DATABASE 会变成死参数，而上面那条"假库名必须被拒"就再也抛不出异常。
+        assertThat(TestTableCleaner.isAcceptableTestDatabase("hy_forum_test_m4", "hy_forum_test"))
+                .as("前缀必须来自参数而不是硬编码常量 —— 否则构造器传入的期望库名就成了死参数")
+                .isFalse();
 
         Integer tables = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.TABLES "
