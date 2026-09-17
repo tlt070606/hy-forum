@@ -60,6 +60,31 @@ export default defineConfig(() => {
       // 允许局域网访问，便于用手机浏览器验证 H5 端真实表现
       host: true,
       proxy,
+
+      /*
+       * ========================================================================
+       * ⚠️ 必须忽略"写入工具的临时目录"，否则 dev server 会被**写源码这个动作本身**搞崩
+       * ========================================================================
+       * 本机实测（2026-09-17，反复发生）：AI 编码工具写文件走的是
+       * 「先写临时文件 → 原地替换」，而临时目录就建在**源码目录里面**：
+       *
+       *   src/pages/post/.edit.vue.<pid>.<uuid>.tmpdir/edit.vue.tmp
+       *
+       * Vite 的 FSWatcher 会去 watch 这个刚出现的临时文件，而它正被写进程占用 →
+       *
+       *   Error: EBUSY: resource busy or locked, watch '...tmpdir/edit.vue.tmp'
+       *   Emitted 'error' event on FSWatcher instance   ← 未被捕获，直接终止进程
+       *
+       * 结果：**每改一次源码，dev server 就死一次**。
+       * 现象是"前端改到一半就没服务了"，与业务代码毫无关系 —— 极难联想，
+       * 本机为此白排查了两轮（第一次以为是 dev server 自己崩了，第二次才抓到这条栈）。
+       *
+       * 忽略规则用两条 glob：一条匹配 `.名字.uuid.tmpdir/` 这种点开头的，
+       * 一条匹配普通 `*.tmpdir/`，以免写入工具换了命名方式又踩一遍。
+       */
+      watch: {
+        ignored: ['**/.*.tmpdir/**', '**/*.tmpdir/**'],
+      },
     },
 
     /*

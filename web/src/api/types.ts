@@ -116,6 +116,27 @@ export type PostUpdateRequest = Schemas['PostUpdateRequest']
 export type PageResultPostSummaryVO = Schemas['PageResultPostSummaryVO']
 
 /**
+ * OSS 直传签名（PostObject 表单直传）。
+ *
+ * 字段语义**全部来自契约的 description**，前端只做"原样填表"：
+ * | 字段 | 怎么用 |
+ * |---|---|
+ * | `host` | POST 的目标地址（无尾斜杠）——**不是**表单字段 |
+ * | `policy` / `signature` / `callback` | **原样**作为表单字段 |
+ * | `accessKeyId` | 契约原文：「**直传表单必需的 OSSAccessKeyId**」→ 表单字段名叫 `OSSAccessKeyId` |
+ * | `dir` | 对象 key 的目录前缀（**带尾斜杠**）→ `key = dir + 文件名` |
+ * | `expire` | policy 到期时刻（epoch 秒）。**不填表单**，只在本地做一次"别传过期签名"的自检 |
+ *
+ * ⚠️ **前端绝不拼任何 OSS 参数**（铁律 5/8）：`policy`、`signature`、`OSSAccessKeyId`、`callback`
+ * 一律取自本响应。前端唯一"自己构造"的是 `key`（由 `dir` + 文件名拼成）和文件的 `Content-Type`，
+ * 这两样本来就只有前端知道。
+ */
+export type OssSignatureVO = Schemas['OssSignatureVO']
+
+/** 上传回调落库后的结果（CR-G 裁决 A）：前端据此拿到图片 URL，**不用自己拼** */
+export type OssCallbackResultVO = Schemas['OssCallbackResultVO']
+
+/**
  * 帖子列表排序口径。
  *
  * 依据：《技术方案》§6.5 —— `sort=latest|hot|essence`。

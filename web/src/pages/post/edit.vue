@@ -86,31 +86,59 @@
 
       <!-- ==================== 图片 ==================== -->
       <!--
-        ⚠️ 图片上传**本轮没做**，原因不在设计而在环境（见交付报告 §L）：
-        - CR-G 的 `POST /api/oss/callback → data:{id,url,thumbUrl}`（上传后前端据此拿到图片 URL）
-          **在运行中的 8080 上还没生效** —— 那台跑的是 9/16 的旧构建，新 jar 已构建但没启动；
-        - 契约里也还没重导。
-        所以这里**不放"看起来能用"的假上传器**，也不放那种很扎眼的大警告条 ——
-        只用一行小字说明状态。上传一就绪，这块就换成真的「＋ 选择图片」。
+        直传 OSS（铁律 8）：先向服务端要签名，再把响应里的字段**原样填表** POST 给 OSS，
+        最后从上传响应里读回后端落库的 `{url, thumbUrl}`（CR-G 裁决 A）。
+        前端**不拼任何 OSS 参数**，也不自己拼图片 URL。
       -->
       <view class="card">
-        <text class="label">图片</text>
-        <text class="hint" data-testid="compose-upload-pending">
-          图片上传待后端重启后开放；当前可正常发布文字帖与资源帖（网盘链接）。
-        </text>
-        <!-- 编辑模式：把已有图片回显出来，并**原样回传**（见 buildUpdatePayload 的说明） -->
-        <view v-if="isEdit && existingImages.length" class="grid">
-          <image
-            v-for="(img, index) in existingImages"
-            :key="img.id"
-            class="grid__item"
-            :src="img.thumbUrl"
-            mode="aspectFill"
-            :data-testid="`compose-existing-image-${index}`"
-          />
+        <view class="label-row">
+          <text class="label">图片</text>
+          <text class="label__hint">最多 9 张，单张 ≤ 5MB，支持 jpg/png/webp/gif</text>
         </view>
-        <text v-if="isEdit && existingImages.length" class="hint">
-          编辑会保留原有 {{ existingImages.length }} 张图片
+
+        <view class="grid" data-testid="compose-image-grid">
+          <!-- 已有图片（编辑模式）。⚠️ 提交时**必须原样回传**，否则被 PUT 的覆盖语义清空 -->
+          <view v-for="(img, idx) in existingImages" :key="`e${img.id}`" class="grid__cell">
+            <image
+              class="grid__img"
+              :src="img.thumbUrl"
+              mode="aspectFill"
+              :data-testid="`compose-existing-image-${idx}`"
+            />
+            <text class="grid__badge">已有</text>
+          </view>
+
+          <!-- 本次刚上传的 -->
+          <view v-for="(img, idx) in uploaded" :key="`u${img.id}`" class="grid__cell">
+            <image
+              class="grid__img"
+              :src="img.thumbUrl"
+              mode="aspectFill"
+              :data-testid="`compose-uploaded-image-${idx}`"
+            />
+            <view
+              class="grid__del"
+              :data-testid="`compose-remove-image-${idx}`"
+              @click="removeUploaded(idx)"
+            >
+              <HyIcon type="close" size="xs" color="#ffffff" />
+            </view>
+          </view>
+
+          <!-- 添加入口。到 9 张就消失（契约：images 最多 9） -->
+          <view
+            v-if="totalImages < MAX_IMAGES"
+            class="grid__cell grid__add"
+            data-testid="compose-add-image"
+            @click="pickImages"
+          >
+            <HyIcon type="plus" size="lg" color="#86909c" />
+            <text class="grid__add-text">{{ uploading ? '上传中…' : '添加' }}</text>
+          </view>
+        </view>
+
+        <text v-if="uploadError" class="hint hint--error" data-testid="compose-upload-error">
+          {{ uploadError }}
         </text>
       </view>
 
@@ -218,6 +246,8 @@ import AppShell from '@/components/shell/AppShell.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import { fetchBoards } from '@/api/boards'
 import { createPost, fetchPostDetail, updatePost } from '@/api/posts'
+import { fetchSignature } from '@/api/oss'
+import { uploadImage, type LocalImage, type UploadedImage } from '@/utils/upload'
 import { BIZ_CODE } from '@/utils/error-code'
 import { ApiError } from '@/utils/request'
 import { DISK_TYPES, bool, num, text, toImageView, type PostImageView } from '@/utils/postView'
@@ -236,6 +266,17 @@ const loading = ref(false)
 const loadError = ref('')
 const submitting = ref(false)
 const submitError = ref('')
+
+/**
+ * 本次新上传的图片。
+ * 编辑模式下提交时会与 `existingImages` **合并**一起回传（覆盖语义，见 `buildUpdatePayload`）。
+ */
+const uploaded = ref<UploadedImage[]>([])
+const uploading = ref(false)
+const uploadError = ref('')
+
+/** 契约里 `images` 最多 9 张 */
+const MAX_IMAGES = 9
 
 /** 新建时选中的版块 id；0 = 还没选 */
 const boardId = ref(0)
@@ -329,6 +370,127 @@ function selectBoard(id: number): void {
 }
 
 /* ---------------------------------------------------------------------------
+ * 图片上传（直传 OSS）
+ * ------------------------------------------------------------------------- */
+
+/** 当前图片总数（已有 + 新传），用于 9 张上限的判断 */
+const totalImages = computed(() => existingImages.value.length + uploaded.value.length)
+
+/**
+ * 选图并逐张直传。
+ *
+ * ⚠️ 一次最多选 `MAX_IMAGES - totalImages` 张（契约上限 9），
+ *    但**选完还要再校验一次** —— `chooseImage` 的 `count` 在部分端只是建议值。
+ */
+function pickImages(): void {
+  const remain = MAX_IMAGES - totalImages.value
+  if (remain <= 0) {
+    uni.showToast({ title: `最多 ${MAX_IMAGES} 张图片`, icon: 'none' })
+    return
+  }
+
+  uni.chooseImage({
+    count: remain,
+    sizeType: ['compressed', 'original'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      /*
+       * `tempFilePaths` 在类型上是 `string | string[]` —— H5 恒为数组，
+       * 但 uni 的类型声明为兼容"单文件"场景放宽了。
+       * 这里**显式收敛**成数组，而不是用 `as string[]` 断言：
+       * 断言会把这层不确定性藏起来，将来真给了字符串就会在下面静默变成未定义行为。
+       */
+      const rawPaths = res.tempFilePaths
+      const paths: string[] = Array.isArray(rawPaths) ? rawPaths : rawPaths ? [rawPaths] : []
+
+      /*
+       * 把三端形状归一成 `LocalImage`：
+       * - **H5**：`tempFiles` 里是真正的 `File` 对象（`type` / `name` 都有，`path` 是加上的 blob URL getter）；
+       * - **小程序**：只有 `{path, size}`，没有 `type`，但 path 带扩展名。
+       * 类型判定必须优先看 `type` —— 见 `utils/upload.ts` 文件头（本机踩过：blob URL 没有扩展名）。
+       */
+      const files = (res.tempFiles ?? []) as Array<{
+        path?: string
+        size?: number
+        type?: string
+        name?: string
+      }>
+      const locals: LocalImage[] = paths.map((p) => {
+        const f = files.find((x) => x.path === p)
+        return { path: p, size: f?.size, mime: f?.type, name: f?.name }
+      })
+
+      void uploadAll(locals.slice(0, remain))
+    },
+    fail: (err) => {
+      // 用户主动取消不算错误，不打扰；其它失败才提示
+      const msg = String(err?.errMsg ?? '')
+      if (!msg.includes('cancel')) {
+        uni.showToast({ title: '选择图片失败', icon: 'none' })
+      }
+    },
+  })
+}
+
+/**
+ * 串行上传（不是并发）。
+ *
+ * 为什么串行：一次要一份签名就够用（签名有有效期，串行不会超时），
+ * 且并发上传在弱网下更容易整批失败、也更难给出"第几张失败"的准确提示。
+ * 代价是大批图片时慢一些 —— 而契约上限只有 9 张，这个代价可以接受。
+ */
+async function uploadAll(images: LocalImage[]): Promise<void> {
+  if (!images.length) return
+  uploading.value = true
+  uploadError.value = ''
+
+  try {
+    // 每张图都要一份签名？不必：同一份签名可传多张（policy 只约束前缀/大小/类型）。
+    const sign = await fetchSignature()
+
+    for (const img of images) {
+      try {
+        const done = await uploadImage(img, sign)
+        uploaded.value.push(done)
+      } catch (e) {
+        /*
+         * **一张失败不影响其它张**，但必须把失败原因留下来 ——
+         * 静默跳过会让用户以为"我选了 3 张，怎么只上了 2 张"。
+         */
+        uploadError.value = e instanceof ApiError ? e.message : '有图片上传失败，请重试'
+        break
+      }
+    }
+  } catch (e) {
+    // 取签名阶段失败（未登录 / 网络 / 后端挂了）
+    if (e instanceof ApiError && e.isAuthExpired) {
+      uploadError.value = '登录状态已失效，请重新登录后再上传'
+      setTimeout(() => uni.navigateTo({ url: '/pages/auth/index?mode=login' }), 800)
+    } else {
+      uploadError.value = e instanceof ApiError ? e.message : '获取上传签名失败，请稍后重试'
+    }
+  } finally {
+    uploading.value = false
+  }
+}
+
+/** 移除一张**本次新上传**的图片。已有图片（编辑模式）不可移除 —— 见下方说明 */
+function removeUploaded(idx: number): void {
+  uploaded.value.splice(idx, 1)
+  uploadError.value = ''
+}
+
+/*
+ * ⚠️ 刻意**不提供"删除已有图片"**的按钮。
+ *
+ * 技术上做得到：`buildUpdatePayload()` 的 `images` 少一项即等于删掉它（覆盖语义）。
+ * 但那是**不可撤销的破坏性操作**，而本轮它没有任何确认流程；
+ * 一旦误点，图片从帖子里消失、OSS 对象还留着，用户没有任何办法恢复。
+ * 要做就该配一个明确的二次确认（"删除后不可恢复"），那是独立的一次改动。
+ * 现在把上限与语义说清楚，比给一个能做但危险的手势更稳妥。
+ */
+
+/* ---------------------------------------------------------------------------
  * 提交
  * ------------------------------------------------------------------------- */
 
@@ -375,6 +537,12 @@ function buildCreatePayload(): PostCreateRequest {
   // 正文为空时不传该字段（契约里 content 非必填），避免提交一个空的 content
   if (form.content.trim()) payload.content = form.content.trim()
 
+  /*
+   * 图片：传的是**后端落库后返回的 URL**（来自上传响应，CR-G 裁决 A），
+   * 不是前端拼出来的地址。没有图就不传该字段（契约里它可选）。
+   */
+  if (uploaded.value.length) payload.images = uploaded.value.map((i) => i.url)
+
   if (showDiskFields.value) {
     payload.diskType = form.diskType
     payload.diskUrl = form.diskUrl.trim()
@@ -405,8 +573,8 @@ function buildUpdatePayload(): PostUpdateRequest {
     title: form.title.trim(),
     // 显式给空串：不传 = 清空，但"用户主动清空"和"我们忘了传"必须能区分开
     content: form.content.trim(),
-    // 原样回传已有图片，防止被覆盖语义清空
-    images: existingImages.value.map((img) => img.url),
+    // 原样回传「已有图片 + 本次新上传的」，防止被覆盖语义清空
+    images: [...existingImages.value.map((img) => img.url), ...uploaded.value.map((i) => i.url)],
     ...(showDiskFields.value
       ? {
           diskType: form.diskType,
@@ -423,6 +591,12 @@ async function onSubmit(): Promise<void> {
   const invalid = validate()
   if (invalid) {
     submitError.value = invalid
+    return
+  }
+
+  // 图片还在传就提交 → 会发出一个"少图"的帖子，且用户以为图在里面。必须挡住。
+  if (uploading.value) {
+    submitError.value = '图片还在上传中，请稍候再发布'
     return
   }
 
@@ -674,21 +848,70 @@ function goBack(): void {
 }
 
 /* ---------- 已有图片 ---------- */
+.label-row {
+  display: flex;
+  align-items: baseline;
+}
+
 .grid {
   margin-top: 10px;
   display: flex;
   flex-wrap: wrap;
 
-  &__item {
-    width: calc(33.33% - 8px);
-    height: 110px;
-    margin: 0 12px 12px 0;
+  &__cell {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    margin: 0 8px 8px 0;
     border-radius: $hy-radius-sm;
+    /* 去掉这行的话，圆角会被内部 <image> 的直角盖住 */
+    overflow: hidden;
     background-color: $hy-bg-hover;
+  }
 
-    &:nth-child(3n) {
-      margin-right: 0;
-    }
+  &__img {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* "已有"角标：区分"这次新传的"与"帖子里原来的"，避免用户以为新传失败了 */
+  &__badge {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 16px;
+    color: $hy-text-inverse;
+    background-color: rgba(29, 33, 41, 0.5);
+  }
+
+  &__del {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(29, 33, 41, 0.55);
+    border-radius: 0 0 0 8px;
+  }
+
+  &__add {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed $hy-border-input;
+    background-color: $hy-bg-card;
+  }
+
+  &__add-text {
+    margin-top: 4px;
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
   }
 }
 

@@ -423,6 +423,128 @@ node scripts/shot.mjs                   → 首页/搜索/版块/详情/发帖 �
 
 ---
 
+## N. 第 5 段：图片上传（**前端已就位，但最小闭环卡在服务端配置**）
+
+### N.1 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `web/src/api/oss.ts` | `fetchSignature()` → `GET /api/oss/signature`（需登录） |
+| `web/src/utils/upload.ts` | PostObject 直传：预检 → 填表 → POST 到 `host` → 解析回调结果 |
+| `web/src/pages/post/edit.vue` | 选图 / 逐张上传 / 缩略图预览 / 单张可删 / 9 张上限 / **上传中禁止提交** / 失败原因常驻 |
+
+**表单字段与顺序**（不是我自己定的，是 OSS PostObject 规范 + 契约共同决定的）：
+
+```
+key              ← dir + 文件名（唯一，不覆盖已有对象；dir 带尾斜杠，CR-009）
+policy           ← 响应原样
+signature        ← 响应原样
+OSSAccessKeyId   ← 响应的 accessKeyId（契约 description 原文就写了这个字段名）
+callback         ← 响应原样（Base64 回调配置，不自己拼 JSON）
+Content-Type     ← 由文件类型解析（policy 里有 starts-with $Content-Type image/）
+file             ← 必须是**最后一个**字段
+```
+
+⚠️ `uni.uploadFile` 的 H5 实现是「先 append 全部 `formData`，最后 append 文件」
+（`@dcloudio/uni-h5`：L21326 循环 append → L21330 append file）——**正好满足 OSS 的要求**，
+所以不需要自己写 XHR。
+
+**上传成功后从哪拿 URL**：OSS 把后端回调的响应体原样作为本次 POST 的响应返回 →
+前端读 `data.{id,url,thumbUrl}`（**CR-G 裁决 A**）。**不用自己拼 `host+dir+文件名`**。
+
+### N.2 实测抓到的三个问题
+
+#### (1) 我的 bug：H5 的 `tempFilePaths` 是 `blob:` URL，**没有扩展名**
+
+第一版按扩展名判类型 → **每一张图都被自己的预检拦下**，界面显示
+「只支持 .jpg / .jpeg / .png / .webp / .gif 格式的图片」，而用户选的明明是 PNG。
+
+根因（读 `@dcloudio/uni-h5` 的 chooseImage 得到）：H5 端 `tempFiles` 里放的是
+**真正的 `File` 对象**（只是给它加了一个 `path` getter 指向 blob URL），
+所以 `type` / `name` 都在，而 `tempFilePaths` 是那个 blob URL。
+小程序端相反：`tempFiles` 只有 `{path,size}`，但 **path 带扩展名**。
+
+**修法**：类型解析改成「**先看 `File.type`（H5），再退回扩展名（小程序/兜底）**」，两条合起来覆盖三端。
+> 教训：**"路径"与"文件"是两回事** —— 能拿到 `File` 对象时不要从路径去猜它的属性。
+
+#### (2) dev server 反复死亡的根因：写入工具的临时目录被 Vite watcher 盯上
+
+```
+Error: EBUSY: resource busy or locked, watch
+  'web\src\pages\post\.edit.vue.<pid>.<uuid>.tmpdir\edit.vue.tmp'
+  Emitted 'error' event on FSWatcher instance   ← 未被捕获，直接终止进程
+```
+
+文件写入工具用「写临时文件 → 原地替换」落地，临时目录建在**源码目录里面**；
+Vite 的 FSWatcher 去 watch 它、而文件正被占用 → `EBUSY` → watcher 抛 error → **整个 dev server 退出**。
+现象是"前端改到一半就没服务了"，**与业务代码毫无关系**（本机为此白排查了两轮）。
+
+**修法**：`web/vite.config.ts` 的 `server.watch.ignored` 忽略 `**/.*.tmpdir/**` 与 `**/*.tmpdir/**`。
+**任何人（含 L1）用同一套写入工具改前端代码都会踩这个坑** —— 这条修好之后，dev server 已经连续扛过多次写入。
+
+#### (3) 🔴 **阻塞（不是前端的问题）**：签名里的回调地址是**环回地址**
+
+E2E 跑到真实上传时，OSS 返回：
+
+```xml
+<Error>
+  <Code>InvalidArgument</Code>
+  <Message>Private address is forbidden to callback.</Message>
+  <ArgumentName>callbackUrl</ArgumentName>
+  <ArgumentValue>http://127.0.0.1:8080/api/oss/callback</ArgumentValue>
+</Error>
+（HTTP 400）
+```
+
+三条独立证据指向同一件事：
+
+1. **解开签名里的 `callback`**（我直接把 base64 解了）：
+   ```json
+   {"callbackUrl":"http://127.0.0.1:8080/api/oss/callback", ...}
+   ```
+2. **OSS 的响应**：如上，400 + `Private address is forbidden to callback`。
+3. **后端自己的日志**（`.tmp/app-8080.out.log`）—— L1 设计的那条 WARN 确实打了：
+   ```
+   22:00:33 WARN OssCallbackUrlResolver : 未显式配置 OSS 回调地址，将按请求推导…
+   22:06:41 WARN OssCallbackUrlResolver : 从请求推导出的回调地址是环回地址 [http://127.0.0.1:…
+   ```
+
+**结论**：**8080 这次启动没带 `OSS_CALLBACK_URL`**，回调地址回退成了 `127.0.0.1`，
+OSS 在**存对象之前**就拒掉了整个上传（所以桶里没留下垃圾对象）。
+
+**前端侧无一处需要改**：O 前端把签名里的字段**原样**填了表，是签名本身带着一个 OSS 不接受的回调地址 ——
+这恰好证明"前端只做原样透传"这条设计是对的：**服务端的配置错误在客户端被一眼看穿，而不是被前端悄悄兜掉**。
+
+我顺手在 `parseUploadBody` 里**把这个故障单独认了出来**，文案指向服务端配置
+（否则它会显示成"上传失败，请稍后重试"，让运维一直往前端找）。
+
+**需要 L1 做一件事**：用带公网回调地址的环境变量重启 8080，例如
+`$env:OSS_CALLBACK_URL='http://8.138.237.212/api/oss/callback'`（L1 给的公网入口），再叠加两个 AccessKey 变量。
+
+### N.3 §6.1 最小闭环的当前状态：**仍未跑通**（诚实口径）
+
+| 环 | 状态 |
+|---|---|
+| ① 选图 | ✅ 已验证（真 File 对象拿到，类型/大小正确） |
+| ② 取签名 | ✅ 已验证（7 个字段齐全） |
+| ③ 直传 OSS | ⚠️ **请求真的发出去了、字段与顺序正确**，但被 OSS 以 400 拒绝（**环回回调地址**，见 N.2(3)） |
+| ④ 回调落库 | ❌ 未验证（上传在 OSS 侧就被拒，回调不会发生） |
+| ⑤ 发帖带图 → 详情页看到图 | ❌ 未验证 |
+
+**所以这一条我明确写"未跑通"**，不写"基本完成"。
+E2E `web/e2e/m3-upload.spec.ts` 已就位：**环境一修好，它会自动跑完整条链并落证据**到
+`.tmp/fe-upload-evidence.json`（签名摘要、上传响应、落库后的 `images`）。
+
+### N.4 本轮验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json  → exit 0
+npx playwright test e2e/m3-upload.spec.ts
+  → 失败，但失败点是 OSS 的 400（服务端配置），**前端表单与请求链已正确发出**
+```
+
+---
+
 ## 0. 一句话结论
 
 **§6.2 的 6 个页面里，第 1–4 页与第 6 页已完成并验证；第 5 页（发帖）完成「文字帖 + 资源帖（网盘字段）」，
