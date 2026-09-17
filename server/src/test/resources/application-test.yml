@@ -7,6 +7,16 @@
 # 环境事实（docs/agents/README.md §7.2，均为实测过的事实，不要臆改）：
 #   - MySQL 8.0.34 在本机 127.0.0.1:3306，root/1234；测试库 hy_forum_test
 #     由 scripts/init_test_db.ps1 每次重建（DDL 从 docs/db/schema.sql 派生）
+#
+# ⚠️ 2026-09-17：库名改为**可配**（`${TEST_DB:hy_forum_test}`）。
+#    为什么：2026-09-16 实测两次「并行跑集成测试会造假红」——全量从 40 秒膨胀到 8 分 18 秒，
+#    以及一次 8 失败 / 24 错误（确认无并发后同一份代码 49/49）。根因是共享同一张库：
+#    init_test_db.ps1 会 DROP/CREATE 整库、TestTableCleaner 会 TRUNCATE 全表，
+#    两个 JVM 会互相清掉对方的数据。**所以并行开工的两条流必须各用一个库**：
+#      1) powershell -File scripts/init_test_db.ps1 -TestDb hy_forum_test_m4
+#      2) $env:TEST_DB='hy_forum_test_m4'  （再跑 mvn test）
+#    不设 TEST_DB 时行为与从前完全一致（仍是 hy_forum_test）。
+#    ⚠️ 假红比慢更危险：它会让人去查一个不存在的 bug。这条是花钱买来的教训。
 #   - Redis 在 VMware VM 里：192.168.100.128:6380（本机 Windows 无 Redis，
 #     且已决策不装 Docker Desktop；不使用 Testcontainers，见 docs/testing/README.md §3.1）
 #
@@ -17,7 +27,7 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/hy_forum_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/${TEST_DB:hy_forum_test}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: 1234
     hikari:

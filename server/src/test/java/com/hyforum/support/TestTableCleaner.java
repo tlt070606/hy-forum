@@ -70,16 +70,36 @@ public class TestTableCleaner {
      *
      * <p>调用方（{@link IntegrationTestBase}）在 {@code @BeforeEach} 里调用它，
      * 使「配错了库」表现为一条明确的测试失败，而不是数据被清空。</p>
+     *
+     * <p><b>2026-09-17 放宽：从"等于 hy_forum_test"改为"以 hy_forum_test 开头"。</b>
+     * 原因：两条流水线并行开工时必须各用一个库，否则会互相清表 —— 实测过两次
+     * （全量 40 秒膨胀到 8 分 18 秒；以及一次 8 失败 / 24 错误，确认无并发后同一份代码 49/49）。
+     * 放宽后 {@code hy_forum_test_m4} 这类库名被接受，而**开发库 {@code hy_forum} 仍然被拒**
+     * （它不以 {@code hy_forum_test} 开头）—— 这条防线的目的（宁可测试失败，也不清开发库）没有变弱。</p>
      */
     public void assertTestDatabase() {
         String current = currentDatabase();
-        if (!expectedDatabase.equals(current)) {
+        if (!isAcceptableTestDatabase(current)) {
             throw new IllegalStateException(
-                    "拒绝执行：当前连接的是库 [" + current + "]，而测试只允许连 [" + expectedDatabase + "]。"
+                    "拒绝执行：当前连接的是库 [" + current + "]，而测试只允许连以 [" + expectedDatabase + "] 开头的库。"
                             + "请检查 server/src/test/resources/application-test.yml（由 W1-M1 任务独占维护），"
-                            + "或本次运行是否漏了 -Dhy.test.db / spring.datasource.url 覆盖。"
+                            + "或本次运行是否漏了 TEST_DB 环境变量。"
                             + "本条防线的作用是：宁可测试失败，也不要把开发库 hy_forum 的数据清掉。");
         }
+    }
+
+    /**
+     * 库名判定规则（**纯函数，可单测**）。
+     *
+     * <p>抽成静态方法是为了让"该拒的必须拒"这件事**可以被测试**：
+     * 直接拿开发库去跑一遍是验证不了的（万一防线失效，开发库当场被清空）。
+     * 有了它就能用名字做断言，而不碰任何真实数据。</p>
+     *
+     * @param name 连接串里当前的库名
+     * @return true = 允许清表
+     */
+    public static boolean isAcceptableTestDatabase(String name) {
+        return name != null && name.startsWith(EXPECTED_TEST_DATABASE);
     }
 
     /**
