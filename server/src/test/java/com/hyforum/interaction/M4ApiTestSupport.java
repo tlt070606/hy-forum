@@ -125,6 +125,11 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         //   `hy:rl:{action}:{ip}`，前台登录的 action 是 `login-ip-1m`
         //   （见 `AuthController.RL_LOGIN`）。那正是本类自己的键，清它是正当的测试自清理。
         // ─────────────────────────────────────────────────────────────
+        // 探针（只读一次，便于事后从日志判定"是不是共享限流配额把用例打成 429"）：
+        // 打印清理前该键的原始值 + 清理后的值。若某次 M4 出现 429，这一行就能直接证明
+        // "是被上一批请求/别的测试类留下的计数打的"，而不是靠猜。
+        System.out.println("[M4-RL] 清理前 " + LOGIN_RATE_LIMIT_KEY + " = "
+                + stringRedisTemplate.opsForValue().get(LOGIN_RATE_LIMIT_KEY));
         stringRedisTemplate.delete(LOGIN_RATE_LIMIT_KEY);
 
         // 浏览量增量：键名是 `hy:post:view:{postId}`，只删本用例用到的那条
