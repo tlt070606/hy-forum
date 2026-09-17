@@ -43,23 +43,19 @@
 
     <!-- ==================== 状态占位 ==================== -->
     <!--
-      三态互斥顺序 **error > loading > empty**，不能反：
-      1. 请求失败时 loading 可能仍为 true（页面没 await 完又触发了一次）→ 错误优先；
-      2. 刷新时旧数据还在 → 不该先闪一下"没有内容"；
-      3. empty 是正常业务状态，只有前两者都不成立才展示。
+      ⚠️ `loading` 传的是 `loading && posts.length === 0`，不是裸的 `loading`：
+      刷新时旧数据还在，若让 ListState 显示"正在加载…"，它会与下面仍在渲染的列表**同时出现**。
+      只在"没有任何内容可显示"时才让它接管版面。
     -->
-    <view v-if="error" class="state" data-testid="home-error">
-      <text class="state__text state__text--error">{{ error }}</text>
-      <view class="state__retry" data-testid="home-retry" @click="load">
-        <text class="state__retry-text">重试</text>
-      </view>
-    </view>
-    <view v-else-if="loading && posts.length === 0" class="state" data-testid="home-loading">
-      <text class="state__text">正在加载…</text>
-    </view>
-    <view v-else-if="posts.length === 0" class="state" data-testid="home-empty">
-      <text class="state__text">这里还没有帖子</text>
-    </view>
+    <ListState
+      :loading="loading && posts.length === 0"
+      :error="error"
+      :empty="posts.length === 0"
+      empty-text="这里还没有帖子"
+      loading-text="正在加载…"
+      testid-base="home-state"
+      @retry="load"
+    />
 
     <!-- ==================== 信息流 ==================== -->
     <view v-if="posts.length" data-testid="home-feed">
@@ -104,6 +100,7 @@ import { onReachBottom, onShow } from '@dcloudio/uni-app'
 import AppShell from '@/components/shell/AppShell.vue'
 import Avatar from '@/components/Avatar.vue'
 import PostCard from '@/components/PostCard.vue'
+import ListState from '@/components/ListState.vue'
 import { fetchPosts } from '@/api/posts'
 import { POST_SORT_OPTIONS, type PostSort } from '@/api/types'
 import { ApiError, PAGE_SIZE_MAX } from '@/utils/request'
@@ -280,43 +277,6 @@ onReachBottom(() => {
   &__text {
     font-size: $hy-font-md;
     color: $hy-text-regular;
-  }
-}
-
-/* ---------- 状态占位 ---------- */
-.state {
-  padding: 48px 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background-color: $hy-bg-card;
-  border-radius: $hy-radius-md;
-
-  &__text {
-    font-size: $hy-font-sm;
-    color: $hy-text-secondary;
-    text-align: center;
-    line-height: 1.6;
-
-    /* 错误用危险色：这是**异常**，不是业务状态（与 M2 的既定口径一致） */
-    &--error {
-      color: $hy-color-danger;
-    }
-  }
-
-  &__retry {
-    margin-top: 14px;
-    height: 32px;
-    padding: 0 20px;
-    display: flex;
-    align-items: center;
-    border: 1px solid $hy-color-primary;
-    border-radius: $hy-radius-pill;
-  }
-
-  &__retry-text {
-    font-size: $hy-font-sm;
-    color: $hy-color-primary;
   }
 }
 

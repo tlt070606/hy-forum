@@ -1,5 +1,6 @@
 <template>
-  <AppShell active-nav="home" :post-total="null">
+  <!-- 详情页不属于左栏那三个入口，所以**不高亮任何导航项**（`active-nav=""`） -->
+  <AppShell active-nav="" :post-total="null">
     <!-- ==================== 窄屏返回（宽屏有左栏，不需要） ==================== -->
     <view class="back" data-testid="detail-back" @click="goBack">
       <HyIcon type="chevronLeft" size="sm" />

@@ -57,8 +57,12 @@ import MobileNav from '@/components/shell/MobileNav.vue'
 
 withDefaults(
   defineProps<{
-    /** 当前激活的导航项（同时转发给左栏与底部导航；`me` 只在底部导航有对应项） */
-    activeNav?: 'home' | 'topic' | 'collect' | 'me' | 'me'
+    /**
+     * 当前激活的导航项。转发给左栏与底部导航（`me` 只在底部导航有对应项）。
+     * `''` = **不高亮任何一项** —— 搜索页 / 版块页 / 详情页都不属于左栏那三个入口，
+     * 硬把其中一项点亮是对用户说假话（会让人以为"我在首页"）。
+     */
+    activeNav?: 'home' | 'topic' | 'collect' | 'me' | ''
     /** 帖子总数：`null` = 未知（请求中/失败），显示 `—` 而不是 `0` */
     postTotal?: number | null
   }>(),

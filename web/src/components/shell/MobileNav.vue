@@ -30,7 +30,7 @@
 <script setup lang="ts">
 import HyIcon, { type IconType } from '@/components/HyIcon.vue'
 
-withDefaults(defineProps<{ active?: 'home' | 'topic' | 'collect' | 'me' }>(), { active: 'home' })
+withDefaults(defineProps<{ active?: 'home' | 'topic' | 'collect' | 'me' | '' }>(), { active: '' })
 
 interface NavItem {
   key: 'home' | 'topic' | 'collect' | 'me'

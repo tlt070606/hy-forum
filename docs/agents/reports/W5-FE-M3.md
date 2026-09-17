@@ -247,6 +247,89 @@ node scripts/shot.mjs                   → 首页 + 详情页各 1920/1280/420 
 
 ---
 
+## K. 第 3 段：搜索页 + 版块页（已完成）
+
+| 内容 | 说明 |
+|---|---|
+| `web/src/pages/search/index.vue` | `GET /api/posts/search`。空关键词**不发请求**（"没输入就点搜索"是正常操作，不该拿 400 惩罚它）；`keyword`（实时值）与 `submittedKeyword`（已提交值）分开存，否则统计文案会和列表对不上 |
+| `web/src/pages/board/index.vue` | `GET /api/posts?boardId` + `GET /api/boards`。版块名从**列表**里按 id 查——契约里**没有** `/api/boards/{id}`，不能编造；版块信息与帖子列表**各自 catch**，头部挂了不影响列表 |
+| `web/src/components/ListState.vue` | 三态占位抽成共用组件（首页/搜索/版块共用）。互斥顺序 **error > loading > empty** 是这里唯一的实质逻辑，写三份就是三份会漂移的副本 |
+| 首页 | 改用 `ListState`（删掉原来内联的 3 个状态块 + 对应样式），并传入 `loading && posts.length === 0` —— 传裸 `loading` 会让"正在加载…"与仍在渲染的列表**同时出现** |
+| 导航高亮 | 给 `AppShell` / `LeftRail` / `MobileNav` 的 `activeNav` 加上 `''`（**不高亮任何一项**）。搜索页/版块页/详情页都不属于左栏那三个入口，硬点亮"首页"是对用户说假话。顺带修掉 `AppShell` 里一个**重复的 `'me'` 联合成员**（TS 不报错，但很脏） |
+
+### 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json  → exit 0
+node scripts/shot.mjs                  → 首页 / 搜索页 / 版块页 各 1920/1280/420 三档
+                                         无 pageerror、无 4xx/5xx
+```
+
+截图落 `web/.tmp/ref/{home,search,board}-{desktop,laptop,mobile}.png`。
+❌ E2E 仍未写（等界面定稿）→ 仍算未验证。
+
+---
+
+## L. 两处与 L1 的说法不一致（**需要 L1 核实**）
+
+### L.1 更正我上一轮的错误诊断（**这是我的方法论错误**）
+
+我上一轮说「本机完全没有外网」。**这个结论是错的，而且错在方法上**：
+我只测了 `example.com` / `github.com` 两个任意域名，就把 **shell 的**结果推断成"整个环境离线"。
+
+**实测（2026-09-17，用浏览器测，因为上传发生在浏览器里）**：
+
+```
+node web/scripts/net-probe.mjs
+https://example.com                                  -> HTTP 200
+https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/   -> HTTP 403   ← 私有桶，与 L1 说法一致
+https://help.aliyun.com                              -> HTTP 200
+OSS via XHR                                          -> status=403
+```
+
+**准确的说法是：`shell` 无出网（curl 对所有外部域名返回 000），`浏览器`有完整出网。**
+上传走的是浏览器，所以这条路**是通的** —— L1 的更正方向正确。
+⚠️ 但 L1 给的原因（"example.com / github.com 那类被拦"）与我这次实测不符：
+**浏览器里 example.com 是 200**。真正的分界是 **shell ↔ 浏览器**，不是域名白名单。
+（这一条值得 L1 复核，因为它决定了"以后靠什么验证外部依赖"。）
+
+**教训**：把"某条通道不通"当成了"环境不通"。**一个通道的失败不能推断整体** ——
+这与本项目那条「只看 `git status` 就断定'没干活'」是同一类错误（看板 2026-09-16 那条广播）。
+
+### L.2 运行中的 8080 是**旧构建** —— CR-G 的改动**没有生效**
+
+| 检查 | 实测 |
+|---|---|
+| live `/v3/api-docs` 路径数 | **14**（没有 M4 的 ~17 个端点） |
+| live `OssSignatureVO` | `host, policy, signature, dir, expire, callback, accessKeyId` ✅（CR-F 在） |
+| live OSS 相关 schema | 只有 `ApiResponseOssSignatureVO` / `OssSignatureVO` —— **没有** callback 的返回类型 |
+| 仓库 `openapi.json` 的 `/api/oss/callback` 响应 | 仍是 `ApiResponseVoid` |
+| `server/target/hy-forum-server-0.0.1-SNAPSHOT.jar` | 已于 **2026-09-17 20:16** 重新构建 |
+| 正在跑的 java 进程 | 全部起于 **9/16**（20:46、21:25）→ **没有任何进程用过新 jar** |
+
+**结论**：新 jar 已构建但**没有被启动**，8080 上仍是旧构建。
+**后果**：CR-G 的 `POST /api/oss/callback → data:{id,url,thumbUrl}` 在运行实例上**拿不到**，
+契约里也还没有 —— 所以**上传页现在做不了**（L1 说"可以做了"，但实际环境尚不具备）。
+
+**需要 L1 做两件事**：① 用新 jar 重启 8080；② 重导 `openapi.json`（CR-G 的 callback 响应形状 + M4 的 17 个端点）。
+做完我立刻做上传页 + **跑通 §6.1 最小闭环**（浏览器能出网、OSS 通路已验证，条件已经齐了）。
+
+### L.3 M4 前端目前无法开始（**按 L1 自己的指示**）
+
+L1 指示「**先别接互动按钮**：M4 新增约 17 个端点，契约还没重导，你在 `openapi.json` 里现在还看不到它们」。
+实测确认：`openapi.json` 确实是 14 个路径，没有 M4 端点。
+
+所以我**不会**照《技术方案》§6.6/§6.7 的文字去猜端点形状 —— 那正是"编造契约"。
+**收到契约重导通知后立刻转 M4**（评论 / 点赞 / 收藏 / 关注 / 个人主页 / 我的收藏）。
+
+### L.4 顺带交代：前端 dev server 挂过，我重新拉起了
+
+交付时发现 `127.0.0.1:5173` 已死（`root=000`），后端 8080 正常。
+重启时第一次报 **`spawn EPERM`**（esbuild 启动服务用管道 stdio —— `web/README.md` §3.4 记录的边界），
+提权后正常。**现在 5173 是我起的后台作业（`pwsh-176`）**，若需求方要自己起，请先告知我停掉它。
+
+---
+
 ## 0. 一句话结论
 
 **§6.2 的 6 个页面里，第 1–4 页与第 6 页已完成并验证；第 5 页（发帖）完成「文字帖 + 资源帖（网盘字段）」，

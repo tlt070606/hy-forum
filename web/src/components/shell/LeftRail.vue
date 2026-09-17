@@ -94,8 +94,9 @@ const props = withDefaults(
      * ⚠️ 含 `'me'`：它是**底部导航**才有的项（「我的」→ M2 的 pages/me/index）。
      *    左栏没有对应条目，因此传 `'me'` 时左栏不高亮任何一项 —— 这是正确行为，
      *    而不是类型不完备（共用外壳要能把同一个值转发给左栏和底部导航两处）。
+     * `''` = 不高亮任何一项（搜索页 / 版块页 / 详情页都用它）。
      */
-    active?: 'home' | 'topic' | 'collect' | 'me'
+    active?: 'home' | 'topic' | 'collect' | 'me' | ''
     /**
      * 帖子总数（真实数据，来自 `GET /api/posts` 的 `total`）。
      * `null` = **还不知道**（请求中 / 失败 / 该页面根本不请求列表，例如详情页）
