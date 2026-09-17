@@ -43,7 +43,7 @@ export interface paths {
          * 帖子列表
          * @description 可按版块筛选；sort 支持 latest/hot/essence；每页上限 20，只返回摘要（不含正文）
          */
-        get: operations["listPosts"];
+        get: operations["listPosts_1"];
         put?: never;
         /**
          * 发帖
@@ -51,6 +51,54 @@ export interface paths {
          */
         post: operations["createPost"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/posts/{id}/like": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 点赞帖子
+         * @description 幂等：重复点赞返回成功，post.like_count 只加一次
+         */
+        post: operations["like"];
+        /**
+         * 取消点赞
+         * @description 幂等：重复取消返回成功，计数不会减到负数
+         */
+        delete: operations["unlike"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/posts/{id}/collect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 收藏帖子
+         * @description 幂等：重复收藏返回成功，post.collect_count 只加一次
+         */
+        post: operations["collect"];
+        /**
+         * 取消收藏
+         * @description 幂等：重复取消返回成功，计数不会减到负数
+         */
+        delete: operations["uncollect"];
         options?: never;
         head?: never;
         patch?: never;
@@ -67,10 +115,78 @@ export interface paths {
         put?: never;
         /**
          * OSS 上传回调
-         * @description OSS 发起，无登录态；必须验签（RSA+MD5，公钥来自 x-oss-pub-key-url）；通过后按 post_id=0、audit_status=0 落 post_image
+         * @description OSS 发起，无登录态；必须验签（RSA+MD5，公钥来自 x-oss-pub-key-url）；通过后按 post_id=0、audit_status=0 落 post_image，并在 data 里回带 {id,url,thumbUrl}（CR-G）
          */
         post: operations["callback"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/follow/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 关注用户
+         * @description 幂等：重复关注返回成功，双方计数各只加一次；不能关注自己（400）
+         */
+        post: operations["follow"];
+        /**
+         * 取消关注
+         * @description 幂等：重复取消返回成功，计数不会减到负数
+         */
+        delete: operations["unfollow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 发表评论
+         * @description parentId=0 为主楼；回复楼中楼时归并到其主楼（parent_id 恒等于 root_id）
+         */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comments/{id}/like": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 点赞评论
+         * @description 幂等：重复点赞返回成功且计数不重复增加
+         */
+        post: operations["like_1"];
+        /**
+         * 取消点赞评论
+         * @description 幂等：重复取消返回成功且计数不为负
+         */
+        delete: operations["unlike_1"];
         options?: never;
         head?: never;
         patch?: never;
@@ -176,6 +292,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 个人主页
+         * @description 可选鉴权：登录后返回 isFollowing / isFollowedBy，未登录时两者为 null（不是 false）
+         */
+        get: operations["getUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/posts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 某用户的帖子
+         * @description 只返回 status=1（正常）的帖子，时间倒序分页
+         */
+        get: operations["listPosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/follows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 某用户关注的人
+         * @description 按关注时间倒序分页
+         */
+        get: operations["listFollowing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/fans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 某用户的粉丝
+         * @description 按关注时间倒序分页
+         */
+        get: operations["listFans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 某用户的评论
+         * @description 只返回正常状态的评论，带 postTitle；时间倒序分页
+         */
+        get: operations["listComments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/me": {
         parameters: {
             query?: never;
@@ -188,6 +404,46 @@ export interface paths {
          * @description 需要登录；用户 id 取自登录态，不接受前端传参
          */
         get: operations["me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 我的收藏
+         * @description 需登录；按收藏时间倒序分页
+         */
+        get: operations["listMyCollections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/posts/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 主楼评论列表
+         * @description 分页；每条主楼带 replyCount（总数）与前 2 条楼中楼预览 replies
+         */
+        get: operations["listByPost"];
         put?: never;
         post?: never;
         delete?: never;
@@ -228,6 +484,46 @@ export interface paths {
          * @description 返回 {host, policy, signature, dir, expire, callback}；需登录；policy 限定目录 post/、单图 ≤5MB、仅 image/*
          */
         get: operations["signature"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 首页流
+         * @description type=follow 需登录（未登录返回 401 引导登录）；type=all 公开；分页上限 20
+         */
+        get: operations["feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comments/{rootId}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 楼中楼列表
+         * @description rootId 为主楼评论 id；按时间升序分页
+         */
+        get: operations["listReplies"];
         put?: never;
         post?: never;
         delete?: never;
@@ -291,6 +587,26 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除评论
+         * @description 仅作者本人；逻辑删除；重复删除幂等成功（不重复扣计数）
+         */
+        delete: operations["delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -419,6 +735,63 @@ export interface components {
             message?: string;
             data?: Record<string, never>;
         };
+        ApiResponseOssCallbackResultVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["OssCallbackResultVO"];
+        };
+        /** @description OSS 回调落库结果（裸 URL，可直接用于发帖） */
+        OssCallbackResultVO: {
+            /** Format: int64 */
+            id?: number;
+            url?: string;
+            thumbUrl?: string;
+        };
+        /** @description 发表评论 */
+        CommentCreateRequest: {
+            /** Format: int64 */
+            postId: number;
+            /**
+             * Format: int64
+             * @description 0=主楼；否则为被回复评论 id。指向楼中楼时归并到其主楼
+             */
+            parentId?: number;
+            content: string;
+        };
+        ApiResponseCommentReplyVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["CommentReplyVO"];
+        };
+        /** @description 楼中楼条目（parentId 恒等于 rootId） */
+        CommentReplyVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            postId?: number;
+            /** Format: int64 */
+            rootId?: number;
+            /** Format: int64 */
+            parentId?: number;
+            /** Format: int64 */
+            replyToUserId?: number;
+            replyToNickname?: string;
+            content?: string;
+            /** Format: int32 */
+            likeCount?: number;
+            author?: components["schemas"]["InteractionUserBriefVO"];
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        /** @description 用户摘要（昵称 + 头像） */
+        InteractionUserBriefVO: {
+            /** Format: int64 */
+            id?: number;
+            nickname?: string;
+            avatarUrl?: string;
+        };
         RegisterRequest: {
             username: string;
             password: string;
@@ -487,6 +860,169 @@ export interface components {
             message?: string;
             data?: components["schemas"]["AdminLoginVO"];
         };
+        ApiResponseUserProfileVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["UserProfileVO"];
+        };
+        /** @description 个人主页信息（含双向关注状态） */
+        UserProfileVO: {
+            /** Format: int64 */
+            id?: number;
+            nickname?: string;
+            avatarUrl?: string;
+            bio?: string;
+            /** Format: int32 */
+            gender?: number;
+            /** Format: int32 */
+            postCount?: number;
+            /** Format: int32 */
+            followCount?: number;
+            /** Format: int32 */
+            fansCount?: number;
+            /** Format: int32 */
+            likeReceivedCount?: number;
+            /** Format: int32 */
+            level?: number;
+            isFollowing?: boolean;
+            isFollowedBy?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ApiResponsePageResultFeedItemVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultFeedItemVO"];
+        };
+        /** @description 首页流条目（不含正文） */
+        FeedItemVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            boardId?: number;
+            boardName?: string;
+            title?: string;
+            coverUrl?: string;
+            /** Format: int32 */
+            imageCount?: number;
+            isTop?: boolean;
+            isEssence?: boolean;
+            /** Format: int32 */
+            viewCount?: number;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            commentCount?: number;
+            /** Format: int32 */
+            collectCount?: number;
+            author?: components["schemas"]["InteractionUserBriefVO"];
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        PageResultFeedItemVO: {
+            list?: components["schemas"]["FeedItemVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
+        ApiResponsePageResultFollowUserVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultFollowUserVO"];
+        };
+        /** @description 关注/粉丝列表项 */
+        FollowUserVO: {
+            /** Format: int64 */
+            userId?: number;
+            nickname?: string;
+            avatarUrl?: string;
+            bio?: string;
+            /** Format: date-time */
+            followedAt?: string;
+        };
+        PageResultFollowUserVO: {
+            list?: components["schemas"]["FollowUserVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
+        ApiResponsePageResultUserCommentVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultUserCommentVO"];
+        };
+        PageResultUserCommentVO: {
+            list?: components["schemas"]["UserCommentVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
+        /** @description 个人主页的评论条目 */
+        UserCommentVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            postId?: number;
+            postTitle?: string;
+            /** Format: int64 */
+            rootId?: number;
+            /** Format: int64 */
+            parentId?: number;
+            content?: string;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            replyCount?: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ApiResponsePageResultCollectionItemVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultCollectionItemVO"];
+        };
+        /** @description 我的收藏列表项（不含正文） */
+        CollectionItemVO: {
+            /** Format: int64 */
+            postId?: number;
+            /** Format: int64 */
+            boardId?: number;
+            title?: string;
+            coverUrl?: string;
+            /** Format: int32 */
+            imageCount?: number;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            commentCount?: number;
+            /** Format: int32 */
+            collectCount?: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        PageResultCollectionItemVO: {
+            list?: components["schemas"]["CollectionItemVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
         ApiResponsePageResultPostSummaryVO: {
             /** Format: int32 */
             code?: number;
@@ -527,6 +1063,37 @@ export interface components {
             isTop?: boolean;
             isEssence?: boolean;
         };
+        ApiResponsePageResultCommentItemVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultCommentItemVO"];
+        };
+        /** @description 主楼评论（含前 2 条楼中楼预览） */
+        CommentItemVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            postId?: number;
+            content?: string;
+            /** Format: int32 */
+            likeCount?: number;
+            /** Format: int32 */
+            replyCount?: number;
+            replies?: components["schemas"]["CommentReplyVO"][];
+            author?: components["schemas"]["InteractionUserBriefVO"];
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        PageResultCommentItemVO: {
+            list?: components["schemas"]["CommentItemVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
         ApiResponseOssSignatureVO: {
             /** Format: int32 */
             code?: number;
@@ -552,6 +1119,21 @@ export interface components {
             callback?: string;
             /** @description **直传表单必需的 OSSAccessKeyId**：AccessKey 的标识，不是密钥；Secret 只在服务端使用，绝不会出现在本响应里 */
             accessKeyId?: string;
+        };
+        ApiResponsePageResultCommentReplyVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultCommentReplyVO"];
+        };
+        PageResultCommentReplyVO: {
+            list?: components["schemas"]["CommentReplyVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
         };
         ApiResponseListBoardVO: {
             /** Format: int32 */
@@ -681,7 +1263,7 @@ export interface operations {
             };
         };
     };
-    listPosts: {
+    listPosts_1: {
         parameters: {
             query?: {
                 boardId?: number;
@@ -730,6 +1312,94 @@ export interface operations {
             };
         };
     };
+    like: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    unlike: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    collect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    uncollect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
     callback: {
         parameters: {
             query?: never;
@@ -742,6 +1412,118 @@ export interface operations {
                 "application/json": string[];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseOssCallbackResultVO"];
+                };
+            };
+        };
+    };
+    follow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    unfollow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommentCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseCommentReplyVO"];
+                };
+            };
+        };
+    };
+    like_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    unlike_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {
@@ -866,6 +1648,128 @@ export interface operations {
             };
         };
     };
+    getUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseUserProfileVO"];
+                };
+            };
+        };
+    };
+    listPosts: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultFeedItemVO"];
+                };
+            };
+        };
+    };
+    listFollowing: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultFollowUserVO"];
+                };
+            };
+        };
+    };
+    listFans: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultFollowUserVO"];
+                };
+            };
+        };
+    };
+    listComments: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultUserCommentVO"];
+                };
+            };
+        };
+    };
     me: {
         parameters: {
             query?: never;
@@ -882,6 +1786,54 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponseUserVO"];
+                };
+            };
+        };
+    };
+    listMyCollections: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultCollectionItemVO"];
+                };
+            };
+        };
+    };
+    listByPost: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultCommentItemVO"];
                 };
             };
         };
@@ -926,6 +1878,56 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponseOssSignatureVO"];
+                };
+            };
+        };
+    };
+    feed: {
+        parameters: {
+            query?: {
+                type?: string;
+                sort?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultFeedItemVO"];
+                };
+            };
+        };
+    };
+    listReplies: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                rootId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultCommentReplyVO"];
                 };
             };
         };
@@ -986,6 +1988,28 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponseCaptchaVO"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseVoid"];
                 };
             };
         };
