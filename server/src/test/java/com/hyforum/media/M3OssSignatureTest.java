@@ -147,6 +147,77 @@ class M3OssSignatureTest extends M3OssApiTestSupport {
                         + "\"size\":12345,\"mimeType\":\"image/jpeg\",\"etag\":\"etag-simulated\"}");
     }
 
+    /**
+     * 验收项（§12.5 任务 C）：{@code M3_oss_callback_url_loopback_warns}
+     * —— 回调地址落在**环回地址**时必须打 WARN，把静默失败变成可见。
+     *
+     * <h2>为什么这条必须存在</h2>
+     * <p>本机开发时回调地址从请求推导 → {@code http://127.0.0.1:8080/api/oss/callback}，
+     * 而 OSS 在公网、永远够不到环回地址。现象是「<b>上传成功但没有图</b>」，
+     * 而且<b>日志里一个错都没有</b>：OSS 那边回调失败、我们这边什么都没发生。
+     * 这类静默失败最难查，所以要求"启动 + 首次签名各一条 WARN"。</p>
+     *
+     * <p>测试同时断言两件事：① WARN 真的打了（捕获 Logback 事件，不靠人眼）；
+     * ② 那条环回地址<b>确实出现在下发给前端回调配置里</b> —— 也就是这个陷阱在本环境下真实存在，
+     * 而不是一条安慰性的日志。</p>
+     */
+    @Test
+    void M3_oss_callback_url_loopback_warns() {
+        TestUser user = createFreshUser();
+        // 告警是"只打一次"的（否则每个签名请求一行，等于没有信号）→ 先重置，断言才稳定
+        callbackUrlResolver.resetLoopbackWarningState();
+
+        try (CapturedLogs logs = captureLogs("com.hyforum.media")) {
+            Response signed = getSignature(user.token());
+            assertThat(signed.jsonPath().getInt("code"))
+                    .as("签名必须成功（本轮只管告警，不管成功与否）：%s", signed.asString())
+                    .isZero();
+
+            assertThat(logs.hasWarnContaining("环回"))
+                    .as("回调地址是环回地址时必须打一条 WARN（否则这个陷阱是静默的）：%s",
+                            signed.asString())
+                    .isTrue();
+        }
+
+        assertThat(callbackUrlResolver.loopbackWarningCount())
+                .as("告警计数据实递增（只增，供排障观察）")
+                .isGreaterThanOrEqualTo(1);
+
+        // 复现陷阱本身：下发的 callback 配置里确实是环回地址（本机测试用 127.0.0.1）
+        String callbackConfig = new String(Base64.getDecoder().decode(
+                getSignature(user.token()).jsonPath().getString("data.callback")), StandardCharsets.UTF_8);
+        assertThat(callbackConfig)
+                .as("测试环境里回调地址就是环回地址 —— 这正是 OSS 够不到的那一种情况")
+                .contains("127.0.0.1");
+
+        // ---------- 反证：**非**环回地址不得打这条 WARN ----------
+        // 缺了它，"永远告警"的实现照样绿 —— 而永远告警等于没有信号（L1 登记这个名字时点名要求）。
+        // 做法：用 X-Forwarded-Host 把一个公网域名喂给解析器（它优先于请求自身的 host），
+        // 于是推导出的回调地址不是环回地址 → 必须一条 loopback WARN 都不打。
+        callbackUrlResolver.resetLoopbackWarningState();
+        try (CapturedLogs logs = captureLogs("com.hyforum.media")) {
+            Response forwarded = io.restassured.RestAssured.given()
+                    .header("Authorization", user.token())
+                    .header("X-Forwarded-Host", "forum.example.com")
+                    .header("X-Forwarded-Proto", "https")
+                    .get("/api/oss/signature");
+            assertThat(forwarded.jsonPath().getInt("code")).isZero();
+
+            String publicCallback = new String(Base64.getDecoder().decode(
+                    forwarded.jsonPath().getString("data.callback")), StandardCharsets.UTF_8);
+            assertThat(publicCallback)
+                    .as("反证的前置条件：经过反代时回调地址必须是那个公网域名（否则本反证不成立）")
+                    .contains("forum.example.com");
+
+            assertThat(logs.hasWarnContaining("环回"))
+                    .as("推导出的是公网地址时**不得**打环回告警（否则这条 WARN 就成了噪音）")
+                    .isFalse();
+        }
+        assertThat(callbackUrlResolver.loopbackWarningCount())
+                .as("非环回请求不得把告警计数加一")
+                .isZero();
+    }
+
     /** HMAC-SHA1 → Base64（OSS PostObject 的 policy 签名算法）。 */
     private static String hmacSha1Base64(String secret, String data) {
         try {

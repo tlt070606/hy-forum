@@ -11,6 +11,7 @@ import com.hyforum.media.oss.OssCallbackVerifier;
 import com.hyforum.media.oss.OssVerifyResult;
 import com.hyforum.media.service.OssCallbackService;
 import com.hyforum.media.service.OssSignatureService;
+import com.hyforum.media.vo.OssCallbackResultVO;
 import com.hyforum.media.vo.OssSignatureVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -96,9 +97,10 @@ public class OssController {
     @PostMapping("/callback")
     @AllowAnonymous
     @Operation(summary = "OSS 上传回调",
-            description = "OSS 发起，无登录态；必须验签（RSA+MD5，公钥来自 x-oss-pub-key-url）；通过后按 post_id=0、audit_status=0 落 post_image")
-    public ResponseEntity<ApiResponse<Void>> callback(@RequestBody(required = false) byte[] body,
-                                                      HttpServletRequest request) {
+            description = "OSS 发起，无登录态；必须验签（RSA+MD5，公钥来自 x-oss-pub-key-url）；"
+                    + "通过后按 post_id=0、audit_status=0 落 post_image，并在 data 里回带 {id,url,thumbUrl}（CR-G）")
+    public ResponseEntity<ApiResponse<OssCallbackResultVO>> callback(@RequestBody(required = false) byte[] body,
+                                                       HttpServletRequest request) {
         byte[] rawBody = body == null ? new byte[0] : body;
 
         OssCallbackRequest verifyInput = new OssCallbackRequest(
@@ -109,17 +111,18 @@ public class OssController {
                 request.getHeader("x-oss-pub-key-url"),
                 request.getHeader("Date"));
 
-        OssVerifyResult result = callbackVerifier.verify(verifyInput);
-        if (!result.passed()) {
+        OssVerifyResult verifyResult = callbackVerifier.verify(verifyInput);
+        if (!verifyResult.passed()) {
             // 失败原因只进日志（不进响应体）：对攻击者暴露"你差在哪一步"等于送一份调参指南
             log.warn("OSS 回调验签失败：{}（来源 {} {}）",
-                    result.reason(), request.getMethod(), request.getRequestURI());
+                    verifyResult.reason(), request.getMethod(), request.getRequestURI());
             throw new BizException(ErrorCode.FORBIDDEN, "回调验签失败");
         }
 
+        OssCallbackResultVO registered;
         try {
-            String url = callbackService.registerUploadedImage(rawBody);
-            log.info("OSS 回调处理完成：{}", url);
+            registered = callbackService.registerUploadedImage(rawBody);
+            log.info("OSS 回调处理完成：{}", registered.url());
         } catch (IllegalArgumentException ex) {
             // 消息体/类型/大小/目录不合法 → 400 参数错误（不是 500，也不是 403：
             // 403 已被"验签失败"占用，混用会让运维无法区分"被伪造"与"内容不合规"）
@@ -127,7 +130,8 @@ public class OssController {
             throw new BizException(ErrorCode.BAD_REQUEST, ex.getMessage());
         }
 
-        return successWithContentLength();
+        // CR-G：把这个结果回给 OSS（它透传给前端）—— 前端据此知道回调成功、并拿到要提交的裸 URL
+        return successWithContentLength(registered);
     }
 
     /**
@@ -143,12 +147,13 @@ public class OssController {
      * 它正是 OSS 唯一要读的那个响应。</p>
      *
      * <p>长度由<b>同一份 ObjectMapper</b> 序列化同一对象算出，与随后写出的报文逐字节一致；
-     * 用 {@code ResponseEntity<ApiResponse<Void>>} 而不是 {@code byte[]}，
-     * 是为了让契约里这个接口的响应 schema 仍然是统一的 {@code ApiResponseVoid}
+     * 用 {@code ResponseEntity<ApiResponse<...>>} 而不是 {@code byte[]}，
+     * 是为了让契约里这个接口的响应 schema 仍然是统一的 {@code ApiResponse...}
      * （返回 {@code byte[]} 会把契约污染成二进制）。</p>
      */
-    private ResponseEntity<ApiResponse<Void>> successWithContentLength() {
-        ApiResponse<Void> payload = ApiResponse.ok();
+    private ResponseEntity<ApiResponse<OssCallbackResultVO>> successWithContentLength(
+            OssCallbackResultVO data) {
+        ApiResponse<OssCallbackResultVO> payload = ApiResponse.ok(data);
         int length;
         try {
             length = objectMapper.writeValueAsBytes(payload).length;

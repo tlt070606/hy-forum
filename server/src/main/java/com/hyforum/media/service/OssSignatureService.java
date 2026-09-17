@@ -3,6 +3,7 @@ package com.hyforum.media.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyforum.common.oss.OssProperties;
+import com.hyforum.media.config.OssCallbackUrlResolver;
 import com.hyforum.media.config.OssCredentialProperties;
 import com.hyforum.media.config.OssUploadProperties;
 import com.hyforum.media.vo.OssSignatureVO;
@@ -60,15 +61,18 @@ public class OssSignatureService {
     private final OssProperties ossProperties;
     private final OssCredentialProperties credentials;
     private final OssUploadProperties uploadProperties;
+    private final OssCallbackUrlResolver callbackUrlResolver;
     private final ObjectMapper objectMapper;
 
     public OssSignatureService(OssProperties ossProperties,
                                OssCredentialProperties credentials,
                                OssUploadProperties uploadProperties,
+                               OssCallbackUrlResolver callbackUrlResolver,
                                ObjectMapper objectMapper) {
         this.ossProperties = ossProperties;
         this.credentials = credentials;
         this.uploadProperties = uploadProperties;
+        this.callbackUrlResolver = callbackUrlResolver;
         this.objectMapper = objectMapper;
     }
 
@@ -129,33 +133,14 @@ public class OssSignatureService {
     /** 回调配置 JSON：回调地址 + 回调体模板 + 回调体类型（前端原样作为 callback 表单字段）。 */
     private String callbackConfigJson(HttpServletRequest request) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("callbackUrl", resolveCallbackUrl(request));
+        config.put("callbackUrl", callbackUrlResolver.resolve(request));
         config.put("callbackBody", uploadProperties.callbackBody());
         config.put("callbackBodyType", uploadProperties.callbackBodyType());
         return toJson(config);
     }
 
-    /**
-     * 解析回调地址：<b>显式配置优先，否则从请求推导</b>。
-     *
-     * <p>为什么必须有"显式配置"这条路：后端本地监听 {@code 127.0.0.1}，而
-     * <b>OSS 够不到本机</b>（这是 M3 唯一的阻塞项，见 {@code M3-计划与前置.md} §4）。
-     * 本机开发要收真实回调时，必须让回调查询指向隧道公网地址
-     * （{@code hy.oss.upload.callback-url}，可用环境变量覆盖）。</p>
-     *
-     * <p>推导口径与健康检查里 {@code servers[0].url} 同源：取请求进来的 scheme + host，
-     * 并优先采用反代写入的 {@code X-Forwarded-Proto/Host}（经过 nginx 时 Host 才是公网地址）。</p>
-     */
-    private String resolveCallbackUrl(HttpServletRequest request) {
-        if (uploadProperties.hasExplicitCallbackUrl()) {
-            return uploadProperties.callbackUrl().trim();
-        }
-        String scheme = firstNonBlank(request.getHeader("X-Forwarded-Proto"), request.getScheme());
-        String host = firstNonBlank(request.getHeader("X-Forwarded-Host"), request.getServerName());
-        int port = request.getServerPort();
-        boolean defaultPort = ("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443);
-        return scheme + "://" + host + (defaultPort ? "" : ":" + port) + CALLBACK_PATH;
-    }
+    // 回调地址的解析（含"环回地址打 WARN"的可见性要求）已抽到 OssCallbackUrlResolver：
+    // 它同时被启动期告警使用，放在这里会让签名服务承担两件事（§12.5 任务 C）。
 
     /** Base64（标准字母表，带 padding）——policy 与 signature 都用它。 */
     private static String encodeBase64(byte[] raw) {
@@ -192,9 +177,5 @@ public class OssSignatureService {
             result = result.substring(0, result.length() - 1);
         }
         return result;
-    }
-
-    private static String firstNonBlank(String first, String second) {
-        return (first != null && !first.isBlank()) ? first : second;
     }
 }

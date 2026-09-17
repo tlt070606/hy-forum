@@ -6,6 +6,8 @@ import com.hyforum.domain.post.entity.PostImage;
 import com.hyforum.domain.post.mapper.PostImageMapper;
 import com.hyforum.media.config.OssCallbackProperties;
 import com.hyforum.common.oss.OssProperties;
+import com.hyforum.common.oss.OssThumbnailUrls;
+import com.hyforum.media.vo.OssCallbackResultVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -80,7 +82,7 @@ public class OssCallbackService {
      *         （由调用方翻译成 400 参数错误）
      */
     @Transactional
-    public String registerUploadedImage(byte[] body) {
+    public OssCallbackResultVO registerUploadedImage(byte[] body) {
         Map<String, Object> payload = parseBody(body);
 
         String objectKey = text(payload.get(FIELD_OBJECT));
@@ -114,14 +116,16 @@ public class OssCallbackService {
         if (existing != null) {
             // 幂等：OSS 重试造成的重复投递，直接当成功（见类注释）
             log.info("回调重复投递，已忽略：url={} 既有行 id={}", url, existing.getId());
-            return url;
+            return new OssCallbackResultVO(existing.getId(), existing.getUrl(),
+                    existing.getThumbUrl() != null ? existing.getThumbUrl()
+                            : OssThumbnailUrls.derive(existing.getUrl()));
         }
 
         PostImage image = new PostImage();
         image.setPostId(PostImage.UNBOUND_POST_ID);
         image.setUrl(url);
-        // thumb_url 刻意留空：缩略图规则的不变实现只有一个（post 模块的 ThumbnailUrls），
-        // 发帖认领时它会补上（见类注释）
+        // thumb_url 刻意留空：缩略图规则的不变实现在 common.oss.OssThumbnailUrls（post 与 media 共用），
+        // 发帖认领时会把它补进行里（见类注释）
         image.setThumbUrl(null);
         image.setWidth(0);
         image.setHeight(0);
@@ -132,7 +136,9 @@ public class OssCallbackService {
 
         log.info("回调落库成功：url={} postId={}（未认领）auditStatus={} size={}",
                 url, PostImage.UNBOUND_POST_ID, PostImage.AUDIT_PENDING, size);
-        return url;
+        // CR-G：响应体带回落库结果（会被 OSS 透传给前端）。url 是**裸** URL —— 它就是发帖时
+        // images 应当提交的值，也是库里存的值；签名 URL 留给读接口现签（见 OssCallbackResultVO 注释）。
+        return new OssCallbackResultVO(image.getId(), url, OssThumbnailUrls.derive(url));
     }
 
     /** 按 URL 找任意一行（不区分是否已认领）——幂等判重用。 */

@@ -125,11 +125,12 @@ class M3PostQueryTest extends M3ApiTestSupport {
                 .contains("x-oss-process");
 
         // ---------- 与详情里的 thumbUrl 同源（避免列表/详情两处各生成一套缩略图 URL） ----------
+        // §12.3 坑 2：对外是签名 URL → 比 base（对象地址），语义等价且不会因跨秒而偶发红
         Response detail = getPostDetail(postId);
-        assertThat(detail.jsonPath().getString("data.images[0].thumbUrl"))
-                .as("详情里的缩略图必须与列表封面一致")
-                .isEqualTo(coverUrl);
-        assertThat(detail.jsonPath().getString("data.images[0].url"))
+        assertThat(bareUrl(detail.jsonPath().getString("data.images[0].thumbUrl")))
+                .as("详情里的缩略图必须与列表封面一致（同一个对象地址）")
+                .isEqualTo(bareUrl(coverUrl));
+        assertThat(bareUrl(detail.jsonPath().getString("data.images[0].url")))
                 .as("详情里同时给出原图 URL（点开看大图）")
                 .isEqualTo(originalUrl);
     }

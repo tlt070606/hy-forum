@@ -70,13 +70,18 @@ class M3PostPublishTest extends M3ApiTestSupport {
         assertThat(response.jsonPath().getBoolean("data.boardIsResource")).isTrue();
         assertThat(response.jsonPath().getInt("data.imageCount")).isEqualTo(2);
         assertThat(response.jsonPath().getList("data.images")).hasSize(2);
-        assertThat(response.jsonPath().getString("data.images[0].url")).isEqualTo(image1);
+        // §12.3 坑 2：url/thumbUrl 的语义从"裸 URL"变成"读时签名 URL"（桶是私有的）→
+        // 这里改比 **base**（去掉 OSSAccessKeyId/Expires/Signature 后的对象地址）。
+        // 比 base 与被测语义等价，且不会因"两次组装跨过一秒 → Expires 不同"而偶发变红。
+        assertThat(bareUrl(response.jsonPath().getString("data.images[0].url")))
+                .as("images[0].url 的对象地址必须还是当初提交的那张图")
+                .isEqualTo(image1);
         assertThat(response.jsonPath().getString("data.images[0].thumbUrl"))
                 .as("九宫格缩略图必须由 OSS 图片处理参数生成（§8.4）")
                 .contains("x-oss-process");
-        assertThat(response.jsonPath().getString("data.coverUrl"))
-                .as("列表封面取首图缩略图（post.cover_url 的列注释）")
-                .isEqualTo(response.jsonPath().getString("data.images[0].thumbUrl"));
+        assertThat(bareUrl(response.jsonPath().getString("data.coverUrl")))
+                .as("列表封面取首图缩略图（post.cover_url 的列注释）；比对象地址")
+                .isEqualTo(bareUrl(response.jsonPath().getString("data.images[0].thumbUrl")));
         assertThat(response.jsonPath().getLong("data.author.id")).isEqualTo(author.id());
         assertThat(response.jsonPath().getString("data.author.nickname")).isNotBlank();
         assertThat(response.jsonPath().getInt("data.viewCount")).isZero();
@@ -127,10 +132,11 @@ class M3PostPublishTest extends M3ApiTestSupport {
 
         Response afterHidden = getPostDetail(postId);
         List<String> visibleUrls = afterHidden.jsonPath().getList("data.images.url");
-        assertThat(visibleUrls)
+        // §12.3 坑 2：对外是签名 URL → 比 base（对象地址）
+        assertThat(visibleUrls.stream().map(M3PostPublishTest::bareUrl).toList())
                 .as("audit_status=2 的图片必须被前台隐藏（CR-006）")
                 .containsExactly(image1, image2);
-        assertThat(visibleUrls)
+        assertThat(visibleUrls.stream().map(M3PostPublishTest::bareUrl).toList())
                 .as("audit_status=0 的图片**不得**被隐藏 —— '默认 0' 不等于'必须人工放行才可见'（CR-006）")
                 .doesNotContain(ossImage("2026/09/15/bad.jpg"));
     }

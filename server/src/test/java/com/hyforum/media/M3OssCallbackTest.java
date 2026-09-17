@@ -216,6 +216,23 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
         assertThat(callback.statusCode()).as("回调必须 200：%s", callback.asString()).isEqualTo(200);
         assertThat(callback.jsonPath().getInt("code")).isZero();
 
+        // ---------- ①b CR-G：回调响应必须带回刚上传图片的结果（否则前端只能自己拼 URL） ----------
+        // 该响应体会被 OSS **透传给客户端**，所以这是前端唯一能拿到 URL 的地方；
+        // 返回**裸 URL**（不是签名 URL）：它就是库里存的那个值，也是发帖时 images 应当提交的值。
+        // 若返回签名 URL，前端提交后既存不进同一行（认领按 URL 精确匹配），又会过期。
+        Object callbackId = callback.jsonPath().get("data.id");
+        assertThat(callbackId)
+                .as("CR-G：回调响应必须带 data.id（post_image 行 id）。响应：%s", callback.asString())
+                .isNotNull();
+        assertThat(callback.jsonPath().getString("data.url"))
+                .as("CR-G：data.url 必须是**裸** URL（与库里存的一致、可直接用于发帖）。响应：%s",
+                        callback.asString())
+                .isEqualTo(expectedUrl);
+        assertThat(callback.jsonPath().getString("data.thumbUrl"))
+                .as("CR-G：data.thumbUrl 必须是缩略图 URL（列表封面用）")
+                .startsWith(expectedUrl)
+                .contains("x-oss-process");
+
         Map<String, Object> row = findImageRowByUrl(expectedUrl);
         assertThat(row)
                 .as("回调后库里必须有这一行（查库，不看响应）")
@@ -251,15 +268,55 @@ class M3OssCallbackTest extends M3OssApiTestSupport {
                 .contains("x-oss-process");
 
         // ---------- ③ 详情页能看到它（闭环到 M3 的验收标准） ----------
+        // ⚠️ §12.3 坑 2：url / thumbUrl / coverUrl 的语义从"裸 URL"变成"读时签名后的 URL"，
+        //    因此这里改成比 **base**（去掉 OSSAccessKeyId/Expires/Signature 后的对象地址）。
+        //    比 base 与被测语义等价，而且躲开了"两次组装跨过一秒 → 签名不同"的偶发红。
         Response detail = getPostDetail(postId);
-        assertThat(detail.jsonPath().getList("data.images.url"))
-                .as("详情页 images 里必须能看到这张图：%s", detail.asString())
-                .containsExactly(expectedUrl);
+        String signedUrl = detail.jsonPath().getString("data.images[0].url");
+        String signedThumbUrl = detail.jsonPath().getString("data.images[0].thumbUrl");
+        String signedCoverUrl = detail.jsonPath().getString("data.coverUrl");
+
+        assertThat(bareUrl(signedUrl))
+                .as("详情页 images[].url 的**对象地址**必须还是当初提交的那张图：%s", detail.asString())
+                .isEqualTo(expectedUrl);
         assertThat(detail.jsonPath().getInt("data.imageCount")).isEqualTo(1);
-        assertThat(detail.jsonPath().getString("data.coverUrl"))
-                .as("封面 = 首图缩略图")
-                .isEqualTo(String.valueOf(claimed.get("thumb_url")));
+        assertThat(bareUrl(signedCoverUrl))
+                .as("封面 = 首图缩略图（比对象地址）")
+                .isEqualTo(bareUrl(String.valueOf(claimed.get("thumb_url"))));
+
+        // ---------- ④ 读时签名（§12）：桶是私有的，裸 URL 取不回来，必须是签名 URL ----------
+        // 关键断言：必须签"已经带 x-oss-process 的完整 URL"（§12.3 坑 1）。
+        assertSigned(signedUrl, "详情页 images[].url");
+        assertSigned(signedThumbUrl, "详情页 images[].thumbUrl");
+        assertSigned(signedCoverUrl, "详情页 coverUrl");
+        assertThat(signedThumbUrl)
+                .as("缩略图 URL 必须仍带 x-oss-process（签名不能把参数吃掉）")
+                .contains("x-oss-process");
+
+        // 独立重算签名（测试里手写官方 SDK 的 V1 口径）：只签名不覆盖子资源的实现会在这里失败
+        assertThat(queryParamOf(signedThumbUrl, "Signature"))
+                .as("缩略图签名必须把 x-oss-process 算进 CanonicalizedResource（否则真实 OSS 上是"
+                        + "'大图能看、缩略图 403'）")
+                .isEqualTo(expectedV1Signature(signedThumbUrl,
+                        OBJECT_KEY + "?x-oss-process=" + THUMB_PROCESS_PARAM));
+        assertThat(queryParamOf(signedUrl, "Signature"))
+                .as("原图（无子资源）的签名也必须按同一口径算对")
+                .isEqualTo(expectedV1Signature(signedUrl, OBJECT_KEY));
+
+        // ---------- ⑤ 外部 URL 不签（§12.3 坑 3） ----------
+        String externalUrl = "https://cdn.other.example.com/not-ours.png";
+        jdbcTemplate.update("INSERT INTO post_image (post_id, url, thumb_url, sort, audit_status) "
+                + "VALUES (?, ?, ?, ?, 0)", postId, externalUrl, externalUrl, 5);
+        Response withExternal = getPostDetail(postId);
+        List<String> urls = withExternal.jsonPath().getList("data.images.url");
+        assertThat(urls)
+                .as("非本项目 OSS 目录的 URL 必须**原样返回**（不签）：%s", withExternal.asString())
+                .contains(externalUrl);
+        assertThat(queryParamOf(externalUrl, "Signature")).as("外部 URL 不该被加上签名参数").isNull();
     }
+
+    /** 缩略图参数（与 ThumbnailUrls 的取值一致；这里**刻意手写**，避免测试依赖被测实现的常量）。 */
+    private static final String THUMB_PROCESS_PARAM = "image/resize,m_fill,w_360,h_360/quality,q_80";
 
     /**
      * 验收项：{@code M3_oss_callback_rejects_stale_timestamp}（L1 于 2026-09-16 登记进映射表）。

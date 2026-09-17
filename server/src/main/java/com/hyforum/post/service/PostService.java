@@ -10,6 +10,8 @@ import com.hyforum.common.api.PageResult;
 import com.hyforum.common.audit.SensitiveTextChecker;
 import com.hyforum.common.exception.BizException;
 import com.hyforum.common.oss.OssProperties;
+import com.hyforum.common.oss.OssReadUrlSigner;
+import com.hyforum.common.oss.OssThumbnailUrls;
 import com.hyforum.domain.board.entity.Board;
 import com.hyforum.domain.board.mapper.BoardMapper;
 import com.hyforum.domain.post.entity.Post;
@@ -24,7 +26,6 @@ import com.hyforum.post.disk.DiskFields;
 import com.hyforum.post.disk.DiskType;
 import com.hyforum.post.dto.PostCreateRequest;
 import com.hyforum.post.dto.PostUpdateRequest;
-import com.hyforum.post.image.ThumbnailUrls;
 import com.hyforum.post.vo.PostDetailVO;
 import com.hyforum.post.vo.PostImageVO;
 import com.hyforum.post.vo.PostSummaryVO;
@@ -96,6 +97,13 @@ public class PostService {
     private final PostProperties postProperties;
     private final OssProperties ossProperties;
 
+    /**
+     * 读时签名（§12）：<b>只依赖 {@code common.oss} 的接口</b>，实现由 Spring 注入
+     * （实现在 {@code media}，那里才有凭据）。这样 {@code post} 不 import {@code media}，
+     * 铁律 3 与 ArchUnit 都满足。
+     */
+    private final OssReadUrlSigner readUrlSigner;
+
     public PostService(PostMapper postMapper,
                        PostImageMapper postImageMapper,
                        BoardMapper boardMapper,
@@ -104,7 +112,8 @@ public class PostService {
                        PostViewCounter viewCounter,
                        PostRateLimiter rateLimiter,
                        PostProperties postProperties,
-                       OssProperties ossProperties) {
+                       OssProperties ossProperties,
+                       OssReadUrlSigner readUrlSigner) {
         this.postMapper = postMapper;
         this.postImageMapper = postImageMapper;
         this.boardMapper = boardMapper;
@@ -114,6 +123,7 @@ public class PostService {
         this.rateLimiter = rateLimiter;
         this.postProperties = postProperties;
         this.ossProperties = ossProperties;
+        this.readUrlSigner = readUrlSigner;
     }
 
     // ==================================================================
@@ -295,7 +305,7 @@ public class PostService {
         post.setTitle(title);
         post.setContent(content);
         post.setImageCount(imageUrls.size());
-        post.setCoverUrl(imageUrls.isEmpty() ? null : ThumbnailUrls.derive(imageUrls.get(0)));
+        post.setCoverUrl(imageUrls.isEmpty() ? null : OssThumbnailUrls.derive(imageUrls.get(0)));
         post.setDiskType(disk.diskUrl() == null ? null : request.diskType());
         post.setDiskUrl(disk.diskUrl());
         post.setDiskCode(disk.diskCode());
@@ -387,7 +397,7 @@ public class PostService {
                 .set(Post::getDiskUrl, disk.diskUrl())
                 .set(Post::getDiskCode, disk.diskCode())
                 .set(Post::getImageCount, newImageUrls.size())
-                .set(Post::getCoverUrl, newImageUrls.isEmpty() ? null : ThumbnailUrls.derive(newImageUrls.get(0)))
+                .set(Post::getCoverUrl, newImageUrls.isEmpty() ? null : OssThumbnailUrls.derive(newImageUrls.get(0)))
                 .set(Post::getUpdatedAt, LocalDateTime.now());
         if (changed) {
             // L1 裁决第 3 条 / §8.6 第 6 条：内容变更后一律回 0 重审（**不**重新判定敏感词 ——
@@ -615,14 +625,14 @@ public class PostService {
                 claimed.setPostId(postId);
                 claimed.setSort(sort);
                 if (claimed.getThumbUrl() == null || claimed.getThumbUrl().isBlank()) {
-                    claimed.setThumbUrl(ThumbnailUrls.derive(url));
+                    claimed.setThumbUrl(OssThumbnailUrls.derive(url));
                 }
                 postImageMapper.updateById(claimed);
             } else {
                 PostImage image = new PostImage();
                 image.setPostId(postId);
                 image.setUrl(url);
-                image.setThumbUrl(ThumbnailUrls.derive(url));
+                image.setThumbUrl(OssThumbnailUrls.derive(url));
                 image.setWidth(0);
                 image.setHeight(0);
                 image.setSort(sort);
@@ -665,7 +675,7 @@ public class PostService {
                 PostImage image = new PostImage();
                 image.setPostId(postId);
                 image.setUrl(url);
-                image.setThumbUrl(ThumbnailUrls.derive(url));
+                image.setThumbUrl(OssThumbnailUrls.derive(url));
                 image.setWidth(0);
                 image.setHeight(0);
                 image.setSort(sort);
@@ -736,9 +746,11 @@ public class PostService {
                 board != null && board.getIsResource() != null && board.getIsResource() == 1,
                 post.getTitle(),
                 post.getContent(),
-                post.getCoverUrl(),
+                // §12：库/内存里存的都是**裸 URL**（桶是私有的，裸 URL 一律 403），
+                // 对外组装响应时才现签 —— 见 OssReadUrlSigner 的接口注释
+                readUrlSigner.sign(post.getCoverUrl()),
                 nullToZero(post.getImageCount()),
-                images.stream().map(PostImageVO::from).toList(),
+                images.stream().map(this::toSignedImageVo).toList(),
                 post.getDiskType(),
                 post.getDiskUrl(),
                 post.getDiskCode(),
@@ -752,6 +764,23 @@ public class PostService {
                 UserBriefVO.from(author),
                 post.getCreatedAt(),
                 post.getUpdatedAt());
+    }
+
+    /**
+     * 图片行 → 对外 VO，<b>url / thumbUrl 都做读时签名</b>（§12）。
+     *
+     * <p>顺序很关键：{@code thumbUrl} 是「裸 URL + {@code ?x-oss-process=...}」，而
+     * {@code x-oss-process} 是 OSS v1 的**签名参数**（必须进 {@code CanonicalizedResource}）。
+     * 因此必须<b>先拼参数、再签名</b>；反过来会让 OSS 用不同的 canonical resource 验签 → 403，
+     * 现象是「大图能看、缩略图 403」。这里保证喂给签名实现的是**完整 URL**。</p>
+     */
+    private PostImageVO toSignedImageVo(PostImage image) {
+        PostImageVO vo = PostImageVO.from(image);
+        if (vo == null) {
+            return null;
+        }
+        return new PostImageVO(vo.id(), readUrlSigner.sign(vo.url()),
+                readUrlSigner.sign(vo.thumbUrl()), vo.width(), vo.height(), vo.sort());
     }
 
     /**
@@ -783,8 +812,9 @@ public class PostService {
                     post.getBoardId(),
                     boardNames.get(post.getBoardId()),
                     post.getTitle(),
-                    // 封面 = 首图缩略图（post.cover_url 的列注释口径）
-                    post.getCoverUrl(),
+                    // 封面 = 首图缩略图（post.cover_url 的列注释口径）；
+                    // §12：库里存裸 URL，对外组装时才现签（桶是私有的）
+                    readUrlSigner.sign(post.getCoverUrl()),
                     nullToZero(post.getImageCount()),
                     post.getIsTop() != null && post.getIsTop() == 1,
                     post.getIsEssence() != null && post.getIsEssence() == 1,

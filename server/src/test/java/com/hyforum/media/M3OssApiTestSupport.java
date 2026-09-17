@@ -34,6 +34,12 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
     /** 签名有效期（测试显式声明，与断言配套）。 */
     protected static final int SIGNATURE_TTL_SECONDS = 600;
 
+    /** 读时签名有效期（§12.2；测试显式声明，与断言配套）。 */
+    protected static final int READ_URL_TTL_SECONDS = 3600;
+
+    /** 测试用的 bucket 名（与 {@code @TestPropertySource} 里的 aliyun.oss.bucket-name 一致）。 */
+    protected static final String TEST_BUCKET = "hy-forum-2026";
+
     /** 回调允许的图片类型（§8.4 的白名单）。 */
     protected static final String IMAGE_CONTENT_TYPE = "image/jpeg";
 
@@ -53,6 +59,10 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
      */
     @Value("${aliyun.oss.access-key-id:}")
     protected String ossAccessKeyIdFromConfig;
+
+    /** 回调地址解析器（用于断言"环回地址会打 WARN"这条可见性要求，§12.5 任务 C）。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    protected com.hyforum.media.config.OssCallbackUrlResolver callbackUrlResolver;
 
     /**
      * 断言响应报文里<b>没有泄漏 Secret</b>（CR-F 要求 1）。
@@ -90,6 +100,133 @@ public abstract class M3OssApiTestSupport extends M3ApiTestSupport {
         registry.add("hy.oss.callback.allowed-public-key-url-prefixes[0]",
                 OssCallbackTestSupport::allowedPrefix);
         registry.add("hy.oss.upload.signature-ttl-seconds", () -> SIGNATURE_TTL_SECONDS);
+        // 读时签名有效期（§12.2）：显式写死，让断言的是"配置值真的生效"而不是代码兜底默认值
+        registry.add("hy.oss.read-url.ttl-seconds", () -> READ_URL_TTL_SECONDS);
+    }
+
+    // ==================================================================
+    // 读时签名（§12）相关的小工具
+    // ==================================================================
+
+    /** 读时签名会追加的三个查询参数名。 */
+    protected static final java.util.Set<String> SIGNATURE_PARAM_NAMES =
+            java.util.Set.of("OSSAccessKeyId", "Expires", "Signature");
+
+    /**
+     * 去掉读时签名参数（{@code OSSAccessKeyId}/{@code Expires}/{@code Signature}），
+     * 保留其余查询参数（例如 {@code x-oss-process}）。
+     *
+     * <p><b>为什么"封面 = 首图缩略图"这类断言要比 base 而不是比整串</b>：签名带
+     * {@code Expires}（epoch 秒），两次组装恰好跨过一秒就会得到不同的签名字符串 ——
+     * 直接比较整串会让用例随机变红（本项目最忌讳的那种"偶发红"）。
+     * 比 base 语义完全等价，且结果确定。</p>
+     */
+    protected static String bareUrl(String signedUrl) {
+        if (signedUrl == null) {
+            return null;
+        }
+        int q = signedUrl.indexOf('?');
+        if (q < 0) {
+            return signedUrl;
+        }
+        String base = signedUrl.substring(0, q);
+        String kept = java.util.Arrays.stream(signedUrl.substring(q + 1).split("&"))
+                .filter(p -> !p.isEmpty())
+                .filter(p -> {
+                    String name = p.contains("=") ? p.substring(0, p.indexOf('=')) : p;
+                    return !SIGNATURE_PARAM_NAMES.contains(name);
+                })
+                .collect(java.util.stream.Collectors.joining("&"));
+        return kept.isEmpty() ? base : base + "?" + kept;
+    }
+
+    /** 取某个查询参数的值（自动 URL 解码，因为正是签名参数）；不存在返回 null。 */
+    protected static String queryParamOf(String url, String name) {
+        if (url == null) {
+            return null;
+        }
+        int q = url.indexOf('?');
+        if (q < 0) {
+            return null;
+        }
+        for (String pair : url.substring(q + 1).split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && pair.substring(0, eq).equals(name)) {
+                return java.net.URLDecoder.decode(pair.substring(eq + 1),
+                        java.nio.charset.StandardCharsets.UTF_8);
+            }
+        }
+        return null;
+    }
+
+    /** 断言某 URL 是"读时签名过的"（三个签名参数齐全）。 */
+    protected void assertSigned(String url, String what) {
+        assertThat(queryParamOf(url, "OSSAccessKeyId"))
+                .as("%s 必须带 OSSAccessKeyId（桶是私有的，必须读时签名）：%s", what, url)
+                .isNotBlank();
+        assertThat(queryParamOf(url, "Expires")).as("%s 必须带 Expires：%s", what, url).isNotNull();
+        assertThat(queryParamOf(url, "Signature")).as("%s 必须带 Signature：%s", what, url).isNotBlank();
+    }
+
+    /**
+     * 按官方 SDK（{@code OSSV1Signer} + {@code SignUtils}）的口径**独立重算**一次 V1 签名。
+     *
+     * <pre>
+     * expires               = URL 里的 Expires（epoch 秒）
+     * canonicalString       = "GET\n" + "" + "\n" + "" + "\n" + expires + "\n" + CanonicalizedResource
+     * CanonicalizedResource = "/{bucket}/{object}" + 排序后的**签名参数**（x-oss-process 在内、带值）
+     * signature             = base64(hmacSHA1(secret, canonicalString))
+     * </pre>
+     *
+     * <p><b>刻意在测试里重写一遍算法、而不是调用被测代码</b>：只有这样，
+     * "先签名、再拼 x-oss-process"（子资源没进 CanonicalizedResource）这种实现才会被抓住 ——
+     * 那种错误在真实 OSS 上的现象是"大图能看、缩略图 403"。</p>
+     *
+     * @param objectKeyWithParams 对象 key 连同它的子资源，例如 {@code post/x.png?x-oss-process=...}
+     */
+    protected String expectedV1Signature(String signedUrl, String objectKeyWithParams) {
+        String expires = queryParamOf(signedUrl, "Expires");
+        String canonicalResource = "/" + TEST_BUCKET + "/" + objectKeyWithParams;
+        String canonicalString = "GET\n" + "\n" + "\n" + expires + "\n" + canonicalResource;
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA1");
+            mac.init(new javax.crypto.spec.SecretKeySpec(
+                    ossAccessKeySecret.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA1"));
+            return java.util.Base64.getEncoder().encodeToString(
+                    mac.doFinal(canonicalString.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("重算 V1 签名失败", ex);
+        }
+    }
+
+    /** 把某个 logger 的日志挂到内存 appender 上（用于断言 WARN 真的打了）。Logback 自带，无需新依赖。 */
+    protected static CapturedLogs captureLogs(String loggerName) {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerName);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return new CapturedLogs(logger, appender);
+    }
+
+    /** 日志捕获句柄（务必 try-with-resources）。 */
+    protected record CapturedLogs(
+            ch.qos.logback.classic.Logger logger,
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender)
+            implements AutoCloseable {
+
+        /** 是否出现过"级别=WARN 且消息含指定片段"的日志。 */
+        boolean hasWarnContaining(String fragment) {
+            return appender.list.stream().anyMatch(e ->
+                    e.getLevel() == ch.qos.logback.classic.Level.WARN
+                            && e.getFormattedMessage().contains(fragment));
+        }
+
+        @Override
+        public void close() {
+            logger.detachAppender(appender);
+        }
     }
 
     // ==================================================================
