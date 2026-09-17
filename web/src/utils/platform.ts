@@ -67,6 +67,44 @@ export function shouldShowCustomToastAfterCopy(): boolean {
 }
 
 /**
+ * 本端**是否具备**打开外部链接的能力。
+ *
+ * ==========================================================================
+ * 为什么需要它（而不是用 `openExternalLink()` 的返回值去"探测"）
+ * ==========================================================================
+ * `openExternalLink()` 在 H5 端会**真的弹出一个窗口**，所以它是一个**动作**，
+ * 不是能力探测函数 —— 拿它来预判"能不能打开"，会在渲染期就把浏览器窗口弹出来。
+ * 因此把能力判断单独暴露成一个**无副作用**的纯函数：页面据此决定
+ * - `true`  → 渲染「在浏览器打开」按钮
+ * - `false` → 不渲染该按钮，改为提示"复制后到浏览器粘贴打开"
+ *
+ * ⚠️ 这是**平台差异的集中封装点之一**（与 `copyText` / `openExternalLink` 同处）。
+ *    页面里**不得**出现 `#ifdef` —— 任务书 §3.4 明令，因为散落的平台分支
+ *    会让三端行为在无人察觉的情况下分叉。
+ *
+ * ⚠️ 也**不要**在页面里写 `const X = true` / `const X = false` 两段 `#ifdef` 来做这件事：
+ *    `vue-tsc` 看到的是**条件编译前的原文**，两段里的同名 `const` 会**重复声明**、
+ *    直接让 type-check 变红（第一版这么写过，已改掉）。
+ */
+export function canOpenExternalLink(): boolean {
+  // #ifdef H5
+  return true
+  // #endif
+
+  // #ifdef APP-PLUS
+  return true
+  // #endif
+
+  // #ifdef MP-WEIXIN
+  // 个人主体小程序无 web-view 权限（ADR-0011 C1），外链打不开
+  return false
+  // #endif
+
+  // 兜底：其它小程序平台同样不支持直接打开外链
+  return false
+}
+
+/**
  * 打开外部链接（例如网盘地址）。
  *
  * @returns `true` 表示已交给系统打开；`false` 表示本端**无法打开**，

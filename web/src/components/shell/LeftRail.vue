@@ -43,15 +43,20 @@
       </view>
     </view>
 
-    <view class="divider" />
+    <view v-if="hasPostTotal" class="divider" />
 
     <!-- ============ 今日数据 ============ -->
     <!--
       真/假边界（需求方口径：真接口优先）：
       - 帖子总数 → **真**：来自 `GET /api/posts` 的 `total`，由父页面传进来
       - 活跃用户 → **假**：需要行为数据（登录/发帖/评论），契约里没有任何此类接口
+
+      ⚠️ 整块**只在知道帖子总数时渲染**。详情页不请求列表接口，拿不到 `total`，
+         若照旧渲染就会出现「— / 帖子总数」这种看着像坏掉的东西。
+         宁可少一块，也不要显示一个我们并不知道的数 —— 这与 M2 定下的
+         「不把环境故障伪装成业务状态」是同一条口径。
     -->
-    <view class="stats" data-testid="today-stats">
+    <view v-if="hasPostTotal" class="stats" data-testid="today-stats">
       <text class="stats__title">今日数据</text>
       <view class="stats__row">
         <view class="stats__item">
@@ -80,6 +85,7 @@ import {
   MOCK_ACTIVE_USER_COUNT,
   SIDEBAR_TOPIC_COUNT,
 } from '@/mock/hotContent'
+import { num } from '@/utils/postView'
 
 const props = withDefaults(
   defineProps<{
@@ -91,9 +97,9 @@ const props = withDefaults(
      */
     active?: 'home' | 'topic' | 'collect' | 'me'
     /**
-     * 帖子总数。
-     * `null` = **还不知道**（请求中或失败），此时显示 `—` 而不是 `0` ——
-     * 显示 0 会把"没请求到"伪装成"站点一篇帖子都没有"。
+     * 帖子总数（真实数据，来自 `GET /api/posts` 的 `total`）。
+     * `null` = **还不知道**（请求中 / 失败 / 该页面根本不请求列表，例如详情页）
+     * → 整块「今日数据」**不渲染**，而不是显示 `0` 或 `—`。
      */
     postTotal?: number | null
   }>(),
@@ -119,9 +125,10 @@ const sidebarTopics = computed(() => HOT_TOPICS.slice(0, SIDEBAR_TOPIC_COUNT))
 
 const activeUsers = MOCK_ACTIVE_USER_COUNT
 
-const postTotalText = computed(() =>
-  props.postTotal === null || props.postTotal === undefined ? '—' : String(props.postTotal)
-)
+const postTotalText = computed(() => String(num(props.postTotal)))
+
+/** 是否知道帖子总数。`false` 时整块「今日数据」不渲染（见模板注释） */
+const hasPostTotal = computed(() => props.postTotal !== null && props.postTotal !== undefined)
 
 function onNav(item: NavItem): void {
   // 当前页（`url === null`）不跳，避免 reLaunch 把页面栈清掉、丢失滚动位置
