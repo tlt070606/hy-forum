@@ -5,13 +5,13 @@
  * （它们由 uni-app 编译期自动注入，无需 import），因此这个文件必须存在。
  *
  * 这里把「行为色」对齐本项目的主色，避免官方默认蓝 `#007aff`
- * 与 `styles/variables.scss` 里的 `$hy-color-primary: #2b6cff` 出现两种蓝。
+ * 与 `styles/variables.scss` 里的主色（2026-09-16 起为紫 `#6b4bc4`）出现两种品牌色。
  */
 
 /* 行为相关颜色 */
-$uni-color-primary: #2b6cff;
+$uni-color-primary: #6b4bc4;
 $uni-color-success: #07c160;
-$uni-color-warning: #fa9d3b;
+$uni-color-warning: #ff7d00;
 $uni-color-error: #fa5151;
 
 /* 文字基本颜色 */

@@ -23,6 +23,131 @@
 
 ---
 
+# 第 2 版（进行中）：按参考图重做三栏
+
+> 需求方给了三张桌面端截图（三栏：左导航 + 信息流 + 右栏）与参考站 URL。
+> **注意：我无出网，URL 打不开**（`curl https://example.com` → `http=000`），
+> 所以参考依据**只有那三张截图**。
+> 参考站是桌面形态，而我们交付形态是 uni-app 三端 —— 需求方裁定走
+> **响应式：宽屏三栏 / 窄屏单栏**（不改 ADR-0011）。
+> 节奏由需求方定为「**先做三栏外壳 + 首页，再往下铺**」。
+
+## A. 本轮做完的（已自检）
+
+| 内容 | 文件 |
+|---|---|
+| 设计令牌（紫、**px** 单位、三栏骨架尺寸与断点） | `web/src/styles/variables.scss`、`web/src/uni.scss` |
+| 图标集（20+ 个纯 CSS 图标，含 M2 沿用的 8 个） | `web/src/components/HyIcon.vue`（**取代** 已删除的 `Icon.vue`） |
+| 头像（真图 / 字母头像 / 游客图标 三态） | `web/src/components/Avatar.vue` |
+| 顶栏（Logo + 搜索 + 通知 + 头像菜单） | `web/src/components/shell/TopBar.vue` |
+| 左栏（导航 + 热门话题 + 今日数据） | `web/src/components/shell/LeftRail.vue` |
+| 右栏（榜单 + 推荐关注 + 热门活动） | `web/src/components/shell/RightRail.vue` |
+| 底部导航（仅窄屏，自绘） | `web/src/components/shell/MobileNav.vue` |
+| 三栏外壳（响应式） | `web/src/components/shell/AppShell.vue` |
+| 信息流卡片 | `web/src/components/PostCard.vue` |
+| 占位页（共用内容 + 6 个稳定路由薄壳） | `web/src/components/PagePlaceholder.vue`、`web/src/pages/placeholder|topic|collect|search|board|post/*` |
+| 首页 | `web/src/pages/index/index.vue` |
+| 假数据（热点内容） | `web/src/mock/hotContent.ts` |
+| 演示数据灌库脚本（幂等） | `web/scripts/seed-demo-data.sql` |
+| 截图自检探针 | `web/scripts/shot.mjs` |
+| api 层（重建） | `web/src/api/{types,posts,boards,shape}.ts`、`web/src/utils/postView.ts` |
+
+## B. 本轮**没做**的（都是占位页，明确说明未做，不冒充）
+
+话题 / 收藏 / 搜索 / 版块 / 帖子详情 / 发帖 / 设置。
+其中**搜索、版块、详情、发帖的接口都已交付**，纯粹是没排上；
+**话题、收藏、设置**则等契约（见 D 节）。
+**图片上传没做** —— 需求方本轮明确「先不管上传，专心把界面重做」。
+
+## C. 关键根因：第 1 版为什么"看起来像骨架"
+
+**`rpx` + 没有 max-width 约束。**
+
+`rpx` 是响应式像素、**随窗口宽度缩放**（750rpx = 屏幕宽）。旧版全程 rpx，
+而 `web/index.html` 的 viewport 只声明 `width=device-width`、**没有任何 max-width**，
+于是旧版在 1920px 的桌面浏览器里的表现是：**一个手机版式被拉满整屏、字按比例放大、中间大片空白**。
+这正是"整体太骨架、不像成品"的直接来源，**不是配色或审美问题**。
+
+第 2 版因此：**单位改 px**（尺寸不再随窗口漂移）+ **`max-width: 1280px` 居中容器**
++ **1000px 断点**（左 240 + 右 300 + 中栏最小可用 ~420 + 两道 20 间隙）。
+
+## D. 真 / 假数据的边界
+
+需求方口径：「用假数据搭 IA，但假数据要**找当下的热点**，**不是全假**」。
+落实为**真接口优先，无表无契约才用假数据**：
+
+| 数据 | 真/假 | 来源 |
+|---|---|---|
+| 信息流、排序、帖子总数 | **真** | `GET /api/posts`（`sort` 用契约的 `latest\|hot\|essence`） |
+| 登录态、头像、昵称、退出登录 | **真** | `GET /api/user/me`、`POST /api/auth/logout` |
+| 帖子内容（10 条演示帖） | **假数据、真链路** | 见下方说明 —— SQL 灌进开发库，经**真接口**读出 |
+| 热门话题榜 / 推荐关注 / 热门活动 | **假** | `src/mock/hotContent.ts` |
+| 今日数据的「活跃用户」 | **假** | 同上（"活跃"需行为数据，契约里没有任何此类接口） |
+| 通知未读数 | **假** | 通知接口属 M5 |
+| 点赞 / 收藏 / 举报 | **未交付** | 接口属 M4/M5 —— 卡片**只显示计数**，不做成可点的假按钮 |
+
+> **"假数据、真链路"是什么意思**：帖子流走的是真接口，所以帖子必须真的在库里，
+> 否则首页看起来是好的、而**契约根本没被碰过**。
+> 因此 10 条演示帖由 `web/scripts/seed-demo-data.sql` 灌进开发库 `hy_forum`：
+> 6 个演示作者（`demo_*`，`password_hash` 写的是**非法哈希** `demo-account-no-login`，
+> 所以这些账号**永远登不进去**，只当作者）+ 10 条帖子（含资源版块带网盘字段、
+> 3 条加精、`created_at` 错开 3 小时~6 天，让相对时间有层次）。
+> 脚本**幂等**（按 `demo_` 前缀先删后插），可重复执行。
+> 脚本开头明确写了"不建表、不改表结构、不动契约"。
+> ⚠️ 副作用：开发库 `hy_forum` 里多了一批 `demo_*` 数据；我同时清掉了自己上一轮 E2E 留下的
+> 13 条测试帖（`e2e_m3_*` 作者的 `M3资源帖 …`），现状是 10 条帖子、0 条测试残留。
+
+> ⚠️ **"当下热点"的诚实说明**：我**无出网**，查不到任何实时热搜榜。
+> 那 10 个话题（AI 工具实测 / 国产新能源出海 / 带饭上班一周 / 小城慢生活 / 职场反内耗 /
+> 手机摄影入门 / 一人食菜谱 / 旧物改造 / 夜跑打卡 / 读书笔记）是我按"近期大众普遍感兴趣的方向"
+> 编的，风格与参考图那 7 个同类，**但不是某一日的真实榜单**。
+> 要真实榜单 → 贴一份给我，替换 `mock/hotContent.ts` 即可（数据结构不变）。
+
+## E. 本轮踩到的坑（都写进代码注释了）
+
+1. **`pages.json` 里 `tabBar` 这个键不能删** ——
+   删掉后 uni-h5 的 `useShowTabBar` 读 `__uniConfig.tabBar.height` 直接
+   `TypeError: Cannot read properties of undefined`，**整页白屏**。
+   正确做法：**保留键、`list: []`**。因为 `showTabBar = route.meta.isTabBar && shown`，
+   没有 tabBar 页时它永不显示 —— 我们的底部导航是自绘的（`MobileNav`），
+   这样窄屏才出现、宽屏不出现，而 uni-app 的 tabBar 在 H5 是固定在视口底部的独立层，
+   桌面宽屏下会变成一条与三栏版式无关的横条。
+2. **游客位不能传 `displayName`** —— 它的兜底值是「未登录」，
+   被字母头像取首字后渲染出一个孤零零的**「未」**字。已加"游客图标"分支。
+   （本轮截图自检时抓到。）
+3. **`/favicon.ico` 404** 在控制台留了一条 "Failed to load resource"，
+   看起来像应用坏了。已在内联 SVG favicon。
+4. **演示数据必须灌库而不是前端写死** —— 理由见 D 节。
+
+## F. 验证（本轮）
+
+```
+npx vue-tsc --noEmit -p tsconfig.json     → exit 0
+node scripts/shot.mjs                     → 1920 / 1280 / 420 三档截图
+  控制台：无 pageerror、无 4xx/5xx
+  仅剩 "Hydration completed but contains mismatches"（uni-app H5 dev 模式固有提示，非本项目问题）
+```
+
+截图落在 `web/.tmp/ref/home-{desktop,laptop,mobile}.png`（`.tmp/` 已被 gitignore）。
+
+⚠️ **E2E 现状**：按需求方决定，第 1 版的 `m3-forum.spec.ts` 已随重做删除，
+**新的 E2E 尚未写**（等界面定稿后一并重写）。**这一条明确算"未验证"。**
+
+## G. 仍然未裁决（继续阻塞上传）
+
+**CR-G**（上传成功后前端从哪里拿到图片 URL）与 **CR-H**（`callbackUrl` 可达性）
+**至今未裁**。`accessKeyId` 那一项已由 L1 重导契约解决（`5f4b0c3`）。
+
+## H. 建议的下一轮顺序
+
+1. **帖子详情页**（信息流的落点，最有价值；404 友好页 + 图片只信后端 + 一键复制）；
+2. **搜索页 + 版块页**（接口都已交付，纯铺界面）；
+3. **发帖页**（接口已交付，但**上传仍被 CR-G 卡住**，先做无图发帖）；
+4. 话题 / 收藏 / 设置（等契约或按下不做）；
+5. 界面定稿后重写 E2E。
+
+---
+
 ## 0. 一句话结论
 
 **§6.2 的 6 个页面里，第 1–4 页与第 6 页已完成并验证；第 5 页（发帖）完成「文字帖 + 资源帖（网盘字段）」，

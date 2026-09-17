@@ -1,254 +1,349 @@
 <template>
-  <view class="page">
-    <!-- 顶部品牌区 -->
-    <view class="hero">
-      <text class="hero__title">Hy论坛</text>
-      <text class="hero__subtitle">中文综合论坛 · 含资源分享版块</text>
+  <AppShell active-nav="home" :post-total="postTotal">
+    <!-- ==================== 发帖入口 ==================== -->
+    <!--
+      参考图首屏第一块是"分享你的想法..."。它**不是输入框，是发帖入口**（点了进发帖页）。
+      做成真输入框会让人在这里写半天、然后发现发不出去。
+    -->
+    <view class="composer" data-testid="home-composer" @click="goCompose">
+      <!--
+        ⚠️ 未登录时**传空昵称**，让 Avatar 走"游客图标"分支。
+           不能传 `auth.displayName` —— 它的兜底值是「未登录」，会被字母头像取首字
+           渲染成一个孤零零的「未」字，看起来像数据错了。（本轮截图自检时抓到。）
+      -->
+      <Avatar
+        :url="auth.user?.avatarUrl || ''"
+        :nickname="auth.isLoggedIn ? auth.displayName : ''"
+        :size="40"
+      />
+      <view class="composer__box">
+        <text class="composer__placeholder">分享你的想法...</text>
+      </view>
     </view>
 
-    <!-- 登录态卡片：已登录显示用户信息，未登录给出登录/注册入口 -->
-    <view class="hy-card user-card">
-      <template v-if="auth.isLoggedIn">
-        <view class="user-card__row">
-          <image class="user-card__avatar" :src="avatarSrc" mode="aspectFill" />
-          <view class="user-card__info">
-            <text class="user-card__name" data-testid="index-nickname">{{ auth.displayName }}</text>
-            <text class="user-card__meta">已登录</text>
-          </view>
-        </view>
-        <wd-button type="info" size="small" plain block @click="onLogout">退出登录</wd-button>
-      </template>
-
-      <template v-else>
-        <text class="user-card__hint">登录后可发帖、评论与收藏</text>
-        <view class="user-card__actions">
-          <wd-button type="primary" block @click="goLogin">登录</wd-button>
-          <wd-button v-if="registerAvailable" plain block @click="goRegister">
-            注册
-          </wd-button>
-        </view>
-        <!--
-          两种"注册入口用不了"的情形必须分开说，文案不能混（与 auth 页同口径）：
-          · registerModeError 非空 → **状态未知**（查询失败），属异常，要让用户与开发者都看见；
-          · 既无错误又是 closed → 后端**确实**关闭了注册，这是正常业务状态。
-          上一版把两者混为一谈（失败被静默当成 closed），正是 `api/auth.ts` 里
-          `RegisterModeResult` 那段设计要避免的事。
-        -->
-        <text v-if="registerModeError" class="user-card__warn" data-testid="index-register-mode-error">
-          {{ registerModeError }}
-        </text>
-        <!-- 关闭注册时明确告知，避免用户到处找入口 -->
-        <text v-else-if="registerMode === 'closed'" class="user-card__closed">
-          当前暂未开放注册
-        </text>
-      </template>
+    <!-- ==================== 排序 ==================== -->
+    <!--
+      排序口径：契约 `GET /api/posts` 的 `sort`，取值 `latest | hot | essence`
+      （《技术方案》§6.5）。⚠️ 契约里 `sort` **没有 enum**，这组取值只能来自文档
+      —— 已作为契约改进建议登记进交付报告。
+      参考图只有"最新/精选"两档；我们给三档，因为契约支持三档，藏起"热门"没有理由。
+    -->
+    <view class="sortbar" data-testid="home-sort">
+      <view
+        v-for="opt in POST_SORT_OPTIONS"
+        :key="opt.value"
+        class="sortbar__item"
+        :class="{ 'sortbar__item--active': sort === opt.value }"
+        :data-testid="`home-sort-${opt.value}`"
+        @click="changeSort(opt.value)"
+      >
+        <text class="sortbar__text">{{ opt.label }}</text>
+      </view>
     </view>
-  </view>
+
+    <!-- ==================== 状态占位 ==================== -->
+    <!--
+      三态互斥顺序 **error > loading > empty**，不能反：
+      1. 请求失败时 loading 可能仍为 true（页面没 await 完又触发了一次）→ 错误优先；
+      2. 刷新时旧数据还在 → 不该先闪一下"没有内容"；
+      3. empty 是正常业务状态，只有前两者都不成立才展示。
+    -->
+    <view v-if="error" class="state" data-testid="home-error">
+      <text class="state__text state__text--error">{{ error }}</text>
+      <view class="state__retry" data-testid="home-retry" @click="load">
+        <text class="state__retry-text">重试</text>
+      </view>
+    </view>
+    <view v-else-if="loading && posts.length === 0" class="state" data-testid="home-loading">
+      <text class="state__text">正在加载…</text>
+    </view>
+    <view v-else-if="posts.length === 0" class="state" data-testid="home-empty">
+      <text class="state__text">这里还没有帖子</text>
+    </view>
+
+    <!-- ==================== 信息流 ==================== -->
+    <view v-if="posts.length" data-testid="home-feed">
+      <PostCard v-for="post in posts" :key="post.id" :post="post" />
+    </view>
+
+    <!--
+      分页。`hasMore` 用**满页判定**而不是 `total`：
+      `shape.ts` 的 `expectPage` 在 `total` 缺失时会退化成"本页条数"，
+      此时 `list.length < total` 恒为 false → 永远不显示"加载更多"。
+    -->
+    <view v-if="posts.length" class="more">
+      <view v-if="hasMore" class="more__btn" data-testid="home-load-more" @click="loadMore">
+        <text class="more__btn-text">{{ loadingMore ? '加载中…' : '加载更多' }}</text>
+      </view>
+      <text v-else class="more__end" data-testid="home-list-end">没有更多了</text>
+    </view>
+  </AppShell>
 </template>
 
 <script setup lang="ts">
 /**
- * 首页。
+ * 首页：发帖入口 + 排序 + 全站信息流（三栏外壳）。
  *
- * M2 阶段定位：**工程骨架的落地页 + 登录态入口 + 契约缺口的可视化说明**。
- * 真正的帖子双流（关注/全部）依赖 M3 的 `/api/posts`，后端尚未交付，故此页暂不发起该请求。
+ * ==========================================================================
+ * 真 / 假数据的边界（需求方 2026-09-16 定的口径：真接口优先，无契约才用假数据）
+ * ==========================================================================
+ * **真**（走契约里真实存在的端点）：
+ * - 信息流 → `GET /api/posts`（不传 `boardId` = 全站），带 `sort`
+ * - 左栏「今日数据」的帖子总数 → 同一响应的 `total`
+ * - 登录态 / 头像 / 昵称 → `stores/auth`（底层 `GET /api/user/me`）
+ *
+ * **假**（无表、无端点，见 `mock/hotContent.ts`）：
+ * - 右栏：热门话题榜 / 推荐关注 / 热门活动
+ * - 左栏：活跃用户数；顶栏：通知未读数（通知接口属 M5）
+ *
+ * **未交付并明确提示**（不做假成功）：
+ * - 点赞 / 收藏 / 举报 → 接口属 M4/M5，卡片上只显示计数，不做成可点的假按钮
  */
-import { onShow } from '@dcloudio/uni-app'
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
+import { onReachBottom, onShow } from '@dcloudio/uni-app'
+import AppShell from '@/components/shell/AppShell.vue'
+import Avatar from '@/components/Avatar.vue'
+import PostCard from '@/components/PostCard.vue'
+import { fetchPosts } from '@/api/posts'
+import { POST_SORT_OPTIONS, type PostSort } from '@/api/types'
+import { ApiError, PAGE_SIZE_MAX } from '@/utils/request'
+import { toPostCard, type PostCardView } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
-import { fetchRegisterMode } from '@/api/auth'
-import type { RegisterMode } from '@/api/types'
 
 const auth = useAuthStore()
 
-/** 注册模式。默认按 closed 保守处理，拿到真实值后再决定是否显示注册入口 */
-const registerMode = ref<RegisterMode>('closed')
+const posts = ref<PostCardView[]>([])
+/**
+ * 帖子总数（左栏「今日数据」用）。
+ * `null` = **还不知道**（加载中或失败）→ 界面显示 `—`。
+ * 不用 `0` 兜底：那会把"没请求到"伪装成"站点一篇帖子都没有"。
+ */
+const postTotal = ref<number | null>(null)
+
+const sort = ref<PostSort>('latest')
+const loading = ref(false)
+const loadingMore = ref(false)
+const error = ref('')
+const hasMore = ref(false)
+const page = ref(1)
 
 /**
- * 注册模式**查询失败**的文案。非空表示"状态未知"（网络 / 配置问题），必须让用户看到。
- *
- * 为什么不把失败也塞进 `registerMode`：
- * 上一版查询失败时静默返回 `'closed'`，结果小程序端连不上后端时界面显示
- * "当前暂未开放注册" —— **把环境故障伪装成了业务状态**，排查成本极高。
- * 详见 `api/auth.ts` 里 `RegisterModeResult` 的说明。
+ * 用 `onShow` 而不是 `onLoad`：从详情页返回时 `onLoad` **不会**再触发，
+ * 于是刚发完帖回来看到的还是旧列表。`onShow` 每次回到本页都刷新 ——
+ * 这是列表页的正确语义，也让"发帖成功 → 返回首页能看到"这条路径成立。
  */
-const registerModeError = ref('')
-
-/**
- * 注册入口是否显示：只有**明确知道**注册开放（`open` / `invite`）时才显示。
- *
- * 状态未知（`registerModeError` 非空）时一律不显示，但**不冒充"已关闭"** ——
- * 真实原因由 `registerModeError` 单独呈现给用户。
- * 与 `pages/auth/index.vue` 的 `registerAvailable` 同口径。
- */
-const registerAvailable = computed(
-  () => registerModeError.value === '' && registerMode.value !== 'closed'
-)
-
-/** 头像地址：用户没设头像时用本地占位图，避免 <image> 空 src 的告警 */
-const avatarSrc = ref('/static/avatar-default.png')
-
-onShow(async () => {
-  /*
-   * 注册模式：每次进入首页刷新一次，管理员切换后无需用户重开应用。
-   *
-   * ⚠️ 必须按 `ok` 分支取 `result.mode`，**不能**把整个结果对象赋给 `registerMode`。
-   *    `fetchRegisterMode()` 返回的是 `{ok:true,mode} | {ok:false,error}`（见 `api/auth.ts`）；
-   *    上一版直接写 `registerMode.value = await fetchRegisterMode()`，
-   *    于是模板里 `registerMode !== 'closed'` **恒为真**、`registerMode === 'closed'` **恒为假**：
-   *    管理员把注册模式切成 `closed` 之后，注册按钮照样显示、
-   *    「当前暂未开放注册」永远不出现、`ok:false` 这条报错分支等于白写。
-   */
-  const result = await fetchRegisterMode()
-  if (result.ok) {
-    registerModeError.value = ''
-    registerMode.value = result.mode
-  } else {
-    // 查询失败 = 状态未知：不猜成 closed（那是编造业务状态），也不静默 —— 交给模板显式报错。
-    // 注意**不**改写 registerMode：保留上一次已知值无副作用，因为上面有
-    // registerAvailable 把关（有错误文案时注册入口一律不显示）。
-    registerModeError.value = result.error
-  }
-
-  // 已登录则校准用户信息（token 失效会自动降级为未登录）
-  if (auth.isLoggedIn) {
-    try {
-      const me = await auth.ensureProfile()
-      if (me?.avatarUrl) avatarSrc.value = me.avatarUrl
-    } catch (e) {
-      // 网络问题不该阻塞首页渲染，仅提示
-      console.warn('[index] 获取用户信息失败', e)
-    }
-  } else {
-    // 未登录时确保不残留上一个账号的信息
-    avatarSrc.value = '/static/avatar-default.png'
-  }
+onShow(() => {
+  void load()
 })
 
-function goLogin() {
-  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
-}
-
-function goRegister() {
-  uni.navigateTo({ url: '/pages/auth/index?mode=register' })
-}
-
-async function onLogout() {
-  const res = await uni.showModal({
-    title: '退出登录',
-    content: '确定要退出当前账号吗？',
-  })
-  if (res.confirm) {
-    await auth.logout()
+/** 重新加载第 1 页（进入页面、切换排序、点重试都走这里） */
+async function load(): Promise<void> {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await fetchPosts({ sort: sort.value, page: 1 })
+    posts.value = res.list.map(toPostCard)
+    postTotal.value = res.total
+    hasMore.value = res.list.length >= PAGE_SIZE_MAX
+    page.value = 1
+  } catch (e) {
     /*
-     * 退出后回到登录页。
-     * 为什么不是留在首页：登录页现在是应用入口，退出登录的语义就是"回到未登录起点"。
-     * 留在首页会让用户看不出自己已经退出（首页未登录态与已登录态差别不明显）。
+     * 错误文案一律取自 `ApiError.message`（`request` 层已按错误码表映射过，
+     * 见 `utils/error-code.ts`），**不在这里重写一套** ——
+     * 两处文案迟早不一致，而错误码表是契约的一部分（口径 2：必须按码分支）。
      */
-    uni.reLaunch({ url: '/pages/auth/index' })
+    error.value = e instanceof ApiError ? e.message : '帖子加载失败，请稍后重试'
+    posts.value = []
+    hasMore.value = false
+    // 失败时把总数置为"未知"而不是沿用上一次的值：
+    // 列表已清空，还留着一个和空列表矛盾的"共 N 条"更让人困惑
+    postTotal.value = null
+  } finally {
+    loading.value = false
   }
 }
+
+async function loadMore(): Promise<void> {
+  if (loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
+  try {
+    const next = page.value + 1
+    const res = await fetchPosts({ sort: sort.value, page: next })
+    posts.value = posts.value.concat(res.list.map(toPostCard))
+    hasMore.value = res.list.length >= PAGE_SIZE_MAX
+    page.value = next
+  } catch (e) {
+    /*
+     * 加载更多失败**不覆盖已加载的内容**，只 toast。
+     * 走 error 分支会把整页换成错误态、用户已看到的内容全没了 ——
+     * 对"翻页失败"这种局部失败是过度惩罚。
+     */
+    uni.showToast({
+      title: e instanceof ApiError ? e.message : '加载失败，请稍后重试',
+      icon: 'none',
+      duration: 2000,
+    })
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+function changeSort(next: PostSort): void {
+  if (sort.value === next) return
+  sort.value = next
+  void load()
+}
+
+/**
+ * 发帖入口。
+ *
+ * 未登录 → **跳登录页**（口径 4 / §8.5「未登录时引导登录」同源）。
+ * 不在这里弹 toast：能跳转就不要只提示 —— 用户的目标是发帖，
+ * 直接把他送到能完成目标的页面。
+ */
+function goCompose(): void {
+  if (!auth.isLoggedIn) {
+    uni.navigateTo({ url: '/pages/auth/index?mode=login' })
+    return
+  }
+  uni.navigateTo({ url: '/pages/post/edit' })
+}
+
+/** 触底自动加载（与「加载更多」按钮并存：按钮保证可发现性，触底保证连贯性） */
+onReachBottom(() => {
+  void loadMore()
+})
 </script>
 
 <style lang="scss" scoped>
 @use '@/styles/variables.scss' as *;
 
-.page {
-  min-height: 100vh;
-  padding: $hy-space-md;
-  box-sizing: border-box;
-}
-
-/* ---------- 品牌区 ---------- */
-.hero {
-  padding: $hy-space-lg $hy-space-sm $hy-space-xl;
+/* ---------- 发帖入口 ---------- */
+.composer {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  margin-bottom: $hy-shell-gap;
+  background-color: $hy-bg-card;
+  border-radius: $hy-radius-md;
+  box-shadow: $hy-shadow-card;
 
-  &__title {
-    font-size: 56rpx;
-    font-weight: 600;
-    color: $hy-color-primary;
-    letter-spacing: 2rpx;
-  }
-
-  &__subtitle {
-    margin-top: $hy-space-xs;
-    font-size: $hy-font-sm;
-    color: $hy-text-secondary;
-  }
-}
-
-/* ---------- 用户卡片 ---------- */
-.user-card {
-  margin-bottom: $hy-space-md;
-
-  &__row {
+  &__box {
+    flex: 1;
+    min-width: 0;
+    margin-left: 12px;
+    height: 40px;
+    padding: 0 16px;
     display: flex;
     align-items: center;
-    margin-bottom: $hy-space-md;
+    background-color: $hy-bg-page;
+    border-radius: $hy-radius-pill;
   }
 
-  &__avatar {
-    width: 96rpx;
-    height: 96rpx;
-    border-radius: 50%;
-    background-color: $hy-bg-hover;
-    flex-shrink: 0;
+  &__placeholder {
+    font-size: $hy-font-md;
+    color: $hy-text-placeholder;
   }
+}
 
-  &__info {
-    margin-left: $hy-space-md;
+/* ---------- 排序条 ---------- */
+.sortbar {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  margin-bottom: $hy-shell-gap;
+  height: 46px;
+  background-color: $hy-bg-card;
+  border-radius: $hy-radius-md;
+  box-shadow: $hy-shadow-card;
+
+  &__item {
+    flex: 1;
+    height: 100%;
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    /* 选中态用下划线而不是背景块：三档并排时背景块会把版面压得很重 */
+    border-bottom: 2px solid transparent;
+    box-sizing: border-box;
+
+    &--active {
+      border-bottom-color: $hy-color-primary;
+
+      .sortbar__text {
+        color: $hy-color-primary;
+        font-weight: 600;
+      }
+    }
   }
 
-  &__name {
-    font-size: $hy-font-lg;
-    font-weight: 600;
-    color: $hy-text-primary;
-  }
-
-  &__meta {
-    margin-top: 4rpx;
-    font-size: $hy-font-xs;
-    color: $hy-text-secondary;
-  }
-
-  &__hint {
-    display: block;
+  &__text {
     font-size: $hy-font-md;
     color: $hy-text-regular;
-    margin-bottom: $hy-space-md;
   }
+}
 
-  &__actions {
-    display: flex;
-    flex-direction: column;
-    gap: $hy-space-sm;
-  }
+/* ---------- 状态占位 ---------- */
+.state {
+  padding: 48px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background-color: $hy-bg-card;
+  border-radius: $hy-radius-md;
 
-  &__closed {
-    display: block;
-    margin-top: $hy-space-sm;
-    font-size: $hy-font-xs;
+  &__text {
+    font-size: $hy-font-sm;
     color: $hy-text-secondary;
     text-align: center;
+    line-height: 1.6;
+
+    /* 错误用危险色：这是**异常**，不是业务状态（与 M2 的既定口径一致） */
+    &--error {
+      color: $hy-color-danger;
+    }
   }
 
-  /*
-   * 注册状态查询失败的警告文案。
-   * 刻意用危险色而非普通灰：这是**异常**，不是业务状态 ——
-   * 上一版把网络故障显示成普通的"暂未开放注册"，用户与开发者都察觉不到异常。
-   */
-  &__warn {
-    display: block;
-    margin-top: $hy-space-sm;
+  &__retry {
+    margin-top: 14px;
+    height: 32px;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    border: 1px solid $hy-color-primary;
+    border-radius: $hy-radius-pill;
+  }
+
+  &__retry-text {
+    font-size: $hy-font-sm;
+    color: $hy-color-primary;
+  }
+}
+
+/* ---------- 分页 ---------- */
+.more {
+  padding: 4px 0 16px;
+  display: flex;
+  justify-content: center;
+
+  &__btn {
+    height: 36px;
+    padding: 0 28px;
+    display: flex;
+    align-items: center;
+    background-color: $hy-bg-card;
+    border-radius: $hy-radius-pill;
+    box-shadow: $hy-shadow-card;
+  }
+
+  &__btn-text {
+    font-size: $hy-font-sm;
+    color: $hy-color-primary;
+  }
+
+  &__end {
     font-size: $hy-font-xs;
-    color: $hy-color-danger;
-    text-align: center;
-    line-height: 1.6;
+    color: $hy-text-placeholder;
   }
 }
 </style>

@@ -81,6 +81,59 @@ export interface CaptchaVO {
 }
 
 /* ---------------------------------------------------------------------------
+ * M3 接口类型（**全部直接来自契约，无人工成分**）
+ * ---------------------------------------------------------------------------
+ * 依据冻结的 `openapi.json`（14 路径 / 27 schema，SHA256 `922c206b…`）。
+ * 字段名逐字对应，不增不减。
+ *
+ * ⚠️ 契约里几乎所有 schema 都**没有 `required` 声明**，因此生成类型里每个字段都是可选的
+ *    （`title?: string`）。这是契约的真实形状 —— 前端不得用 `as` 断言成必填
+ *    （那是"关掉检查"）。可选性统一在 `utils/postView.ts` 里收敛成缺省值。
+ * ------------------------------------------------------------------------- */
+
+/** 版块列表项。`isResource` 决定发帖表单是否显示网盘字段 */
+export type BoardVO = Schemas['BoardVO']
+
+/** 帖子列表项（**不含正文**） */
+export type PostSummaryVO = Schemas['PostSummaryVO']
+
+/** 帖子详情 */
+export type PostDetailVO = Schemas['PostDetailVO']
+
+/** 帖子图片 */
+export type PostImageVO = Schemas['PostImageVO']
+
+/** 作者信息摘要 */
+export type UserBriefVO = Schemas['UserBriefVO']
+
+/** 发帖请求体。`boardId`、`title` 必填 */
+export type PostCreateRequest = Schemas['PostCreateRequest']
+
+/** 改帖请求体。`title` 必填。⚠️ PUT 是**覆盖**语义，没传的字段视为清空 */
+export type PostUpdateRequest = Schemas['PostUpdateRequest']
+
+/** 分页响应体 */
+export type PageResultPostSummaryVO = Schemas['PageResultPostSummaryVO']
+
+/**
+ * 帖子列表排序口径。
+ *
+ * 依据：《技术方案》§6.5 —— `sort=latest|hot|essence`。
+ *
+ * ⚠️ **契约缺口（不阻塞，仅登记）**：`openapi.json` 里 `sort` 只声明为 `type: string`，
+ *    **没有 `enum`**，所以这组取值只能来自文档。契约补上 `enum` 后，
+ *    前端就能由生成物得到联合类型、后端改取值时自动变红。已写进交付报告。
+ */
+export type PostSort = 'latest' | 'hot' | 'essence'
+
+/** 排序选项。放在类型旁边而不是页面里，避免两处漂移 */
+export const POST_SORT_OPTIONS: ReadonlyArray<{ value: PostSort; label: string }> = [
+  { value: 'latest', label: '最新' },
+  { value: 'hot', label: '热门' },
+  { value: 'essence', label: '精选' },
+]
+
+/* ---------------------------------------------------------------------------
  * 前端内部类型
  * ------------------------------------------------------------------------- */
 

@@ -1,64 +1,104 @@
 /**
- * 全局设计变量（简洁论坛风）。
+ * 设计令牌（Design Tokens）—— 2026-09-16 按需求方给的三栏参考图**整体重做**。
  *
- * 为什么用 SCSS 变量而不是纯 CSS 变量：
- * 需要在小程序端也生效。小程序对 CSS 自定义属性（var()）的支持随基础库版本而变，
- * 而 SCSS 变量在**编译期**就被替换成字面值，三端行为完全一致 —— 这是 uni-app 的推荐做法。
+ * ==========================================================================
+ * 这一版最大的两个改变（都是踩出来的，不是口味问题）
+ * ==========================================================================
+ * 1. **单位从 `rpx` 改成 `px`**
  *
- * 命名前缀 `hy-` 是项目代号（Hy论坛），避免与 wot-design-uni 的变量冲突。
+ *    `rpx` 是「响应式像素」，它**随窗口宽度缩放**：750rpx = 屏幕宽度。
+ *    这对"只在手机上跑"的页面是对的，但本项目 H5 是要在**桌面浏览器**里当网站用的，
+ *    而 `web/index.html` 的 viewport 只声明了 `width=device-width`、**没有任何 max-width 约束**
+ *    —— 于是旧版在 1920px 宽的窗口里表现是：一个手机版式被拉满整屏、字被按比例放大，
+ *    中间大片空白。**这正是需求方说的"整体太骨架、不像成品"的直接来源。**
+ *
+ *    改用 `px` 后尺寸不再随窗口漂移，桌面端才有稳定的版面；
+ *    手机端 px 与"375 基准的 px"等价，观感与 rpx 方案一致（我们按 375–430 设计移动端）。
+ *
+ * 2. **配色从蓝改成紫**（对齐参考图）
+ *
+ *    旧版主色 `#2b6cff` 是 ADR-0011 选 uni-app 时沿用的默认蓝，没有任何设计依据。
+ *    参考图的品牌色是紫，本版按它取值。
+ *
+ * ⚠️ **兼容性红线**：M2 已交付的页面（登录/注册/我的/三个静态页）也在 import 本文件。
+ *    因此**下面所有变量的名字一个都不能删**（可以改值），否则 M2 直接编译不过。
+ *    新设计专用、M2 用不到的量另起了一段（§ 版面骨架）。
  */
 
-/* ---------- 主色 ---------- */
-/*
- * 选蓝色系：#2b6cff 接近 uni-app/wot-design-uni 默认主色，减少主题覆盖成本；
- * 论坛类产品用蓝比用红/橙更克制，不会与"警告/错误"语义抢注意力。
- */
-$hy-color-primary: #2b6cff;
-$hy-color-primary-light: #eaf1ff;
+/* ---------- 主色（紫） ---------- */
+$hy-color-primary: #6b4bc4; // 品牌主色：logo、激活态、主按钮
+$hy-color-primary-hover: #5a3cad; // 悬停/按下
+$hy-color-primary-light: #efeafb; // 激活底色、标签底色
+$hy-color-primary-lighter: #f8f6fe; // 更浅的一档（今日数据卡片底）
+$hy-color-primary-border: #ddd2f5; // 主色系边框
+
+/* ---------- 语义色 ---------- */
 $hy-color-success: #07c160;
-$hy-color-warning: #fa9d3b;
-$hy-color-danger: #fa5151;
+$hy-color-warning: #ff7d00; // 「热」角标、待审提示
+$hy-color-danger: #f53f3f; // 「沸」角标、退出登录
+$hy-color-danger-light: #fdecec; // 退出登录按钮底色
+$hy-color-info: #3b82f6; // 「新」角标
 
 /* ---------- 文字 ---------- */
-$hy-text-primary: #1a1a1a; // 标题、正文主色
-$hy-text-regular: #444444; // 次级正文
-$hy-text-secondary: #888888; // 辅助信息（时间、计数）
-$hy-text-placeholder: #bbbbbb; // 输入占位
+$hy-text-primary: #1d2129; // 标题、正文主色
+$hy-text-regular: #4e5969; // 次级正文
+$hy-text-secondary: #86909c; // 辅助信息（时间、计数、简介）
+$hy-text-placeholder: #c9cdd4; // 输入占位
 $hy-text-inverse: #ffffff;
 
 /* ---------- 背景 ---------- */
-$hy-bg-page: #f5f6f8; // 页面底色：比纯白灰一档，让白色卡片浮起来
+$hy-bg-page: #f7f7fb; // 页面底色（参考图是极浅的紫灰）
 $hy-bg-card: #ffffff;
 $hy-bg-hover: #f2f3f5;
+$hy-bg-mask: rgba(0, 0, 0, 0.4);
 
 /* ---------- 边框 ---------- */
-$hy-border-color: #ebedf0;
-/* 输入框边框：比分隔线略深，保证输入区域边界清晰 */
-$hy-border-input: #dcdfe6;
+$hy-border-color: #f0f0f3; // 卡片描边、分隔线
+$hy-border-input: #e5e6eb; // 输入框描边（比分隔线深一档）
 
 /* ---------- 图标 ---------- */
-/*
- * 表单内图标的中性色。
- * 说明：CSS 图标用 `currentColor` 取色，因此只要给图标盒子的 `color` 赋值即可换色。
- * 这里定义默认值，需要白色图标时在页面里覆盖 `color`（见 auth 页头部的用法）。
- */
-$hy-icon-color: #8a8f99;
+$hy-icon-color: #86909c;
 
-/* ---------- 间距 ---------- */
-$hy-space-xs: 8rpx;
-$hy-space-sm: 16rpx;
-$hy-space-md: 24rpx;
-$hy-space-lg: 32rpx;
-$hy-space-xl: 48rpx;
+/* ---------- 间距（px；原 rpx 值按 750rpx=375px 减半后再按桌面观感上调） ---------- */
+$hy-space-xs: 4px;
+$hy-space-sm: 8px;
+$hy-space-md: 12px;
+$hy-space-lg: 16px;
+$hy-space-xl: 24px;
+$hy-space-xxl: 32px;
 
 /* ---------- 圆角 ---------- */
-$hy-radius-sm: 8rpx;
-$hy-radius-md: 16rpx;
-$hy-radius-lg: 24rpx;
+$hy-radius-sm: 6px;
+$hy-radius-md: 10px;
+$hy-radius-lg: 14px;
+$hy-radius-pill: 999px;
 
 /* ---------- 字号 ---------- */
-$hy-font-xs: 22rpx;
-$hy-font-sm: 24rpx;
-$hy-font-md: 28rpx;
-$hy-font-lg: 32rpx;
-$hy-font-xl: 40rpx;
+$hy-font-xs: 12px; // 辅助信息、计数
+$hy-font-sm: 13px; // 次级正文、简介
+$hy-font-md: 14px; // 正文
+$hy-font-lg: 16px; // 卡片标题、区块标题
+$hy-font-xl: 20px; // 页面主标题
+$hy-font-xxl: 26px; // 品牌 logo
+
+/* ---------- 阴影 ---------- */
+/* 参考图的卡片是"极浅描边 + 几乎看不见的投影"，不是重投影 */
+$hy-shadow-card: 0 1px 2px rgba(29, 33, 41, 0.03);
+$hy-shadow-pop: 0 6px 24px rgba(29, 33, 41, 0.12); // 下拉菜单、弹层
+
+/* ==========================================================================
+ * 版面骨架（仅新设计用；三栏 ↔ 单栏的断点都从这里取，避免散落魔法数字）
+ * ==========================================================================
+ * 断点取值理由：参考图是 1920 宽的三栏。我们取 1000px 作为"能不能放下三栏"的门槛 ——
+ * 左栏 240 + 右栏 300 + 中栏最小可用宽度 ~420 + 两道 20 间隙 = 1000。
+ * 低于它就必须塌成单栏，否则中间的信息流会被压到不可读。
+ */
+$hy-shell-max-width: 1280px; // 居中容器的最大宽度
+$hy-shell-left-width: 240px; // 左栏
+$hy-shell-right-width: 300px; // 右栏
+$hy-shell-gap: 20px; // 三栏之间、以及栏与容器边缘的间隙
+$hy-shell-header-height: 64px; // 顶栏高度
+$hy-shell-breakpoint: 1000px; // ≥ 此宽度走三栏，否则单栏
+
+/* 移动端单栏时的底部导航高度（含安全区，见 AppShell 的说明） */
+$hy-mobile-nav-height: 52px;

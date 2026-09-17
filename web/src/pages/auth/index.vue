@@ -3,7 +3,7 @@
     <!-- ========== 头部：渐变 + 图标 + 标题 ========== -->
     <view class="auth__hero">
       <view class="auth__logo">
-        <Icon class="auth__logo-icon" type="shield" size="lg" />
+        <HyIcon class="auth__logo-icon" type="shield" size="lg" />
       </view>
       <text class="auth__brand">Hy论坛</text>
       <text class="auth__slogan">中文综合论坛 · 含资源分享版块</text>
@@ -21,7 +21,7 @@
           :data-testid="`auth-tab-${t.key}`"
           @click="switchMode(t.key)"
         >
-          <Icon class="tabs__icon" :type="t.key === 'login' ? 'arrow' : 'plus'" size="sm" />
+          <HyIcon class="tabs__icon" :type="t.key === 'login' ? 'arrow' : 'plus'" size="sm" />
           <text class="tabs__label">{{ t.label }}</text>
           <view v-if="mode === t.key" class="tabs__bar" />
         </view>
@@ -32,7 +32,7 @@
         <view class="field">
           <text class="field__label">用户名</text>
           <view class="control">
-            <Icon class="control__icon" type="user" />
+            <HyIcon class="control__icon" type="user" />
             <input
               v-model="form.username"
               data-testid="login-username"
@@ -50,7 +50,7 @@
         <view class="field">
           <text class="field__label">密码</text>
           <view class="control">
-            <Icon class="control__icon" type="lock" />
+            <HyIcon class="control__icon" type="lock" />
             <input
               v-model="form.password"
               data-testid="login-password"
@@ -64,7 +64,7 @@
             />
             <!-- 密码明文开关。中文输入法下密码打错很常见，给用户自查手段 -->
             <view class="control__action" data-testid="login-toggle-pwd" @click="showPassword = !showPassword">
-              <Icon class="control__action-icon" :type="showPassword ? 'eye-off' : 'eye'" />
+              <HyIcon class="control__action-icon" :type="showPassword ? 'eyeOff' : 'eye'" />
             </view>
           </view>
         </view>
@@ -98,7 +98,7 @@
         <view class="field">
           <text class="field__label">用户名</text>
           <view class="control">
-            <Icon class="control__icon" type="user" />
+            <HyIcon class="control__icon" type="user" />
             <input
               v-model="form.username"
               data-testid="reg-username"
@@ -115,7 +115,7 @@
         <view class="field">
           <text class="field__label">密码</text>
           <view class="control">
-            <Icon class="control__icon" type="lock" />
+            <HyIcon class="control__icon" type="lock" />
             <input
               v-model="form.password"
               data-testid="reg-password"
@@ -127,7 +127,7 @@
               :disabled="submitting"
             />
             <view class="control__action" data-testid="reg-toggle-pwd" @click="showPassword = !showPassword">
-              <Icon class="control__action-icon" :type="showPassword ? 'eye-off' : 'eye'" />
+              <HyIcon class="control__action-icon" :type="showPassword ? 'eyeOff' : 'eye'" />
             </view>
           </view>
         </view>
@@ -135,7 +135,7 @@
         <view class="field">
           <text class="field__label">昵称</text>
           <view class="control">
-            <Icon class="control__icon" type="user" />
+            <HyIcon class="control__icon" type="user" />
             <input
               v-model="form.nickname"
               data-testid="reg-nickname"
@@ -160,7 +160,7 @@
             <text class="field__label-tag">邀请制</text>
           </text>
           <view class="control">
-            <Icon class="control__icon" type="ticket" />
+            <HyIcon class="control__icon" type="ticket" />
             <input
               v-model="form.inviteCode"
               data-testid="reg-invite-code"
@@ -211,7 +211,7 @@
           </view>
 
           <view class="control control--mt">
-            <Icon class="control__icon" type="shield" />
+            <HyIcon class="control__icon" type="shield" />
             <input
               v-model="form.captchaCode"
               data-testid="reg-captcha-code"
@@ -307,11 +307,15 @@ import { fetchCaptcha, fetchRegisterMode, register } from '@/api/auth'
 import type { RegisterMode, RegisterRequest } from '@/api/types'
 import { ApiError } from '@/utils/request'
 /*
- * 图标用**纯 CSS 绘制的 Icon 组件**，不用 SVG data URI、也不用图标字体。
+ * 图标用**纯 CSS 绘制的组件**，不用 SVG data URI、也不用图标字体。
  * 原因：微信小程序的 `<image>` 对 SVG data URI 支持不可靠，
- * 而图标全空白是致命观感问题。方案对比见 `src/components/Icon.vue` 顶部注释。
+ * 而图标全空白是致命观感问题。方案对比见 `src/components/HyIcon.vue` 顶部注释。
+ *
+ * ⚠️ 2026-09-16：随着三栏改版，原来的 `components/Icon.vue` 已被
+ *    `components/HyIcon.vue` 取代（旧的只支持 8 个图标且用 rpx，撑不起新界面）。
+ *    两类差异要一起改：① 导入路径；② `'eyeOff'` 改名成 `'eyeOff'`（驼峰，与其余类型统一）。
  */
-import Icon from '@/components/Icon.vue'
+import HyIcon from '@/components/HyIcon.vue'
 
 const auth = useAuthStore()
 

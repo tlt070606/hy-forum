@@ -8,21 +8,71 @@
 
   "pages": [
     {
-      "path": "pages/auth/index",
+      "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "登录 / 注册"
+        "navigationBarTitleText": "Hy论坛",
+        "navigationStyle": "custom"
       }
     },
     {
-      "path": "pages/index/index",
+      "path": "pages/topic/index",
       "style": {
-        "navigationBarTitleText": "Hy论坛"
+        "navigationBarTitleText": "话题",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/collect/index",
+      "style": {
+        "navigationBarTitleText": "我的收藏",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/search/index",
+      "style": {
+        "navigationBarTitleText": "搜索",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/board/index",
+      "style": {
+        "navigationBarTitleText": "版块",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/post/detail",
+      "style": {
+        "navigationBarTitleText": "帖子详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/post/edit",
+      "style": {
+        "navigationBarTitleText": "发帖",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/placeholder/index",
+      "style": {
+        "navigationBarTitleText": "提示",
+        "navigationStyle": "custom"
       }
     },
     {
       "path": "pages/me/index",
       "style": {
         "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/auth/index",
+      "style": {
+        "navigationBarTitleText": "登录 / 注册"
       }
     },
     {
@@ -45,27 +95,18 @@
     }
   ],
 
-  "tabBar": {
-    "color": "#888888",
-    "selectedColor": "#2b6cff",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "black",
-    "list": [
-      {
-        "pagePath": "pages/index/index",
-        "text": "首页"
-      },
-      {
-        "pagePath": "pages/me/index",
-        "text": "我的"
-      }
-    ]
-  },
-
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Hy论坛",
     "navigationBarBackgroundColor": "#ffffff",
-    "backgroundColor": "#f5f6f8"
+    "backgroundColor": "#f7f7fb"
+  },
+
+  "tabBar": {
+    "color": "#86909c",
+    "selectedColor": "#6b4bc4",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": []
   }
 }
