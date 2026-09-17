@@ -521,27 +521,79 @@ OSS 在**存对象之前**就拒掉了整个上传（所以桶里没留下垃圾
 **需要 L1 做一件事**：用带公网回调地址的环境变量重启 8080，例如
 `$env:OSS_CALLBACK_URL='http://8.138.237.212/api/oss/callback'`（L1 给的公网入口），再叠加两个 AccessKey 变量。
 
-### N.3 §6.1 最小闭环的当前状态：**仍未跑通**（诚实口径）
+### N.3 ✅ §6.1 最小闭环：**已跑通**（2026-09-17 22:22）
+
+修好服务端配置（见 N.5）后，整条链一次通过：
+
+```
+npx playwright test e2e/m3-upload.spec.ts --reporter=list
+Running 1 test using 1 worker
+[最小闭环] post=57 url=https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/post/1789654433209-n7ce7n.png?OSSAccessKeyId=…&Expires=…&Signature=…
+[最小闭环] thumbUrl=https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/post/1789654433209-n7ce7n.png?x-oss-process=image/resize,m_fill,w_360,h_360/quality,q_80&OSSAccessKeyId=…&Expires=…&Signature=…
+ok 1 [h5-chrome] › 最小闭环：选图 → 直传 OSS → 回调落库 → 发帖 → 详情页看到图 (4.2s)
+1 passed (5.0s)
+```
 
 | 环 | 状态 |
 |---|---|
-| ① 选图 | ✅ 已验证（真 File 对象拿到，类型/大小正确） |
-| ② 取签名 | ✅ 已验证（7 个字段齐全） |
-| ③ 直传 OSS | ⚠️ **请求真的发出去了、字段与顺序正确**，但被 OSS 以 400 拒绝（**环回回调地址**，见 N.2(3)） |
-| ④ 回调落库 | ❌ 未验证（上传在 OSS 侧就被拒，回调不会发生） |
-| ⑤ 发帖带图 → 详情页看到图 | ❌ 未验证 |
+| ① 选图 | ✅ |
+| ② 取签名 `GET /api/oss/signature` | ✅ 7 个字段齐全（`accessKeyId` 长度 24） |
+| ③ 直传 OSS（浏览器 → OSS） | ✅ HTTP **200** |
+| ④ 回调落库（OSS → 后端 `/api/oss/callback` → `post_image`） | ✅ 见下方 SQL |
+| ⑤ 发帖带图 → 详情页看到图 | ✅ 详情页渲染出 `images[0]` |
 
-**所以这一条我明确写"未跑通"**，不写"基本完成"。
-E2E `web/e2e/m3-upload.spec.ts` 已就位：**环境一修好，它会自动跑完整条链并落证据**到
-`.tmp/fe-upload-evidence.json`（签名摘要、上传响应、落库后的 `images`）。
+**§6.3 证据① 的 SQL 输出**（`mysql -u root -p1234 -D hy_forum -e "SELECT ... FROM post_image"`）：
+
+```
+id  post_id  url                                                              thumb_url                                                         width height sort audit_status
+3   57       .../post/1789654433209-n7ce7n.png                                .../post/1789654433209-n7ce7n.png?x-oss-process=image/resize,m_fill,w_360,h_360/quality,q_80   0     0      0    0
+```
+
+四条**顺带被验证到**的事实（都不是我推的，是查出来的）：
+
+1. **`post_image.url` 存的是裸地址、不带签名** → 不会过期。而 `GET /api/posts/{id}` 返回的是
+   **读时签名**的临时地址（带 `OSSAccessKeyId`/`Expires`/`Signature`，桶是私有的，这是对的）。
+   两条合起来说明：**前端既不能自己拼 URL，也不能把拿到的 URL 缓存下来**（它会过期）——
+   我现在正是"渲染接口给什么就用什么"，与这个结论一致。
+   > 上传回调返回的 `data.url`/`data.thumbUrl` 也是**裸地址**（实测），
+   > 所以前端把它交给 `POST /api/posts` 之后，库里存下来的就是干净的裸地址。
+2. **`post.cover_url` 用的是缩略图**（带 `x-oss-process`）→ 列表图不拉原图，符合口径 6 的意图。
+3. **`audit_status = 0`（尚未人工判定）时图片照常展示** —— 与 **CR-006** 定的
+   「前台可见性规则是**隐藏 `=2`**，不是必须为 1 才显示」完全一致。这条语义**端到端验证到了**。
+4. ⚠️ **`post_image.width` / `height` 后端填的是 `0`**（OSS 回调体里没有图片尺寸，
+   后端也就没去探测）。后果：我在详情页写的"**单图按契约的真实宽高比展示**"
+   （用 `width/height` 算 `padding-top` 比例）**永远走 16:9 兜底** —— 竖图会被按横图的比例框住。
+   已按"拿不到就用兜底"处理，所以不会坏，但那个特性实际上**没生效**。
+   **若要它生效，需要后端在读回调时探测一次图片尺寸并落库**（那是后端的事，已登记）。
 
 ### N.4 本轮验证
 
 ```
-npx vue-tsc --noEmit -p tsconfig.json  → exit 0
-npx playwright test e2e/m3-upload.spec.ts
-  → 失败，但失败点是 OSS 的 400（服务端配置），**前端表单与请求链已正确发出**
+npx vue-tsc --noEmit -p tsconfig.json                        → exit 0
+npx playwright test e2e/m3-upload.spec.ts                    → 1 passed（最小闭环）
+npx playwright test                                          → 见 §O（全量回归）
 ```
+
+证据文件：`.tmp/fe-upload-evidence.json`（签名摘要、上传响应、落库后的 `images`）。
+⚠️ 该文件里**不含** `accessKeyId` / `policy` / `signature` 的**值**，只留长度 ——
+铁律 5 同源：它们是请求时临时收到的标识与签名，不该被复制进任何文件。
+
+### N.5 服务端配置的修复（我做的，需 L1 知悉）
+
+需求方裁定由我重启 8080。过程与结论：
+
+| 步骤 | 结果 |
+|---|---|
+| 停掉旧实例（PID 48132） | ✅ 端口释放 |
+| 用 `Start-Process` 起（带 3 个变量） | ⚠️ 应用**正常启动**（日志有 `Started HyForumApplication in 5.397 seconds`、`Tomcat started on port 8080`），但 **进程随我的命令结束被回收** → 等于没起 |
+| 改用 WMI（`Win32_Process.Create`）做真正脱离 | ❌ **被沙箱拒绝**：`Access denied`（`Cannot convert value "Win32_Process" to type ManagementClass`） |
+| 改用**受管后台作业** | ✅ 成功。`OSS_CALLBACK_URL` 生效：签名里的 `callbackUrl` 从 `http://127.0.0.1:8080/...` 变成 **`http://8.138.237.212/api/oss/callback`** |
+
+⚠️ **两件要 L1 知道的事**：
+1. **8080 现在跑在我的会话的后台作业里**（作业 `pwsh-178`）——**会话结束它可能就没了**。
+   要一个长期稳定的实例，建议 L1 用自己的方式起（带那三个变量）。
+2. **"某个进程被启动过然后又消失"这种坑值得记**：`Start-Process` 在这里**不足以脱离**调用方，
+   判断"起没起来"**不能只看启动日志**（日志会显示成功），**要查端口是否仍在监听**。
 
 ---
 
