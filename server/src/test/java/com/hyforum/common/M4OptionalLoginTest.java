@@ -100,6 +100,56 @@ class M4OptionalLoginTest extends M4ApiTestSupport {
     }
 
     @Test
+    @DisplayName("行为保持：未标 @OptionalLogin 的受保护端点，匿名访问仍是 401（挡住「顺手放宽 /api/**」）")
+    void optional_login_does_not_widen_protected_endpoints() {
+        // ─────────────────────────────────────────────────────────────
+        // 这条用例的唯一目的是**挡住装配层的事故**，不是挡业务逻辑。
+        //
+        // 背景：为让 @OptionalLogin 生效，拦截器里加了一个新分支
+        // （`if (isOptionalLogin(handler)) { resolveOptionalUser(); return true; }`）。
+        // 这类"在拦截器里多一条 return true"的改动，最危险的错法不是"没生效"，
+        // 而是**顺手把别的端点也放行了** —— 例如判断条件写成 `!hasAnnotation(AllowAnonymous)`
+        // 这样的宽条件、或把分支提到 isAnonymous 之前却不检查注解。
+        // 那种错法**不会让任何既有用例变红**（既有用例大多带着 token 跑），
+        // 却会让所有受保护端点变成匿名可访问 —— 典型的"静默越权"。
+        //
+        // 因此这里点名三个**必须仍然 401** 的端点，其中 ② 是另一个 agent 的断言
+        // 依赖的那个（/api/oss/signature 刻意不加 @AllowAnonymous，理由是
+        // "签名的滥用面是匿名刷签名 + 刷 OSS 流量"）。
+        // ─────────────────────────────────────────────────────────────
+
+        // ① 未标注解的前台端点（M4 自己的写接口，归 M4 负责）
+        Response collections = io.restassured.RestAssured.given().get("/api/user/collections");
+        assertThat(collections.statusCode())
+                .as("未标 @OptionalLogin 的前台端点匿名访问必须仍 401。响应：%s", collections.asString())
+                .isEqualTo(401);
+        assertThat(collections.jsonPath().getInt("code")).isEqualTo(401);
+
+        // ② M3 的签名接口 —— 另一个 agent 有一条断言依赖它必须 401
+        Response signature = io.restassured.RestAssured.given().get("/api/oss/signature");
+        assertThat(signature.statusCode())
+                .as("GET /api/oss/signature 匿名访问必须仍然 401（它刻意不加 @AllowAnonymous）。响应：%s",
+                        signature.asString())
+                .isEqualTo(401);
+        assertThat(signature.jsonPath().getInt("code")).isEqualTo(401);
+
+        // ③ 后台端点：@OptionalLogin 不该碰 /api/admin（后台没有"匿名也能看"的语义）
+        Response admin = io.restassured.RestAssured.given().get("/api/admin/stats");
+        assertThat(admin.statusCode())
+                .as("后台端点匿名访问必须仍被拒（绝不能因为 @OptionalLogin 而放行）。响应：%s", admin.asString())
+                .isIn(401, 403, 404);   // 接受 404：该端点若尚未实现，不该因此判红
+
+        // ④ 反向自证：**同一次运行里**，标了 @OptionalLogin 的端点匿名访问必须是 200。
+        //    缺了这一步，上面三条 401 可能只是因为"拦截器把所有人都拦了" ——
+        //    那样 @OptionalLogin 根本没生效，而三条 401 照样绿。
+        Response optional = getUserProfile(null, other.id());
+        assertThat(optional.statusCode())
+                .as("标了 @OptionalLogin 的端点匿名访问必须 200（否则上面的 401 可能只是'全都拦了'）")
+                .isEqualTo(200);
+        assertOk(optional);
+    }
+
+    @Test
     @DisplayName("边界：坏 token 按匿名处理（不 500）；封禁账号仍然 1004（不降级成匿名）")
     void optional_login_boundaries() {
         // ① 无效 token：按匿名处理。若实现成"解析失败就抛异常"，这里会变成 500 或 401

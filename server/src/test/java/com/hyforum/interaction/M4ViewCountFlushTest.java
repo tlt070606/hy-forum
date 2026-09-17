@@ -32,6 +32,16 @@ import static org.awaitility.Awaitility.await;
  * 是为了：① 机器慢时不会假红；② 正常情况下 1–2 秒就返回，不会白等。</p>
  * <p>断言里同时检查"轮询确实等到了变化"（{@code wasTrue}），
  * 否则一个"永远不满足"的条件在超时后抛出的异常信息会很难读。</p>
+ *
+ * <h2>⚠️ 本类的一条实测教训：不要断言"可观测的中间状态"</h2>
+ * <p>第一版在阶段 1 断言了 {@code hy:post:view:{id}} 恰好等于 {@code "5"}。
+ * 那条断言与被测的定时任务<b>赛跑</b>：周期被压到 1000ms 之后，5 次 HTTP 往返期间
+ * 任务完全可能已经跑过一次并把键 {@code GETDEL} 走了 ——
+ * <b>单独跑本类必绿、全量跑偶发红</b>。
+ * 这正是本项目最怕的那类偶发红（假红会让人去查不存在的 bug）。
+ * 修法：只断言<b>最终收敛值</b>（{@code view_count} 最终必为 5），
+ * 中间态交给 M3 的 {@code M3_view_count_increments_in_redis} 去覆盖 ——
+ * 那一类的周期没被加速，不存在这个赛跑。</p>
  */
 class M4ViewCountFlushTest extends M4ApiTestSupport {
 
@@ -64,25 +74,35 @@ class M4ViewCountFlushTest extends M4ApiTestSupport {
             Response detail = io.restassured.RestAssured.given().get("/api/posts/" + postId);
             assertOk(detail);
         }
-        assertThat(stringRedisTemplate.opsForValue().get("hy:post:view:" + postId))
-                .as("详情接口必须把浏览量累加进 Redis（§8.3）")
-                .isEqualTo(String.valueOf(visits));
+
+        // ⚠️ 这里**刻意不断言** Redis 键恰好等于 "5" —— 那会与我自己加速的定时任务赛跑。
+        //    本类把回写周期压到 1000ms（为了"等一个真实周期"），因此在这 5 次 HTTP 往返期间
+        //    定时任务完全可能已经跑过一次并把键 GETDEL 走了；此时读到的会是 null 或一个
+        //    小于 5 的残值。实测：**单独跑本类必绿，全量跑偶发红** —— 这正是典型的
+        //    "用可观测的中间状态做断言"造成的赛跑（本项目最怕的那类偶发红）。
+        //    Redis 端的累加行为已由 M3 的 `M3_view_count_increments_in_redis` 覆盖，
+        //    本类只负责"它自己会跑回写"这一半，所以这里不重复断言中间态。
         assertThat(postColumn(postId, "view_count", Integer.class))
                 .as("详情接口**不得**直接 UPDATE 数据库（那是 M3 已经验过的另一半）")
                 .isZero();
 
         // —— 阶段 2：不调用任何方法，只等定时任务自己跑 ——
+        // 断言"最终收敛到 5"：无论中间被回写了 0 次还是几次，一个正确实现最终必然收敛到 5；
+        // 若实现是"重复累加"，这里会超过 5 并稳定在更大的值上（下一阶段再证它不再增长）。
         await().atMost(Duration.ofSeconds(WAIT_SECONDS))
                 .pollInterval(Duration.ofMillis(200))
                 .untilAsserted(() -> assertThat(postColumn(postId, "view_count", Integer.class))
-                        .as("等一个真实回写周期（%d ms）后，post.view_count 必须等于 Redis 里累计的 %d 次",
+                        .as("等真实回写周期（%d ms）后，post.view_count 必须收敛到 Redis 累计的 %d 次",
                                 FLUSH_INTERVAL_MS, visits)
                         .isEqualTo(visits));
 
         // —— 阶段 3：回写必须"取走"而不是"只读"，否则下一周期会重复累加 ——
         assertThat(stringRedisTemplate.opsForValue().get("hy:post:view:" + postId))
-                .as("回写必须用 GETDEL 取走增量（否则每个周期都会把同一批浏览量再加一遍）")
-                .isNull();
+                .as("回写必须用 GETDEL 取走增量（否则每个周期都会把同一批浏览量再加一遍）；"
+                        + "到这一步允许为 null（任务可能刚跑过）但绝不能还留着未回写的增量")
+                .satisfiesAnyOf(
+                        value -> assertThat(value).isNull(),
+                        value -> assertThat(value).isEqualTo("0"));
 
         // 再等两个周期，确认计数**不再增长**：这条是"重复累加"这个 bug 的唯一探针。
         // 刻意不用 wait().during(...)（那样在 Awaitility 4.x 里语义容易读错，
