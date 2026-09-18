@@ -21,11 +21,23 @@ const ROUTE = process.env.SHOT_ROUTE || '#/pages/index/index'
 const NAME = process.env.SHOT_NAME || (ROUTE.includes('detail') ? 'detail' : 'home')
 
 /** 要拍的视口：桌面三栏 / 桌面窄一点 / 移动单栏 */
-const VIEWPORTS = [
+const ALL_VIEWPORTS = [
   { name: 'desktop', width: 1920, height: 1080 },
   { name: 'laptop', width: 1280, height: 900 },
   { name: 'mobile', width: 420, height: 900 },
 ]
+
+/**
+ * 只拍某些视口 + 是否整页。
+ *
+ * ⚠️ 为什么需要它：**28px 的图标在 1920 宽、且整页（几千像素高）的截图里会被缩到看不清**
+ *    —— 本机为此误判过一次"图标没生效"（其实早就生效了，只是图太小、看成了旧形状）。
+ *    要看图标/小控件时用 `SHOT_VIEWPORTS=mobile SHOT_FULL=0`：
+ *    420 宽 + 不整页 → 卡片接近 1:1，细节看得清。
+ */
+const WANT = (process.env.SHOT_VIEWPORTS || '').split(',').filter(Boolean)
+const VIEWPORTS = WANT.length ? ALL_VIEWPORTS.filter((v) => WANT.includes(v.name)) : ALL_VIEWPORTS
+const FULL = process.env.SHOT_FULL !== '0'
 
 mkdirSync(OUT, { recursive: true })
 
@@ -46,7 +58,7 @@ for (const vp of VIEWPORTS) {
   await page.goto(`${BASE}/${ROUTE}`, { waitUntil: 'domcontentloaded' })
   // 等接口回来 + 首屏渲染稳定（信息流是 onShow 里请求的）
   await page.waitForTimeout(3500)
-  await page.screenshot({ path: `${OUT}/${NAME}-${vp.name}.png`, fullPage: vp.name !== 'desktop' })
+  await page.screenshot({ path: `${OUT}/${NAME}-${vp.name}.png`, fullPage: FULL && vp.name !== 'desktop' })
   console.log(`shot: ${OUT}/${NAME}-${vp.name}.png`)
   await page.close()
 }

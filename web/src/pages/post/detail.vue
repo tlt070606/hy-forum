@@ -343,6 +343,13 @@ const likeCount = ref(0)
 const commentCount = ref(0)
 const collectCount = ref(0)
 
+/**
+ * 评论区是否展开（默认收起，点击才打开）。
+ * ⚠️ 声明放在 `onLoad` **之前**：`onLoad` 里要根据路由参数决定是否直接展开，
+ *    而它可能就在 setup 期间被调用 —— 放在后面会撞上 const 的暂时性死区。
+ */
+const commentsOpen = ref(false)
+
 /* ---------------------------------------------------------------------------
  * 派生
  * ------------------------------------------------------------------------- */
@@ -422,6 +429,11 @@ onLoad((options) => {
     return
   }
   postId.value = parsed
+  /*
+   * 从**列表卡片的「评论」**进来时带 `openComments=1` → 直接展开评论区。
+   * 不这么做的话，用户点了"评论"进来看到的却是一个收起的「写评论」，还得再点一次。
+   */
+  if (options?.openComments) commentsOpen.value = true
   void load()
 })
 
@@ -514,8 +526,7 @@ function notDelivered(what: string): void {
  * 互动：点赞 / 收藏（M4）
  * ------------------------------------------------------------------------- */
 
-/** 评论区是否展开（默认收起，点击才打开） */
-const commentsOpen = ref(false)
+/** 评论区是否展开（默认收起，点击才打开）—— 声明见页面顶部（`onLoad` 要用它） */
 
 /**
  * 点赞/取消。

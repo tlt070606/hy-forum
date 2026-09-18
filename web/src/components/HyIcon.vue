@@ -170,42 +170,68 @@ const SHAPES: Record<IconType, string[]> = {
     fill('position:absolute;left:42%;top:84%;width:16%;height:16%;border-radius:50%'),
   ],
 
-  // 爱心（线框）：两个圆 + 旋转 45° 的方块
-  heart: [
-    line(
-      'position:absolute;left:19%;top:22%;width:42%;height:42%;border-radius:50%;border-right:none;border-bottom:none;transform:rotate(-45deg)'
-    ),
-    line(
-      'position:absolute;left:39%;top:22%;width:42%;height:42%;border-radius:50%;border-left:none;border-bottom:none;transform:rotate(45deg)'
-    ),
-    line(
-      'position:absolute;left:50%;top:44%;width:44%;height:44%;margin-left:-22%;border-left:none;border-top:none;transform:rotate(45deg)'
-    ),
-  ],
+  /*
+   * ==========================================================================
+   * 爱心：**经典两"墓碑"画法**（2026-09-18 修正，形状终于在试验台上对齐了）
+   * ==========================================================================
+   * 画法：两个"墓碑"形（`border-radius: 50% 50% 0 0` 的竖矩形）各绕**心尖**
+   * （即底部中心，`50% / 80%`）旋转 ∓45°，两者的并集就是一颗心。
+   *
+   * ⚠️ **我上一版画错了**，记在这里免得再犯：
+   *    原来用的是"两个圆 + 一个旋转 45° 的方块"。那个**方块比两个圆还大**
+   *    （对角线撑到 42%×2），于是并集被方块主导 —— 画出来是个**盾形**，不是心。
+   *    28px 的截图里我以为"差不多"，用户一眼就看出来了（"你这个是爱心吗"）。
+   *    教训：**图标的形状必须在放大图上确认**，小尺寸截图判断不了。
+   *    所以本仓库留了 `scripts/icon-lab.mjs`：把候选画法放大到 120px 并排渲染，
+   *    用截图挑，而不是凭想象。
+   */
 
-  // 爱心（线框）：**实心爱心挖空中间**得到连续轮廓
-  //
-  // ⚠️ 为什么用"挖空"而不是"描边"：
-  //    爱心是"两个圆 + 一个旋转方块"的**并集**，如果只给这三个形状描边，
-  //    它们相交处的边框会露在轮廓内部（看起来像三个图形叠在一起，而不是一颗心）。
-  //    所以先画实心，再用**卡片底色**画一个按比例内缩的同形状把它掏空 —— 得到一条连续轮廓。
-  //    代价：挖空用的是白色，**只能放在白色底上**（当前两处用法都是白色卡片）。
-  //    若将来要用在非白底上，得把内层颜色改成所在容器的底色。
-  heartOutline: [
-    fill('position:absolute;left:8%;top:26%;width:50%;height:50%;border-radius:50%'),
-    fill('position:absolute;left:42%;top:26%;width:50%;height:50%;border-radius:50%'),
-    fill('position:absolute;left:50%;top:50%;width:60%;height:60%;margin-left:-30%;transform:rotate(45deg)'),
-    // 内缩一圈（各边约 7%）后同形状、底色填充
-    fill('position:absolute;left:15%;top:33%;width:36%;height:36%;border-radius:50%;background:#ffffff'),
-    fill('position:absolute;left:49%;top:33%;width:36%;height:36%;border-radius:50%;background:#ffffff'),
-    fill('position:absolute;left:50%;top:50%;width:46%;height:46%;margin-left:-23%;transform:rotate(45deg);background:#ffffff'),
-  ],
-
-  // 爱心（实心，表示"已点赞"）
+  /** 爱心（实心）。也用作 `heart`，语义上等价 */
   heartFilled: [
-    fill('position:absolute;left:8%;top:26%;width:50%;height:50%;border-radius:50%'),
-    fill('position:absolute;left:42%;top:26%;width:50%;height:50%;border-radius:50%'),
-    fill('position:absolute;left:50%;top:50%;width:60%;height:60%;margin-left:-30%;transform:rotate(45deg)'),
+    fill(
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg)'
+    ),
+    fill(
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg)'
+    ),
+  ],
+
+  /** 爱心（同实心，保留旧类型名，避免调用方因改名而崩） */
+  heart: [
+    fill(
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg)'
+    ),
+    fill(
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg)'
+    ),
+  ],
+
+  /**
+   * 爱心（线框）。
+   *
+   * 画法：先画实心（描边色），再用**卡片底色**按同一心尖缩小 `scale(.7)` 挖空。
+   * ⚠️ 两个刻意的细节（都是试验台上比出来的）：
+   * 1. **不能用"给两个墓碑描边"** —— 它们在中下部是**重叠**的，
+   *    描边会在心形内部交叉成一个 X（试验台候选 C 就是这个下场）；
+   * 2. `margin-top: -9%` 是**手工补的内缩偏心**：缩放是绕"心尖"做的，
+   *    不补的话上半部分（两个圆瓣）的轮廓会明显比下半部分厚。
+   *
+   * ⚠️ 代价：挖空用白色，**只能放在白色底上**（当前两处用法都是白卡片）。
+   *    将来要用在非白底上，得把内层颜色改成所在容器的底色。
+   */
+  heartOutline: [
+    fill(
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg)'
+    ),
+    fill(
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg)'
+    ),
+    fill(
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg) scale(.7);background:#ffffff;margin-top:-9%'
+    ),
+    fill(
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg) scale(.7);background:#ffffff;margin-top:-9%'
+    ),
   ],
 
   // 评论气泡：圆角矩形 + 左下角小尾巴

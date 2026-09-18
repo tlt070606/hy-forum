@@ -70,22 +70,36 @@
     -->
     <view class="post-card__foot">
       <!--
-        ⚠️ 图标尺寸（需求方 2026-09-18）：「我要的爱心变大是要在**我现在这个页面**啊，
-        不要点进去再变大」—— 所以**列表卡片**这里也要大，不是只有详情页大。
-        爱心用**线框**（heartOutline），未点赞时与参考站一致；点赞态在详情页才出现
-        （列表项的契约字段里没有 isLiked，见报告 CR-K）。
+        ⚠️ 这三个是**可点的**（需求方 2026-09-18：「为什我在那个页面不能直接点赞什么之类的，
+        一定要点进去才可以呀？」）。之前它们只是数字展示，点了没反应。
+        - 点赞/收藏 → M4 的真接口（POST/DELETE 幂等），乐观更新 + 失败双回滚
+        - 评论 → 进详情页并**直接展开评论区**
+        ⚠️ 每个都要 `@click.stop`：否则点击会冒泡到卡片，变成"点了赞又跳走了"。
       -->
-      <view class="metric" data-testid="post-card-like">
-        <HyIcon type="heartOutline" size="xl" />
-        <text class="metric__text">{{ compactCount(post.likeCount) }}</text>
+      <view
+        class="metric metric--like"
+        :class="{ 'metric--on': interaction.isPostLiked(post.id) }"
+        data-testid="post-card-like"
+        @click.stop="toggleLike"
+      >
+        <HyIcon :type="interaction.isPostLiked(post.id) ? 'heartFilled' : 'heartOutline'" size="xl" />
+        <text class="metric__text">{{ likeCount }}</text>
       </view>
-      <view class="metric" data-testid="post-card-comment">
+      <view class="metric" data-testid="post-card-comment" @click.stop="openComments">
         <HyIcon type="comment" size="xl" />
         <text class="metric__text">{{ compactCount(post.commentCount) }}</text>
       </view>
-      <view class="metric" data-testid="post-card-collect">
-        <HyIcon type="bookmark" size="xl" />
-        <text class="metric__text">{{ compactCount(post.collectCount) }}</text>
+      <view
+        class="metric metric--collect"
+        :class="{ 'metric--on': interaction.isPostCollected(post.id) }"
+        data-testid="post-card-collect"
+        @click.stop="toggleCollect"
+      >
+        <HyIcon
+          :type="interaction.isPostCollected(post.id) ? 'bookmarkFilled' : 'bookmark'"
+          size="xl"
+        />
+        <text class="metric__text">{{ collectCount }}</text>
       </view>
       <!-- 浏览量属于"参考信息"，比三个操作小一档，不抢注意力 -->
       <view class="metric metric--trailing" data-testid="post-card-view">
@@ -106,14 +120,90 @@
  * 点一下没反应又是更坏的体验。所以这里**只渲染计数**，等 M4 接口到位再接。
  * 「更多」按钮同理，点了会明确说明未交付。
  */
+import { ref, watch } from 'vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
-import { compactCount, type PostCardView } from '@/utils/postView'
+import { collectPost, likePost } from '@/api/interaction'
+import { ApiError } from '@/utils/request'
+import { compactCount, num, type PostCardView } from '@/utils/postView'
+import { useAuthStore } from '@/stores/auth'
+import { useInteractionStore } from '@/stores/interaction'
 
 const props = defineProps<{
   /** 已归一化的卡片数据（可选字段已在 `utils/postView.ts` 收敛） */
   post: PostCardView
 }>()
+
+const auth = useAuthStore()
+const interaction = useInteractionStore()
+
+/*
+ * 点赞/收藏数的**本地态**。
+ * 起点取列表响应里的真值；用户点了之后本地 ±1（乐观更新）。
+ * 列表刷新（`props.post` 换了对象）时用 watch 同步回服务端的值 ——
+ * 不这么做的话，翻页/重载后本地数字会和真实值分叉。
+ */
+const likeCount = ref(num(props.post.likeCount))
+const collectCount = ref(num(props.post.collectCount))
+watch(
+  () => props.post,
+  (p) => {
+    likeCount.value = num(p.likeCount)
+    collectCount.value = num(p.collectCount)
+  }
+)
+
+/**
+ * 未登录时的统一引导：直接送去登录页，而不是只弹一句"请先登录"。
+ * 这条在列表卡片里比详情页更重要 —— 列表是用户第一眼看到操作的地方。
+ */
+function requireLogin(): boolean {
+  if (auth.isLoggedIn) return true
+  uni.showToast({ title: '请先登录', icon: 'none' })
+  setTimeout(() => uni.navigateTo({ url: '/pages/auth/index?mode=login' }), 700)
+  return false
+}
+
+/** 列表里直接点赞（幂等端点；失败把计数与激活态**一起**回滚） */
+async function toggleLike(): Promise<void> {
+  if (!requireLogin()) return
+  const on = !interaction.isPostLiked(props.post.id)
+  const before = likeCount.value
+  interaction.markPostLiked(props.post.id, on)
+  likeCount.value = Math.max(0, before + (on ? 1 : -1))
+  try {
+    await likePost(props.post.id, on)
+  } catch (e) {
+    interaction.markPostLiked(props.post.id, !on)
+    likeCount.value = before
+    uni.showToast({ title: e instanceof ApiError ? e.message : '操作失败，请稍后重试', icon: 'none' })
+  }
+}
+
+/** 列表里直接收藏 */
+async function toggleCollect(): Promise<void> {
+  if (!requireLogin()) return
+  const on = !interaction.isPostCollected(props.post.id)
+  const before = collectCount.value
+  interaction.markPostCollected(props.post.id, on)
+  collectCount.value = Math.max(0, before + (on ? 1 : -1))
+  try {
+    await collectPost(props.post.id, on)
+  } catch (e) {
+    interaction.markPostCollected(props.post.id, !on)
+    collectCount.value = before
+    uni.showToast({ title: e instanceof ApiError ? e.message : '操作失败，请稍后重试', icon: 'none' })
+  }
+}
+
+/**
+ * 点评论 → 进详情页并**直接展开评论区**。
+ * 用 `?openComments=1` 带个意图过去（详情页 `onLoad` 里读它），
+ * 否则用户点"评论"进去看到的是收起的「写评论」，还要再点一次 —— 多一步。
+ */
+function openComments(): void {
+  uni.navigateTo({ url: `${props.post.detailUrl}&openComments=1` })
+}
 
 function openDetail(): void {
   uni.navigateTo({ url: props.post.detailUrl })
@@ -308,6 +398,32 @@ function onMore(): void {
     &--muted {
       font-size: $hy-font-sm;
       color: $hy-text-placeholder;
+    }
+  }
+
+  /*
+   * 已点赞 / 已收藏。
+   * 点赞用**红色**（需求方要求"点亮的爱心要变红"），收藏用**主色紫** ——
+   * 两个都红会分不清哪个是哪个。`:deep` 是必须的：HyIcon 在自己的 scoped 样式里
+   * 写了 `color: $hy-icon-color`，只改外层颜色图标不会跟着变。
+   */
+  &--on.metric--like {
+    :deep(.hy-icon) {
+      color: $hy-color-danger;
+    }
+
+    .metric__text {
+      color: $hy-color-danger;
+    }
+  }
+
+  &--on.metric--collect {
+    :deep(.hy-icon) {
+      color: $hy-color-primary;
+    }
+
+    .metric__text {
+      color: $hy-color-primary;
     }
   }
 }
