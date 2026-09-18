@@ -333,9 +333,16 @@ onReachBottom(() => {
   align-items: center;
   padding: 16px;
   margin-bottom: $hy-shell-gap;
-  background-color: $hy-bg-card;
+  /*
+   * 与顶栏同色（需求方 2026-09-18：「顶部导航栏，还有那个分享想法那里」）。
+   *
+   * 效果是让**顶栏 + 发帖入口读成"一整块淡紫区"**，与参考站一致 ——
+   * 原来它是白卡片，顶栏一变紫，两者之间就出现一条突兀的白/紫分界。
+   * ⚠️ 连带改动：里面的药丸从 `$hy-bg-page` 改成**白底**，
+   * 否则两个相近的浅色叠在一起会发脏（与顶栏搜索框同一个理由）。
+   */
+  background-color: $hy-color-primary-light;
   border-radius: $hy-radius-md;
-  box-shadow: $hy-shadow-card;
 
   &__box {
     flex: 1;
@@ -345,7 +352,7 @@ onReachBottom(() => {
     padding: 0 16px;
     display: flex;
     align-items: center;
-    background-color: $hy-bg-page;
+    background-color: $hy-bg-card;
     border-radius: $hy-radius-pill;
   }
 

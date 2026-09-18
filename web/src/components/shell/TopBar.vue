@@ -24,7 +24,7 @@
       <view class="actions">
         <!-- 通知。接口属 M5，契约里没有 → 未读数是假数据（见 mock/hotContent.ts） -->
         <view class="action" data-testid="topbar-bell" @click="goNotifications">
-          <HyIcon type="bell" size="lg" />
+          <HyIcon type="bell" size="lg" color="#4e5969" />
           <view v-if="unread > 0" class="action__badge">
             <text class="action__badge-text">{{ unread > 99 ? '99+' : unread }}</text>
           </view>
@@ -165,8 +165,18 @@ async function onLogout(): Promise<void> {
   position: sticky;
   top: 0;
   z-index: 100;
-  background-color: $hy-bg-card;
-  border-bottom: 1px solid $hy-border-color;
+  /*
+   * 顶栏底色 = **品牌淡紫**（需求方 2026-09-18：「导航栏变颜色」）。
+   *
+   * 为什么用它而不是别的：
+   * - 参考站的顶栏就是这一档淡紫，`$hy-color-primary-light` 正是同一个色阶，
+   *   与左侧导航的激活块、标签底色**同源**，整站不会多出一个"野生色"；
+   * - 去掉原来的下边框：淡紫块与页面底 `#f7f7fb` 已经有足够区分，
+   *   再加一条灰线会显得脏（两个相近的浅色之间夹一条深线很难看）。
+   *
+   * ⚠️ 顶栏是**全局组件**，改这里全站生效（首页/详情/搜索/版块/个人主页都在用）。
+   */
+  background-color: $hy-color-primary-light;
   /*
    * 安全区顶部内边距。
    *
@@ -208,6 +218,12 @@ async function onLogout(): Promise<void> {
 }
 
 /* ---------- 搜索 ---------- */
+/*
+ * 搜索框改成**白底**（原来是页面底 `#f7f7fb`）。
+ * ⚠️ 这一步是换底色之后的**必要连带改动**：`#f7f7fb` 与淡紫顶栏是两个相近的浅色，
+ *    叠在一起会"发脏"（看着像没洗干净），而白底在淡紫上边界清晰 ——
+ *    参考站也是这么处理的（紫底上放浅色药丸）。
+ */
 .search {
   flex: 1;
   /* 不铺满：参考图里搜索框宽度约 620/1920，留出右半边的呼吸空间 */
@@ -216,17 +232,25 @@ async function onLogout(): Promise<void> {
   padding: 0 16px;
   display: flex;
   align-items: center;
-  background-color: $hy-bg-page;
-  border: 1px solid $hy-border-color;
+  background-color: $hy-bg-card;
+  border: 1px solid $hy-color-primary-border;
   border-radius: $hy-radius-pill;
 
   &__icon {
     margin-right: 8px;
   }
 
+  /*
+   * 占位文字加粗（需求方 2026-09-18 明确指定的一处：「搜索框占位文字」）。
+   * ⚠️ 注意必须写在这个 `placeholder-class` 上 —— 占位符的样式由 uni 单独渲染，
+   *    在 `.search__input` 上写 `font-weight` 对占位符**不生效**。
+   * 另外把颜色也压深了一档：原 `$hy-text-placeholder` 是给"比正文更轻"的提示用的，
+   * 在白底药丸里加上加粗会显得发灰。
+   */
   &__placeholder {
     font-size: $hy-font-md;
-    color: $hy-text-placeholder;
+    font-weight: 600;
+    color: $hy-text-secondary;
   }
 }
 
@@ -265,6 +289,12 @@ async function onLogout(): Promise<void> {
     line-height: 1;
     color: $hy-text-inverse;
   }
+
+  /*
+   * 铃铛图标在**淡紫底**上要更深一档（原来用 HyIcon 的默认色 #86909c）。
+   * 上面已经用 `color="#4e5969"` 显式传了，这里只留注释说明原因：
+   * 浅灰图标压在淡紫上会"糊"在一起，看不出是图标还是背景纹理。
+   */
 }
 
 .user {
