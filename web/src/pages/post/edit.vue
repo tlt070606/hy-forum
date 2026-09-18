@@ -108,18 +108,47 @@
             <text class="grid__badge">已有</text>
           </view>
 
-          <!-- 本次刚上传的 -->
-          <view v-for="(img, idx) in uploaded" :key="`u${img.id}`" class="grid__cell">
+          <!--
+            本次选中的（**含上传中与失败态**）。
+            ⚠️ 关键：`src` 在**上传完成前用本地路径**（H5 是 blob URL，小程序是临时文件路径），
+            所以选完图**立刻就能看到缩略图** —— 旧实现要等上传成功才显示，
+            中间那几秒界面毫无反应，用户以为"选了没用"（需求方实测反馈）。
+          -->
+          <view
+            v-for="(d, idx) in drafts"
+            :key="d.key"
+            class="grid__cell"
+            :data-testid="`compose-image-${idx}`"
+            :data-status="d.status"
+          >
             <image
               class="grid__img"
-              :src="img.thumbUrl"
+              :src="d.status === 'done' && d.uploaded ? d.uploaded.thumbUrl : d.img.path"
               mode="aspectFill"
-              :data-testid="`compose-uploaded-image-${idx}`"
             />
+
+            <!-- 上传中：盖一层，让"正在传"这件事可见 -->
+            <view v-if="d.status === 'uploading'" class="grid__mask">
+              <text class="grid__mask-text">上传中</text>
+            </view>
+
+            <!-- 失败：盖一层 + **点这张图就重试**（不用重新选文件） -->
             <view
+              v-else-if="d.status === 'failed'"
+              class="grid__mask grid__mask--fail"
+              :data-testid="`compose-image-retry-${idx}`"
+              @click="retryImage(d)"
+            >
+              <text class="grid__mask-text">失败</text>
+              <text class="grid__mask-sub">点击重试</text>
+            </view>
+
+            <!-- 成功：右上角给删除入口 -->
+            <view
+              v-else
               class="grid__del"
               :data-testid="`compose-remove-image-${idx}`"
-              @click="removeUploaded(idx)"
+              @click="removeDraft(d.key)"
             >
               <HyIcon type="close" size="xs" color="#ffffff" />
             </view>
@@ -133,13 +162,22 @@
             @click="pickImages"
           >
             <HyIcon type="plus" size="lg" color="#86909c" />
-            <text class="grid__add-text">{{ uploading ? '上传中…' : '添加' }}</text>
+            <text class="grid__add-text">添加</text>
           </view>
         </view>
 
-        <text v-if="uploadError" class="hint hint--error" data-testid="compose-upload-error">
-          {{ uploadError }}
-        </text>
+        <!--
+          失败原因**逐条列出**（而不是只在某处显示一行）：
+          一张 6MB 的照片被拒时，用户需要知道"是哪张、为什么"。
+        -->
+        <view
+          v-for="(d, idx) in failedDrafts"
+          :key="`f${d.key}`"
+          class="fail-line"
+          :data-testid="`compose-image-error-${idx}`"
+        >
+          <text class="fail-line__text">{{ d.img.name || '图片' }}：{{ d.error }}</text>
+        </view>
       </view>
 
       <!-- ==================== 网盘（仅资源版块） ==================== -->
@@ -275,7 +313,7 @@ import HyIcon from '@/components/HyIcon.vue'
 import { fetchBoards } from '@/api/boards'
 import { createPost, fetchPostDetail, updatePost } from '@/api/posts'
 import { fetchSignature } from '@/api/oss'
-import { uploadImage, type LocalImage, type UploadedImage } from '@/utils/upload'
+import { precheckImage, uploadImage, type LocalImage, type UploadedImage } from '@/utils/upload'
 import { BIZ_CODE } from '@/utils/error-code'
 import { ApiError } from '@/utils/request'
 import { DISK_TYPES, bool, diskTypeLabel, num, text, toImageView, type PostImageView } from '@/utils/postView'
@@ -297,12 +335,39 @@ const submitting = ref(false)
 const submitError = ref('')
 
 /**
- * 本次新上传的图片。
- * 编辑模式下提交时会与 `existingImages` **合并**一起回传（覆盖语义，见 `buildUpdatePayload`）。
+ * 本次选中的图片（**含上传中与失败的中间态**）。
+ *
+ * ⚠️ 为什么要带中间态，而不是只存"上传成功的结果"：
+ *    需求方实测反馈「发帖时选了图、缩略图不出来」。旧实现是**上传成功之后**才把缩略图放上去，
+ *    于是从选完图到上传完成之间（真实照片 + 外网，可能要几秒）界面**什么都没发生** ——
+ *    看起来就像"选了没用"。现在选完立刻用本地路径预览、叠一层"上传中"，
+ *    成功/失败都直接画在那张缩略图上。
  */
-const uploaded = ref<UploadedImage[]>([])
-const uploading = ref(false)
-const uploadError = ref('')
+interface DraftImage {
+  /** 稳定 key（Vue 列表、重试与删除都靠它定位） */
+  key: string
+  /** 选中的文件（保留它，失败重试时不用让用户重新选） */
+  img: LocalImage
+  status: 'uploading' | 'done' | 'failed'
+  uploaded?: UploadedImage
+  /** 失败原因（逐条列在网格下方） */
+  error?: string
+}
+
+const drafts = ref<DraftImage[]>([])
+
+/** 是否还有图片在上传（提交时必须挡住） */
+const uploading = computed(() => drafts.value.some((d) => d.status === 'uploading'))
+
+/** 上传成功、可以进 `images` 的那些 */
+const doneImages = computed(() =>
+  drafts.value
+    .filter((d) => d.status === 'done' && d.uploaded)
+    .map((d) => d.uploaded as UploadedImage)
+)
+
+/** 失败的那些（用于逐条显示原因） */
+const failedDrafts = computed(() => drafts.value.filter((d) => d.status === 'failed'))
 
 /** 契约里 `images` 最多 9 张 */
 const MAX_IMAGES = 9
@@ -411,14 +476,14 @@ function selectBoard(id: number): void {
  * 图片上传（直传 OSS）
  * ------------------------------------------------------------------------- */
 
-/** 当前图片总数（已有 + 新传），用于 9 张上限的判断 */
-const totalImages = computed(() => existingImages.value.length + uploaded.value.length)
+/** 当前图片总数（已有 + 本次选的，含上传中/失败的），用于 9 张上限的判断 */
+const totalImages = computed(() => existingImages.value.length + drafts.value.length)
 
 /**
- * 选图并逐张直传。
+ * 选图。
  *
  * ⚠️ 一次最多选 `MAX_IMAGES - totalImages` 张（契约上限 9），
- *    但**选完还要再校验一次** —— `chooseImage` 的 `count` 在部分端只是建议值。
+ *    但**选完还要再截一次** —— `chooseImage` 的 `count` 在部分端只是建议值。
  */
 function pickImages(): void {
   const remain = MAX_IMAGES - totalImages.value
@@ -453,12 +518,28 @@ function pickImages(): void {
         type?: string
         name?: string
       }>
-      const locals: LocalImage[] = paths.map((p) => {
+      const locals: LocalImage[] = paths.slice(0, remain).map((p, i) => {
         const f = files.find((x) => x.path === p)
-        return { path: p, size: f?.size, mime: f?.type, name: f?.name }
+        return {
+          path: p,
+          size: f?.size,
+          mime: f?.type,
+          // 拿不到原始文件名时给一个可读的默认名（失败提示要用它说"是哪张"）
+          name: f?.name || `图片${totalImages.value + i + 1}`,
+        }
       })
+      if (!locals.length) return
 
-      void uploadAll(locals.slice(0, remain))
+      // ① **先上屏**：本地预览立刻可见（这是"选了图看不到东西"那条反馈的正解）
+      const created: DraftImage[] = locals.map((img, i) => ({
+        key: `d${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+        img,
+        status: 'uploading',
+      }))
+      drafts.value = drafts.value.concat(created)
+
+      // ② 再开始上传
+      void uploadAll(created)
     },
     fail: (err) => {
       // 用户主动取消不算错误，不打扰；其它失败才提示
@@ -470,52 +551,72 @@ function pickImages(): void {
   })
 }
 
+/** 就地更新某张图的状态（整体替换数组，保证 Vue 一定重渲染） */
+function patchDraft(key: string, patch: Partial<DraftImage>): void {
+  drafts.value = drafts.value.map((d) => (d.key === key ? { ...d, ...patch } : d))
+}
+
 /**
- * 串行上传（不是并发）。
+ * 串行上传一组图片。
  *
- * 为什么串行：一次要一份签名就够用（签名有有效期，串行不会超时），
- * 且并发上传在弱网下更容易整批失败、也更难给出"第几张失败"的准确提示。
- * 代价是大批图片时慢一些 —— 而契约上限只有 9 张，这个代价可以接受。
+ * 为什么串行：一份签名可以传多张（policy 只约束前缀/大小/类型），串行在弱网下更容易
+ * 说清"是哪一张失败"，也不会一次并发把带宽打满。契约上限只有 9 张，代价可接受。
+ *
+ * ⚠️ **一张失败不影响其它张**：每张都有自己的状态与"点击重试"入口。
+ *    （旧实现一失败就 `break`，后面的图既不传也不报，用户完全不知道发生了什么。）
  */
-async function uploadAll(images: LocalImage[]): Promise<void> {
-  if (!images.length) return
-  uploading.value = true
-  uploadError.value = ''
+async function uploadAll(items: DraftImage[]): Promise<void> {
+  if (!items.length) return
 
+  /*
+   * ① 先做**本地预检**（类型/大小），再取签名。
+   *    顺序很重要：预检不过的图不该让服务端白签一次。
+   */
+  const passed: DraftImage[] = []
+  for (const d of items) {
+    const invalid = precheckImage(d.img)
+    if (invalid) patchDraft(d.key, { status: 'failed', error: invalid })
+    else passed.push(d)
+  }
+  if (!passed.length) return
+
+  /* ② 取签名。失败的话**整批**都标失败（原因相同，没必要逐张重复报） */
+  let sign: Awaited<ReturnType<typeof fetchSignature>>
   try {
-    // 每张图都要一份签名？不必：同一份签名可传多张（policy 只约束前缀/大小/类型）。
-    const sign = await fetchSignature()
-
-    for (const img of images) {
-      try {
-        const done = await uploadImage(img, sign)
-        uploaded.value.push(done)
-      } catch (e) {
-        /*
-         * **一张失败不影响其它张**，但必须把失败原因留下来 ——
-         * 静默跳过会让用户以为"我选了 3 张，怎么只上了 2 张"。
-         */
-        uploadError.value = e instanceof ApiError ? e.message : '有图片上传失败，请重试'
-        break
-      }
-    }
+    sign = await fetchSignature()
   } catch (e) {
-    // 取签名阶段失败（未登录 / 网络 / 后端挂了）
+    const msg = e instanceof ApiError ? e.message : '获取上传签名失败，请稍后重试'
+    passed.forEach((d) => patchDraft(d.key, { status: 'failed', error: msg }))
     if (e instanceof ApiError && e.isAuthExpired) {
-      uploadError.value = '登录状态已失效，请重新登录后再上传'
       setTimeout(() => uni.navigateTo({ url: '/pages/auth/index?mode=login' }), 800)
-    } else {
-      uploadError.value = e instanceof ApiError ? e.message : '获取上传签名失败，请稍后重试'
     }
-  } finally {
-    uploading.value = false
+    return
+  }
+
+  /* ③ 逐张上传 */
+  for (const d of passed) {
+    try {
+      const done = await uploadImage(d.img, sign)
+      patchDraft(d.key, { status: 'done', uploaded: done, error: '' })
+    } catch (e) {
+      patchDraft(d.key, {
+        status: 'failed',
+        error: e instanceof ApiError ? e.message : '上传失败，请重试',
+      })
+    }
   }
 }
 
-/** 移除一张**本次新上传**的图片。已有图片（编辑模式）不可移除 —— 见下方说明 */
-function removeUploaded(idx: number): void {
-  uploaded.value.splice(idx, 1)
-  uploadError.value = ''
+/** 点失败的缩略图 → **只重试那一张**（不用让用户重新选文件） */
+function retryImage(d: DraftImage): void {
+  if (d.status !== 'failed') return
+  patchDraft(d.key, { status: 'uploading', error: '' })
+  void uploadAll([d])
+}
+
+/** 移除一张**本次选中**的图片 */
+function removeDraft(key: string): void {
+  drafts.value = drafts.value.filter((d) => d.key !== key)
 }
 
 /*
@@ -582,9 +683,9 @@ function buildCreatePayload(): PostCreateRequest {
 
   /*
    * 图片：传的是**后端落库后返回的 URL**（来自上传响应，CR-G 裁决 A），
-   * 不是前端拼出来的地址。没有图就不传该字段（契约里它可选）。
+   * 不是前端拼出来的地址。只带**上传成功**的那些（失败/上传中的不提交）。
    */
-  if (uploaded.value.length) payload.images = uploaded.value.map((i) => i.url)
+  if (doneImages.value.length) payload.images = doneImages.value.map((i) => i.url)
 
   if (showDiskFields.value) {
     payload.diskType = form.diskType
@@ -620,8 +721,8 @@ function buildUpdatePayload(): PostUpdateRequest {
     title: form.title.trim(),
     // 显式给空串：不传 = 清空，但"用户主动清空"和"我们忘了传"必须能区分开
     content: form.content.trim(),
-    // 原样回传「已有图片 + 本次新上传的」，防止被覆盖语义清空
-    images: [...existingImages.value.map((img) => img.url), ...uploaded.value.map((i) => i.url)],
+    // 原样回传「已有图片 + 本次上传成功的」，防止被覆盖语义清空
+    images: [...existingImages.value.map((img) => img.url), ...doneImages.value.map((i) => i.url)],
     ...(showDiskFields.value
       ? {
           diskType: form.diskType,
@@ -948,6 +1049,36 @@ function goBack(): void {
     border-radius: 0 0 0 8px;
   }
 
+  /* 上传中 / 失败：盖在缩略图上。图片本身照常显示，所以"我选了哪张"始终可见 */
+  &__mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(29, 33, 41, 0.45);
+
+    &--fail {
+      background-color: rgba(245, 63, 63, 0.55);
+    }
+  }
+
+  &__mask-text {
+    font-size: $hy-font-xs;
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  &__mask-sub {
+    margin-top: 2px;
+    font-size: 10px;
+    color: #ffffff;
+  }
+
   &__add {
     display: flex;
     flex-direction: column;
@@ -961,6 +1092,17 @@ function goBack(): void {
     margin-top: 4px;
     font-size: $hy-font-xs;
     color: $hy-text-secondary;
+  }
+}
+
+/* ---------- 上传失败的原因（逐条列出，不做"某处一行小字"） ---------- */
+.fail-line {
+  margin-top: 6px;
+
+  &__text {
+    font-size: $hy-font-xs;
+    color: $hy-color-danger;
+    line-height: 1.6;
   }
 }
 

@@ -80,11 +80,51 @@ test('最小闭环：选图 → 直传 OSS → 回调落库 → 发帖 → 详�
     { timeout: 60_000 }
   )
 
+  /*
+   * ========================================================================
+   * ⚠️ 人为拖慢**签名接口** 3 秒 —— 这是为了**真的**验证"选完图立刻有预览"
+   * ========================================================================
+   * 不拖慢的话上传太快，"选完就有预览"与"传完才有预览"两种实现都会通过 → 一条假绿。
+   * 而需求方实测反馈的正是「选了图、缩略图不出来」（旧实现只在成功后才放缩略图）。
+   *
+   * ⚠️ 为什么拖**签名**而不是拖 OSS 的 POST：
+   *    实测 `page.route` 对这次 OSS 上传**不生效**（函数匹配、glob 都试过，
+   *    断言读到的状态始终是 done）—— 不管原因是 uni 的 uploadFile 走了别的通道还是别的什么，
+   *    依赖它就等于让这条断言变成假绿。而 `/api/oss/signature` 是**同源 XHR**，
+   *    拦截稳定生效；而且签名没回来**根本不可能开始上传**，这段"上传中"的窗口是确定的。
+   */
+  await page.route(
+    (url) => url.pathname === '/api/oss/signature',
+    async (route) => {
+      await new Promise((r) => setTimeout(r, 3000))
+      await route.continue()
+    }
+  )
+
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
     page.getByTestId('compose-add-image').click(),
   ])
   await chooser.setFiles(FIXTURE)
+
+  /*
+   * ========================================================================
+   * ⚠️ 这一段必须紧跟 `setFiles`，**不能放在 await 上传响应之后**
+   * ========================================================================
+   * 钉住需求方实测反馈的那个 bug：「选了图、缩略图不出来」。
+   * 旧实现**只有上传成功之后**才把缩略图放上去，从选完图到上传完成之间
+   * （真实照片 + 外网，可能要几秒）界面**什么都没发生**，看起来就像"选了没用"。
+   *
+   * 两个刻意的设计，否则这条断言就是**假绿**：
+   * 1. 先把签名接口拖慢 3 秒（签名没回来就不可能开始上传，这段窗口是确定的）；
+   * 2. 断言写在 `setFiles` 紧后面 —— 一旦挪到 `await uploadResponse` 之后，
+   *    读到的必然已经是 `done`，测的就不再是"立刻"了（本机改错过一次，记在这里）。
+   */
+  const cell = page.locator('[data-testid="compose-image-0"]')
+  await expect(cell).toBeVisible({ timeout: 2500 })
+  expect(await cell.getAttribute('data-status'), '上传未完成时就该有本地预览').toBe('uploading')
+  // 预览用的是**本地路径**（H5 是 blob URL），不是 OSS 地址 —— 这才是"立刻可见"的实质
+  expect(await cell.locator('img').getAttribute('src'), '本地预览应指向 blob 路径').toContain('blob:')
 
   const sign = await (await signResponse).json()
   expect(sign.code, `签名接口应 code=0：${JSON.stringify(sign)}`).toBe(0)
@@ -113,8 +153,10 @@ test('最小闭环：选图 → 直传 OSS → 回调落库 → 发帖 → 详�
   expect(ossBody.data?.url, '回调结果里应有图片 URL（CR-G 裁决 A）').toBeTruthy()
   expect(ossBody.data?.thumbUrl, '回调结果里应有缩略图 URL').toBeTruthy()
 
-  // 界面上应出现一张已上传的图
-  await expect(page.getByTestId('compose-uploaded-image-0')).toBeVisible({ timeout: 30_000 })
+  /* ---------- 上传完成后：那张缩略图应该变成 done，并仍是同一个格子 ---------- */
+  await expect
+    .poll(async () => cell.getAttribute('data-status'), { timeout: 30_000 })
+    .toBe('done')
 
   /* ---------- ④ 发帖（images 用后端给的 URL，不是前端拼的） ---------- */
   const title = `带图帖（E2E 直传 OSS）${uniq()}`
