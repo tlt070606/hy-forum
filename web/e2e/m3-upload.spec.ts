@@ -221,4 +221,25 @@ test('最小闭环：选图 → 直传 OSS → 回调落库 → 发帖 → 详�
   )
   // 让 postImage 变量被使用（避免 lint 噪声），并复核详情接口可重复读
   expect(postImage.code).toBe(0)
+
+  /*
+   * ========================================================================
+   * 清理：把本次闭环建的帖子删掉（需求方 2026-09-18：「不要在发了」）
+   * ========================================================================
+   * ⚠️ 这一段**必须留在末尾**：本用例每次运行都会真实发一条带图帖，
+   *    不清理的话演示信息流会被「带图帖（E2E 直传 OSS）xxxx」刷满 ——
+   *    本机实测累计了 **17 条**，被需求方看到并投诉了。
+   *
+   * 为什么清理**不会**丢掉 §6.1 的证据：
+   * - 「回调落库」这条证据在本用例运行期间已经**真读出来并断言过**
+   *   （PostDetailVO.images[0] 的存在就是证据），同时写进了 `.tmp/fe-upload-evidence.json`；
+   * - 「E2E 跑绿」本身就是证据。
+   * 留一条真实帖子在库里**不是**证据，只是垃圾。
+   */
+  const cleanupToken = await page.evaluate(() => window.localStorage.getItem('hy:token') || '')
+  const cleanupRes = await fetch(`${API_BASE}/api/posts/${postId}`, {
+    method: 'DELETE',
+    headers: { Authorization: cleanupToken },
+  })
+  expect((await cleanupRes.json()).code, '闭环建的帖子应能被作者删掉（清理）').toBe(0)
 })
