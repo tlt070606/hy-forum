@@ -77,10 +77,23 @@
 
     <!-- ==================== 主楼列表 ==================== -->
     <view v-for="c in comments" :key="c.id" class="item" data-testid="comment-item">
-      <Avatar :url="c.authorAvatarUrl" :nickname="c.authorName" :size="36" />
+      <!-- 头像与昵称都可点 → 个人主页（需求方 2026-09-18 定：「都点」） -->
+      <Avatar
+        :url="c.authorAvatarUrl"
+        :nickname="c.authorName"
+        :size="36"
+        :data-testid="`comment-avatar-${c.id}`"
+        @click="openUser(c.authorId)"
+      />
       <view class="item__body">
         <view class="item__head">
-          <text class="item__name">{{ c.authorName }}</text>
+          <text
+            class="item__name"
+            :data-testid="`comment-author-${c.id}`"
+            @click="openUser(c.authorId)"
+          >
+            {{ c.authorName }}
+          </text>
           <text class="item__time">{{ c.timeText }}</text>
         </view>
         <text class="item__content" data-testid="comment-content">{{ c.content }}</text>
@@ -354,6 +367,14 @@ function startReplyToReply(c: CommentView, rp: ReplyView): void {
 
 function cancelReply(): void {
   replyTo.value = null
+}
+
+/**
+ * 点评论作者 → 个人主页。
+ * ⚠️ `authorId` 为 0（契约没给作者）时不跳 —— 否则会跳到 `?id=0` 这种坏链接。
+ */
+function openUser(authorId: number): void {
+  if (authorId > 0) uni.navigateTo({ url: `/pages/user/index?id=${authorId}` })
 }
 
 async function submit(): Promise<void> {

@@ -21,16 +21,41 @@
       </view>
     </view>
 
+    <!-- ==================== 来源（双流） ==================== -->
+    <!--
+      ⚠️ **来源与排序分两行**（需求方 2026-09-18 grill 后定）：
+      - 这一行是**来源**：`/api/feed` 的 `type=follow|all`（《技术方案》§8.5）；
+      - 下面一行是**排序**：`sort=latest|hot|essence`。
+      两者是**不同维度**，挤在同一行会让用户困惑（点了"关注"再点"热门"，
+      到底是"关注里热门"还是"全部里热门"？分两行就一目了然）。
+    -->
+    <view class="feedbar" data-testid="home-feedtype">
+      <view
+        v-for="opt in FEED_TYPE_OPTIONS"
+        :key="opt.value"
+        class="feedbar__item"
+        :class="{ 'feedbar__item--active': feedType === opt.value }"
+        :data-testid="`home-feedtype-${opt.value}`"
+        @click="changeFeedType(opt.value)"
+      >
+        <text class="feedbar__text">{{ opt.label }}</text>
+      </view>
+    </view>
+
     <!-- ==================== 排序 ==================== -->
     <!--
       排序口径：契约 `GET /api/posts` 的 `sort`，取值 `latest | hot | essence`
       （《技术方案》§6.5）。⚠️ 契约里 `sort` **没有 enum**，这组取值只能来自文档
       —— 已作为契约改进建议登记进交付报告。
       参考图只有"最新/精选"两档；我们给三档，因为契约支持三档，藏起"热门"没有理由。
+
+      ⚠️ 关注流下**不提供"精选"**：`/api/feed` 的 `sort` 在契约里同样没有 enum，
+      文档（§8.5）只定义了 `type`，没规定"关注流支持哪些排序"。
+      与其猜它支持 essence，不如只给文档能支撑的两档 —— 猜错就会得到一个静默失效的 tab。
     -->
     <view class="sortbar" data-testid="home-sort">
       <view
-        v-for="opt in POST_SORT_OPTIONS"
+        v-for="opt in sortOptions"
         :key="opt.value"
         class="sortbar__item"
         :class="{ 'sortbar__item--active': sort === opt.value }"
@@ -41,17 +66,35 @@
       </view>
     </view>
 
+    <!--
+      关注流需要登录（后端按"我关注的人"过滤）。
+      ⚠️ 未登录时**不发请求**，直接给登录引导 —— 否则拿到的 401 会被 `request` 层
+      转成"登录已过期"，对没登录的人来说是**错误信息**而不是引导（需求方 2026-09-18 定）。
+    -->
+    <view
+      v-if="feedType === 'follow' && !auth.isLoggedIn"
+      class="card follow-hint"
+      data-testid="home-follow-login-hint"
+    >
+      <text class="follow-hint__title">登录后查看关注动态</text>
+      <text class="follow-hint__desc">你关注的人发的帖子会出现在这里</text>
+      <view class="follow-hint__btn" data-testid="home-follow-login" @click="goLogin">
+        <text class="follow-hint__btn-text">去登录</text>
+      </view>
+    </view>
+
     <!-- ==================== 状态占位 ==================== -->
     <!--
       ⚠️ `loading` 传的是 `loading && posts.length === 0`，不是裸的 `loading`：
       刷新时旧数据还在，若让 ListState 显示"正在加载…"，它会与下面仍在渲染的列表**同时出现**。
       只在"没有任何内容可显示"时才让它接管版面。
+      关注流未登录时不参与这三态（上面已单独渲染引导）。
     -->
     <ListState
       :loading="loading && posts.length === 0"
       :error="error"
-      :empty="posts.length === 0"
-      empty-text="这里还没有帖子"
+      :empty="posts.length === 0 && !(feedType === 'follow' && !auth.isLoggedIn)"
+      :empty-text="feedType === 'follow' ? '你关注的人还没发帖' : '这里还没有帖子'"
       loading-text="正在加载…"
       testid-base="home-state"
       @retry="load"
@@ -95,19 +138,30 @@
  * **未交付并明确提示**（不做假成功）：
  * - 点赞 / 收藏 / 举报 → 接口属 M4/M5，卡片上只显示计数，不做成可点的假按钮
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onReachBottom, onShow } from '@dcloudio/uni-app'
 import AppShell from '@/components/shell/AppShell.vue'
 import Avatar from '@/components/Avatar.vue'
 import PostCard from '@/components/PostCard.vue'
 import ListState from '@/components/ListState.vue'
 import { fetchPosts } from '@/api/posts'
-import { POST_SORT_OPTIONS, type PostSort } from '@/api/types'
+import { fetchFeed } from '@/api/users'
+import { POST_SORT_OPTIONS, type FeedType, type PostSort } from '@/api/types'
 import { ApiError, PAGE_SIZE_MAX } from '@/utils/request'
 import { toPostCard, type PostCardView } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+
+/**
+ * 「来源」两档（需求方 2026-09-18 定：来源与排序分两行）。
+ * 依据《技术方案》§8.5 的 `type=follow|all`。
+ * ⚠️ 契约里 `type` 是**裸 string、没有 enum**，已作为契约改进建议登记。
+ */
+const FEED_TYPE_OPTIONS: Array<{ value: FeedType; label: string }> = [
+  { value: 'follow', label: '关注' },
+  { value: 'all', label: '全部' },
+]
 
 const posts = ref<PostCardView[]>([])
 /**
@@ -117,12 +171,43 @@ const posts = ref<PostCardView[]>([])
  */
 const postTotal = ref<number | null>(null)
 
+const feedType = ref<FeedType>('all')
 const sort = ref<PostSort>('latest')
 const loading = ref(false)
 const loadingMore = ref(false)
 const error = ref('')
 const hasMore = ref(false)
 const page = ref(1)
+
+/** 关注流下不提供"精选"（理由见模板注释：文档没规定关注流支持哪些排序，不猜） */
+const sortOptions = computed(() =>
+  feedType.value === 'follow'
+    ? POST_SORT_OPTIONS.filter((o) => o.value !== 'essence')
+    : POST_SORT_OPTIONS
+)
+
+/** 当前是否处于"关注流 + 未登录"：这种情况下**不发请求**，由模板渲染登录引导 */
+const followNeedsLogin = computed(() => feedType.value === 'follow' && !auth.isLoggedIn)
+
+/**
+ * 取一页数据。
+ *
+ * ⚠️ 两个流走**不同端点**，这是刻意的：
+ * - **全部流** → `GET /api/posts`（M3 就在用）—— 它支持 `sort=latest|hot|essence`
+ *   三档，且响应里的 `total` 要给左栏「今日数据」用；
+ * - **关注流** → `GET /api/feed?type=follow`（M4 新端点）—— 只有它知道"我关注了谁"。
+ * 不把全部流也换成 `/api/feed`：那样会丢掉 `essence` 这档（文档没规定 feed 支持它），
+ * 也会让左栏的总数来源变含糊。
+ */
+async function fetchPage(targetPage: number): Promise<{ list: PostCardView[]; total: number }> {
+  if (feedType.value === 'follow') {
+    const res = await fetchFeed('follow', sort.value === 'essence' ? 'latest' : sort.value, targetPage, undefined, true)
+    // 关注流没有"全站总数"的语义 → 不拿它去覆盖左栏的数字
+    return { list: res.list.map(toPostCard), total: -1 }
+  }
+  const res = await fetchPosts({ sort: sort.value, page: targetPage })
+  return { list: res.list.map(toPostCard), total: res.total }
+}
 
 /**
  * 用 `onShow` 而不是 `onLoad`：从详情页返回时 `onLoad` **不会**再触发，
@@ -133,14 +218,22 @@ onShow(() => {
   void load()
 })
 
-/** 重新加载第 1 页（进入页面、切换排序、点重试都走这里） */
+/** 重新加载第 1 页（进入页面、切换来源/排序、点重试都走这里） */
 async function load(): Promise<void> {
+  // 关注流未登录：不发请求（401 会被转成"登录已过期"，对未登录的人是错误信息）
+  if (followNeedsLogin.value) {
+    posts.value = []
+    postTotal.value = null
+    hasMore.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    const res = await fetchPosts({ sort: sort.value, page: 1 })
-    posts.value = res.list.map(toPostCard)
-    postTotal.value = res.total
+    const res = await fetchPage(1)
+    posts.value = res.list
+    if (res.total >= 0) postTotal.value = res.total
     hasMore.value = res.list.length >= PAGE_SIZE_MAX
     page.value = 1
   } catch (e) {
@@ -165,8 +258,8 @@ async function loadMore(): Promise<void> {
   loadingMore.value = true
   try {
     const next = page.value + 1
-    const res = await fetchPosts({ sort: sort.value, page: next })
-    posts.value = posts.value.concat(res.list.map(toPostCard))
+    const res = await fetchPage(next)
+    posts.value = posts.value.concat(res.list)
     hasMore.value = res.list.length >= PAGE_SIZE_MAX
     page.value = next
   } catch (e) {
@@ -189,6 +282,25 @@ function changeSort(next: PostSort): void {
   if (sort.value === next) return
   sort.value = next
   void load()
+}
+
+/**
+ * 切换来源（关注 / 全部）。
+ *
+ * ⚠️ 若当前排序是"精选"、而目标是关注流，要**顺手退回"最新"** ——
+ * 否则会出现"选中了一个界面上根本不存在的排序"（关注流不显示精选这一档），
+ * 列表内容与高亮的 tab 对不上。
+ */
+function changeFeedType(next: FeedType): void {
+  if (feedType.value === next) return
+  feedType.value = next
+  if (next === 'follow' && sort.value === 'essence') sort.value = 'latest'
+  void load()
+}
+
+/** 未登录时的引导：直接送去登录页，而不是只弹一句提示 */
+function goLogin(): void {
+  uni.navigateTo({ url: '/pages/auth/index?mode=login' })
 }
 
 /**
@@ -240,6 +352,76 @@ onReachBottom(() => {
   &__placeholder {
     font-size: $hy-font-md;
     color: $hy-text-placeholder;
+  }
+}
+
+/* ---------- 来源条（关注 / 全部） ---------- */
+/*
+ * 与排序条同一张"卡片"的观感，但**弱一档**（高度小、无阴影）：
+ * 它是筛选条件的第一层，视觉上不该和排序抢同样的分量。
+ */
+.feedbar {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  margin-bottom: 10px;
+  height: 40px;
+  background-color: $hy-bg-card;
+  border-radius: $hy-radius-md;
+
+  &__item {
+    margin-right: 8px;
+    padding: 5px 16px;
+    border-radius: $hy-radius-pill;
+
+    &--active {
+      background-color: $hy-color-primary-light;
+
+      .feedbar__text {
+        color: $hy-color-primary;
+        font-weight: 600;
+      }
+    }
+  }
+
+  &__text {
+    font-size: $hy-font-md;
+    color: $hy-text-regular;
+  }
+}
+
+/* ---------- 关注流未登录的引导 ---------- */
+.follow-hint {
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  &__title {
+    font-size: $hy-font-lg;
+    font-weight: 600;
+    color: $hy-text-primary;
+  }
+
+  &__desc {
+    margin-top: 8px;
+    font-size: $hy-font-md;
+    color: $hy-text-secondary;
+  }
+
+  &__btn {
+    margin-top: 20px;
+    height: 36px;
+    padding: 0 28px;
+    display: flex;
+    align-items: center;
+    background-color: $hy-color-primary;
+    border-radius: $hy-radius-pill;
+  }
+
+  &__btn-text {
+    font-size: $hy-font-md;
+    color: $hy-text-inverse;
   }
 }
 

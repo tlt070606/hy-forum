@@ -57,7 +57,13 @@
           <text class="title-row__text" data-testid="detail-title">{{ text(post.title) }}</text>
         </view>
 
-        <view class="author">
+        <!--
+          作者区。整块可点 → 个人主页（需求方 2026-09-18 定：详情页作者区要能点进主页）。
+          ⚠️ 关注按钮的状态要靠 `GET /api/users/{id}` 拿 —— `PostDetailVO.author` 是
+          `UserBriefVO`，**没有 `isFollowing`**（与列表项同一个原因）。
+          所以本页会在**已登录时**额外拉一次作者资料（best-effort，失败只影响按钮的显示）。
+        -->
+        <view class="author" data-testid="detail-author-card" @click="openAuthor">
           <Avatar
             :url="text(post.author?.avatarUrl)"
             :nickname="authorName(post.author)"
@@ -79,6 +85,17 @@
               <text class="author__sep">·</text>
               <text class="author__view" data-testid="detail-view">{{ post.viewCount ?? 0 }} 次浏览</text>
             </view>
+          </view>
+
+          <!-- 自己看自己的帖子不显示关注按钮（后端也不允许关注自己） -->
+          <view
+            v-if="authorFollow && !isSelfAuthor"
+            class="follow-btn"
+            :class="{ 'follow-btn--on': authorFollow.isFollowing }"
+            data-testid="detail-author-follow"
+            @click.stop="toggleFollowAuthor"
+          >
+            <text class="follow-btn__text">{{ authorFollowLabel }}</text>
           </view>
         </view>
 
@@ -304,7 +321,8 @@ import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import CommentSection from '@/components/CommentSection.vue'
 import { deletePost, fetchPostDetail } from '@/api/posts'
-import { collectPost, likePost } from '@/api/interaction'
+import { collectPost, followUser, likePost } from '@/api/interaction'
+import { fetchUserProfile } from '@/api/users'
 import { BIZ_CODE } from '@/utils/error-code'
 import { ApiError } from '@/utils/request'
 import type { PostDetailVO } from '@/api/types'
@@ -319,6 +337,7 @@ import {
   relativeTime,
   text,
   toImageView,
+  toProfileView,
   type PostImageView,
 } from '@/utils/postView'
 import { canOpenExternalLink, copyText, openExternalLink, shouldShowCustomToastAfterCopy } from '@/utils/platform'
@@ -434,6 +453,8 @@ onLoad((options) => {
    * 不这么做的话，用户点了"评论"进来看到的却是一个收起的「写评论」，还得再点一次。
    */
   if (options?.openComments) commentsOpen.value = true
+  // 同理：`isSelfAuthor` 依赖 `auth.user`，刷新后要补一次（已缓存则不发请求）
+  if (auth.isLoggedIn) void auth.ensureProfile()
   void load()
 })
 
@@ -447,6 +468,8 @@ async function load(): Promise<void> {
     likeCount.value = num(post.value?.likeCount)
     commentCount.value = num(post.value?.commentCount)
     collectCount.value = num(post.value?.collectCount)
+    // 作者关注态要额外取（PostDetailVO.author 里没有 isFollowing）；best-effort，不 await
+    void loadAuthorFollow()
   } catch (e) {
     post.value = null
     if (e instanceof ApiError) {
@@ -527,6 +550,69 @@ function notDelivered(what: string): void {
  * ------------------------------------------------------------------------- */
 
 /** 评论区是否展开（默认收起，点击才打开）—— 声明见页面顶部（`onLoad` 要用它） */
+
+/**
+ * 作者的关注态。`null` = 还不知道/不需要（未登录、或作者资料拉取失败）。
+ * 契约里 `PostDetailVO.author` 没有 `isFollowing`，所以只能额外拉一次作者资料（见下）。
+ */
+const authorFollow = ref<{ isFollowing: boolean; isFollowedBy: boolean } | null>(null)
+
+/**
+ * 作者主页入口（详情页作者区整块可点）。
+ * `authorId` 取自 `PostDetailVO.author.id`；为 0 说明契约没给（不跳，避免跳到 `?id=0`）。
+ */
+function openAuthor(): void {
+  const id = num(post.value?.author?.id)
+  if (id > 0) uni.navigateTo({ url: `/pages/user/index?id=${id}` })
+}
+
+/** 我是不是这篇的作者（是的话不显示关注按钮） */
+const isSelfAuthor = computed(
+  () => Boolean(auth.user?.id) && auth.user?.id === num(post.value?.author?.id)
+)
+
+/** 关注按钮文案（与个人主页同一口径：关注 / 已关注 / 互相关注 / 回关） */
+const authorFollowLabel = computed(() => {
+  const f = authorFollow.value
+  if (!f) return '关注'
+  if (f.isFollowing) return f.isFollowedBy ? '互相关注' : '已关注'
+  return f.isFollowedBy ? '回关' : '关注'
+})
+
+/**
+ * 拉作者资料**只为拿到关注态**。
+ *
+ * ⚠️ 为什么非拉不可：`PostDetailVO.author` 是 `UserBriefVO`，**没有 `isFollowing`**
+ *    （与列表项同一个原因，见报告 CR-K）。不拉的话按钮只能"盲猜"，
+ *    点完刷新又变回未关注 —— 那是个骗人的按钮。
+ * - **已登录才拉**（未登录时点按钮就是引导登录，状态无所谓）；
+ * - **失败静默**：关注态拿不到不该影响正文阅读，按钮直接不显示（`null`）。
+ */
+async function loadAuthorFollow(): Promise<void> {
+  const id = num(post.value?.author?.id)
+  if (!id || !auth.isLoggedIn) return
+  try {
+    const p = toProfileView(await fetchUserProfile(id))
+    authorFollow.value = { isFollowing: p.isFollowing, isFollowedBy: p.isFollowedBy }
+  } catch {
+    authorFollow.value = null
+  }
+}
+
+/** 关注/取关作者（乐观翻转，失败回滚） */
+async function toggleFollowAuthor(): Promise<void> {
+  const f = authorFollow.value
+  const id = num(post.value?.author?.id)
+  if (!f || !id) return
+  const was = f.isFollowing
+  authorFollow.value = { ...f, isFollowing: !was }
+  try {
+    await followUser(id, !was)
+  } catch (e) {
+    authorFollow.value = { ...f, isFollowing: was }
+    uni.showToast({ title: e instanceof ApiError ? e.message : '操作失败，请稍后重试', icon: 'none' })
+  }
+}
 
 /**
  * 点赞/取消。
@@ -800,6 +886,32 @@ async function onDelete(): Promise<void> {
 }
 
 /* ---------- 作者 ---------- */
+/* ---------- 关注按钮（详情页作者区 / 个人主页共用同一套观感） ---------- */
+.follow-btn {
+  margin-left: 12px;
+  height: 32px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  background-color: $hy-color-primary;
+  border-radius: $hy-radius-pill;
+
+  /* 已关注：改描边（实心会让人以为"点了还能再点一次"） */
+  &--on {
+    background-color: transparent;
+    border: 1px solid $hy-border-color;
+
+    .follow-btn__text {
+      color: $hy-text-regular;
+    }
+  }
+
+  &__text {
+    font-size: $hy-font-sm;
+    color: $hy-text-inverse;
+  }
+}
+
 .author {
   margin-top: 14px;
   display: flex;

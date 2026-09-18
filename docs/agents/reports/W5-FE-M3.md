@@ -1531,3 +1531,88 @@ npx playwright test                     → 18 passed (33.9s)
 **需求方 2026-09-18 结尾表态「要不就这样」—— 版式定稿，前端不再自行调整布局。**
 
 ---
+
+# T. M4 第二批：个人主页 / 关注 / 我的收藏 / 首页双流（四个都做，需求方 grill 后定口径）
+
+## T.1 需求方 grill 的六条口径（全部按推荐选项确认）
+
+| # | 问题 | 定论 |
+|---|---|---|
+1 | 首页「关注/全部」（**来源**）与「最新/热门/精选」（**排序**）语义相撞 | **分两行**：上行选来源，下行选排序 |
+2 | 关注按钮放哪里 | **只放详情页作者区 + 个人主页**（只有 `UserProfileVO` 有 `isFollowing`；列表项的 author 是 `UserBriefVO`，放上去等于重演 CR-K） |
+3 | `gender` / `level` 契约没给取值含义 | **先不显示**（详见 T.4 的 CR） |
+4 | 我的收藏卡片样式（`CollectionItemVO` **无作者字段**） | **复用帖子卡片视觉、去掉作者行** |
+5 | 个人主页入口 | 详情页作者区、评论作者、关注/粉丝列表**都可点** |
+6 | 未登录看「关注」流 / 我的收藏 | **显示登录引导、不发请求** |
+
+## T.2 做了什么
+
+| 文件 | 内容 |
+|---|---|
+| `api/users.ts`（新） | 资料 / 帖子 / 评论 / 关注 / 粉丝 / 我的收藏 / 信息流，共 7 个接口 |
+| `api/contract.ts` | 已登记（上一批完成） |
+| `utils/postView.ts` | 新增 `ProfileView` / `FollowUserView` / `CollectionView` / `UserCommentView` 四个归一化；`toPostCard` 放宽为同时接受 `PostSummaryVO \| FeedItemVO`（两者字段集一致） |
+| `pages/user/index.vue`（新） | 资料卡 + 四个 Tab（各自独立分页、**切换保留已加载数据**，避免来回点重复请求） |
+| `pages/collect/index.vue`（**替换占位页**） | 我的收藏列表 + 取消收藏（就地移除、失败插回**原位**而不是重拉） |
+| `pages/index/index.vue` | 来源条（关注/全部）+ 排序条；关注流未登录只给引导 |
+| `pages/post/detail.vue` | 作者区整块可点进主页 + 关注按钮（**额外拉一次作者资料拿关注态**，见 T.3） |
+| `components/CommentSection.vue` | 评论作者头像/昵称可点进主页 |
+| `pages.json` | 注册 `pages/user/index` |
+| `e2e/m4-profile.spec.ts`（新） | 4 条用例，见 T.5 |
+
+## T.3 两条设计上的取舍（都不是随手写的）
+
+1. **详情页的关注按钮要额外拉一次 `/api/users/{authorId}`**
+   因为 `PostDetailVO.author` 是 `UserBriefVO`，**没有 `isFollowing`**。
+   不拉的话按钮只能盲猜，点完刷新又变回未关注 —— 那是个**骗人的按钮**。
+   所以：**已登录才拉**（未登录时点按钮就是引导登录，状态无所谓），**失败静默**
+   （关注态拿不到不该影响正文阅读，按钮直接不显示）。
+2. **关注流与全部流走不同端点**
+   - 全部流 → `GET /api/posts`（支持 `latest/hot/essence` 三档，且 `total` 要给左栏「今日数据」）；
+   - 关注流 → `GET /api/feed?type=follow`（只有它知道"我关注了谁"）。
+   不把全部流也换成 `/api/feed`：那会丢掉 `essence` 这档（文档只定义了 `type`，没规定 feed 支持哪些排序），
+   也会让左栏的总数来源变含糊。**关注流下不显示"精选"**，切换来源时若原来停在"精选"会顺手退回"最新"，
+   否则会出现"选中了界面上根本不存在的排序"。
+
+## T.4 🔴 CR-M：`UserProfileVO.gender` / `level` 没有取值含义
+
+契约里这两个是**裸 integer，没有 enum、没有 description**（对比 `PostSort` 至少在文档里有取值）。
+前端猜不出编码（0 是"未知"还是"男"？`level` 从 1 还是 0 起？），**猜错就是在界面上写错**。
+所以本批**刻意不显示**它们，也不在 `ProfileView` 里建模（避免将来有人顺手渲染出来）。
+
+**给 L1 的一句话**：`UserProfileVO.gender` 与 `level` 请补上取值说明（或改成 enum），
+否则前端只能一直不显示这两个字段。
+
+（另：CR-L 仍阻塞「列表画九宫格」与「卡片上复制链接」—— 需要 `PostSummaryVO`/`FeedItemVO`
+补 `imageThumbs[]` 与 `diskUrl`，见 §S.3。）
+
+## T.5 一个**真 bug**（E2E 抓到的）与**三个测试侧的坑**（都写进了测试注释）
+
+**真 bug**：刷新后 `auth.user` 只有 localStorage 里那份、且我的页面没触发补齐，
+于是 `isSelf` 判不出来 → **自己的主页也显示了"关注"按钮**。
+修法：个人主页与详情页在 `onLoad` 时 `void auth.ensureProfile()`（已缓存则不发请求）。
+> 这条正是"关注态必须来自服务端"的价值：如果当初图省事只用内存记，这个 bug 根本不会被发现。
+
+**测试侧的坑（全部是本机真实假失败，值得后来人抄走）**：
+1. **乐观更新 + 立刻断言服务端 = 竞态**。取消收藏后卡片是**乐观移除**的，我紧接着就去查接口，
+   而 DELETE 还在飞 —— 断言拿到旧值；测试结束时浏览器一关，请求被中断，
+   **还在库里留下脏数据**（三次运行各剩一行 `post_collect`，我事后清掉了并把 `collect_count` 重新同步）。
+   正解：`page.waitForResponse` 把**请求本身**也纳入等待。
+2. **uni-app 同一路由只换 query 不会重跑 `onLoad`**。`/pages/user/index?id=A` → `?id=B` 时页面
+   还停在 A 的主页，于是"自己的主页有关注按钮"这条断言假失败。正解：`page.reload()`。
+   （M3 的发帖/详情用例踩过同一个坑。）
+3. **断言写死"变成 0"是错的**：收藏数是**全站共享**的，别的用例会故意留下收藏。
+   这条断言**单独跑通过、全量跑失败** —— 正是最容易被当成"抖动"忽略的那种假失败。
+   正解：断言"**恰好减少 1**"。
+
+## T.6 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npx playwright test                     → 22 passed (41.5s)
+    M2 认证 5 + M3 七页 7 + 最小闭环 1 + M4 互动 5 + M4 个人主页批次 4
+```
+
+**演示库清理**：删掉 3 行测试残留的 `post_collect` 并重新同步了 `post.collect_count`。
+
+---

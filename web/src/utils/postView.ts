@@ -13,12 +13,17 @@
  */
 
 import type {
+  CollectionItemVO,
   CommentItemVO,
   CommentReplyVO,
+  FeedItemVO,
+  FollowUserVO,
   PostDetailVO,
   PostImageVO,
   PostSummaryVO,
   UserBriefVO,
+  UserCommentVO,
+  UserProfileVO,
 } from '@/api/types'
 
 /* ---------------------------------------------------------------------------
@@ -260,7 +265,7 @@ export interface PostCardView {
  *    拼 URL 等于把 OSS 图片处理参数变成前端合约（与口径 7 同源被禁）。
  *    若后端希望列表走缩略图，应由后端在 `coverUrl` 里给缩略图地址，或补 `thumbUrl` 字段。
  */
-export function toPostCard(post: PostSummaryVO): PostCardView {
+export function toPostCard(post: PostSummaryVO | FeedItemVO): PostCardView {
   const id = num(post.id)
   const boardId = num(post.boardId)
   const name = authorName(post.author)
@@ -383,5 +388,132 @@ export function toCommentView(c: CommentItemVO): CommentView {
     authorAvatarUrl: text(c.author?.avatarUrl),
     timeText: relativeTime(c.createdAt),
     replies: (c.replies ?? []).map(toReplyView),
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 个人主页 / 关注 / 收藏（M4 第二批）
+ * ------------------------------------------------------------------------- */
+
+/** 个人主页资料（已归一化：数字一定是 number，字符串一定不是 undefined） */
+export interface ProfileView {
+  id: number
+  nickname: string
+  avatarUrl: string
+  /** 简介。空串 = 未填（界面按"这个人还没写简介"处理，不显示空行） */
+  bio: string
+  postCount: number
+  followCount: number
+  fansCount: number
+  /** 获赞总数（他收到的赞，不是他给出的） */
+  likeReceivedCount: number
+  /** 我是否关注了他。**契约真有的字段**（`UserProfileVO.isFollowing`） */
+  isFollowing: boolean
+  /** 他是否关注了我（用于"互相关注/回关"的文案） */
+  isFollowedBy: boolean
+  joinedText: string
+  /*
+   * ⚠️ 契约里 `gender` 与 `level` 是**裸 integer，没有 enum、没有取值说明**，
+   *    前端猜不出编码（0 是"未知"还是"男"？）——所以**刻意不在这里建模、界面也不显示**。
+   *    已作为 CR 登记（报告 §T）。契约补上值域后再加。
+   */
+}
+
+export function toProfileView(p: UserProfileVO): ProfileView {
+  return {
+    id: num(p.id),
+    nickname: text(p.nickname).trim() || '匿名用户',
+    avatarUrl: text(p.avatarUrl),
+    bio: text(p.bio).trim(),
+    postCount: num(p.postCount),
+    followCount: num(p.followCount),
+    fansCount: num(p.fansCount),
+    likeReceivedCount: num(p.likeReceivedCount),
+    isFollowing: bool(p.isFollowing),
+    isFollowedBy: bool(p.isFollowedBy),
+    joinedText: relativeTime(p.createdAt),
+  }
+}
+
+/** 关注/粉丝列表项 */
+export interface FollowUserView {
+  userId: number
+  nickname: string
+  avatarUrl: string
+  bio: string
+  followedAtText: string
+}
+
+export function toFollowUserView(u: FollowUserVO): FollowUserView {
+  return {
+    userId: num(u.userId),
+    nickname: text(u.nickname).trim() || '匿名用户',
+    avatarUrl: text(u.avatarUrl),
+    bio: text(u.bio).trim(),
+    followedAtText: relativeTime(u.followedAt),
+  }
+}
+
+/**
+ * 我的收藏项。
+ *
+ * ⚠️ `CollectionItemVO` **没有作者字段**（收藏记录本身就不存作者）——
+ *    所以收藏卡片**不能带作者行**，这是契约事实，不是我省略的。
+ *    已在报告里说明；若将来要显示作者，需要后端补字段。
+ */
+export interface CollectionView {
+  postId: number
+  boardId: number
+  title: string
+  coverUrl: string
+  imageCount: number
+  likeCount: number
+  commentCount: number
+  collectCount: number
+  /** 收藏时间（`createdAt` 在这个 VO 里表示"何时收藏的"，不是发帖时间） */
+  collectedText: string
+  detailUrl: string
+}
+
+export function toCollectionView(c: CollectionItemVO): CollectionView {
+  const postId = num(c.postId)
+  return {
+    postId,
+    boardId: num(c.boardId),
+    title: text(c.title),
+    coverUrl: text(c.coverUrl),
+    imageCount: num(c.imageCount),
+    likeCount: num(c.likeCount),
+    commentCount: num(c.commentCount),
+    collectCount: num(c.collectCount),
+    collectedText: relativeTime(c.createdAt),
+    detailUrl: `/pages/post/detail?id=${postId}`,
+  }
+}
+
+/** 他发的评论（带 `postTitle`，整条可点回原帖） */
+export interface UserCommentView {
+  id: number
+  postId: number
+  postTitle: string
+  content: string
+  likeCount: number
+  replyCount: number
+  timeText: string
+  /** 原帖地址（**不做评论定位** —— 契约没有锚点机制，详情页也不支持跳转到某条评论） */
+  postUrl: string
+}
+
+export function toUserCommentView(c: UserCommentVO): UserCommentView {
+  const postId = num(c.postId)
+  return {
+    id: num(c.id),
+    postId,
+    postTitle: text(c.postTitle).trim() || '（无标题）',
+    content: text(c.content),
+    likeCount: num(c.likeCount),
+    replyCount: num(c.replyCount),
+    timeText: relativeTime(c.createdAt),
+    postUrl: `/pages/post/detail?id=${postId}`,
   }
 }
