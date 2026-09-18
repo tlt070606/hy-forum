@@ -358,7 +358,14 @@ onReachBottom(() => {
 
   &__placeholder {
     font-size: $hy-font-md;
-    color: $hy-text-placeholder;
+    /*
+     * 与**顶栏搜索框占位文字**完全一致（需求方 2026-09-18：
+     * 「这个分享你的想法 这里的字体也给我改成和顶部导航栏的一样」）。
+     * 两处都是"点进去才开始输入的入口"，观感就该是一套；
+     * 字号/字重/颜色三样都要对齐，只改一样会看出差别。
+     */
+    font-weight: 600;
+    color: $hy-text-secondary;
   }
 }
 

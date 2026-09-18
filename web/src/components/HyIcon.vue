@@ -216,9 +216,16 @@ const SHAPES: Record<IconType, string[]> = {
    * 2. **`scale` 决定线宽**：`(1-s)/2` 大致就是单边厚度占比。
    *    一开始用 `.7`（≈15%/边）在 28px 下渲染出来**又粗又笨**（用户原话「爱心还是不对」），
    *    放大 5 倍才看清；现在用 `.86`（≈7%/边）才是参考图那种细线；
-   * 3. **`margin-top: -4%` 是手工补的内缩偏心**：缩放绕"心尖"做，不补的话上半部分
+   * 3. **`margin-top: -2%` 是手工补的内缩偏心**：缩放绕"心尖"做，不补的话上半部分
    *    （两个圆瓣）会明显偏厚；补过头则心尖会多出一小截"尖刺"（-9% 就是这样）。
-   *    注意 `margin` 的百分比是按**容器宽度**算的，不是高度。
+   * 4. **内层高度取 76%（不是 80%）** —— 2026-09-18 补修：
+   *    内外层高度相同时，两个"V"的顶点都落在心尖上，两层在尖端附近**交错**，
+   *    放大看就是一小截**锯齿**（Z 字）。上一轮我判断"实尺寸看不出来"就留下了，
+   *    而需求方在原尺寸下就看出来了 —— 所以这次连这一像素也消掉：
+   *    内层高度减到 76%，它的顶点抬到心尖之上，尖端变成**一小块实心**（本来就该这样），锯齿消失。
+   *    ⚠️ 代价：内层矮了之后下半部分的轮廓会**略粗一点**（挖掉的料少了），这是必然取舍；
+   *    在 icon-lab 上并排比过 s=.86/.88 × ih=74/76/80，这一组是"细"与"干净"的最优解。
+
    *
    * ⚠️ 代价：挖空用白色，**只能放在白色底上**（当前两处用法都是白卡片）。
    *    将来要用在非白底上，得把内层颜色改成所在容器的底色。
@@ -231,10 +238,10 @@ const SHAPES: Record<IconType, string[]> = {
       'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg)'
     ),
     fill(
-      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg) scale(.88);background:#ffffff;margin-top:-2%'
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg) scale(.88);background:#ffffff;margin-top:-2%;height:76%'
     ),
     fill(
-      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg) scale(.88);background:#ffffff;margin-top:-2%'
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg) scale(.88);background:#ffffff;margin-top:-2%;height:76%'
     ),
   ],
 
