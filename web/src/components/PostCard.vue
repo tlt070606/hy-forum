@@ -30,14 +30,31 @@
 
     <text class="post-card__title" data-testid="post-card-title">{{ post.title }}</text>
 
-    <!-- 封面：契约列表项给的是 `coverUrl`（**不是** thumbUrl，见 postView.ts 的说明） -->
-    <image
-      v-if="post.coverUrl"
-      class="post-card__cover"
-      :src="post.coverUrl"
-      mode="aspectFill"
-      data-testid="post-card-cover"
-    />
+    <!--
+      封面。
+      ⚠️ 需求方 2026-09-18：「这个图片能不能不要一下子加载全部？我想要跟九宫格一样，
+         有多少个就加载多少个」—— 通栏大图一下占掉半屏，改成**九宫格里一格的大小**。
+
+      ⚠️ 但**契约限制这里只能画一张**：`PostSummaryVO` 只有 `coverUrl` + `imageCount`，
+         **没有图片列表** → 列表页**做不出真正的九宫格**（详情页有 `images[]` 才做得出来）。
+         所以这里如实画一张 + 右下角标「N 张」说明不止一张，
+         并把"列表需要图片列表"作为 CR 上报（见报告 §Q）。**不自己编造图片地址**。
+    -->
+    <view v-if="post.coverUrl" class="post-card__cover-box">
+      <image
+        class="post-card__cover"
+        :src="post.coverUrl"
+        mode="aspectFill"
+        data-testid="post-card-cover"
+      />
+      <text
+        v-if="post.imageCount > 1"
+        class="post-card__cover-more"
+        data-testid="post-card-cover-more"
+      >
+        {{ post.imageCount }} 张
+      </text>
+    </view>
 
     <!-- 版块标签：单独一行，放在互动行**上方** -->
     <view v-if="post.boardName" class="post-card__board-row">
@@ -182,13 +199,39 @@ function onMore(): void {
     -webkit-box-orient: vertical;
   }
 
-  &__cover {
-    display: block;
-    width: 100%;
-    height: 180px;
+  &__cover-box {
+    position: relative;
+    /*
+     * **九宫格里一格的大小**（三列中的一格），不再通栏。
+     * 需求方 2026-09-18：通栏大图一下占掉半屏，"跟九宫格一样"更合适。
+     */
+    width: calc(33.33% - 8px);
+    height: 92px;
     margin-top: 10px;
+  }
+
+  &__cover {
+    width: 100%;
+    height: 100%;
     border-radius: $hy-radius-sm;
     background-color: $hy-bg-hover;
+  }
+
+  /*
+   * 「N 张」角标。
+   * 为什么要有它：列表拿不到图片列表（契约只给 `coverUrl`），只画一张会让人以为
+   * 这篇帖只有一张图 —— 这个角标是**如实说明**，不是装饰。
+   */
+  &__cover-more {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 16px;
+    color: #ffffff;
+    background-color: rgba(29, 33, 41, 0.55);
+    border-radius: 3px;
   }
 
   &__board-row {

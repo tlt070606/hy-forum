@@ -112,38 +112,25 @@
            而且本机**无外网**，即使有 OSS 图也加载不出来。见交付报告。
       -->
       <view v-if="images.length" class="card">
-        <view class="images">
-          <!--
-            单图：按契约给的 width / height 算出**真实宽高比**当容器比例，
-            这样 `aspectFill` 也不会裁掉任何内容（容器比例 == 图片比例）。
-            没有宽高（=0）时回退 16:9。极端竖图把比例夹到 1.2，避免一张长图占满整屏。
-          -->
-          <view
-            v-if="images.length === 1"
-            class="images__single"
-            :style="{ paddingTop: singleRatio + '%' }"
-          >
-            <image
-              class="images__single-img"
-              :src="images[0].thumbUrl"
-              mode="aspectFill"
-              data-testid="detail-image-0"
-              @click="preview(0)"
-            />
-          </view>
+        <!--
+          ⚠️ **永远用三列九宫格**（需求方 2026-09-18：「我想要跟九宫格一样，有多少个就加载多少个」）：
+          单图也占一格，不再整屏大图 —— 一张图铺满半屏会把正文和网盘信息挤下去。
+          对比：参考站不管几张图都是三列网格。
 
-          <!-- 多图：三列宫格 -->
-          <template v-else>
-            <image
-              v-for="(img, index) in images"
-              :key="img.id"
-              class="images__grid-item"
-              :src="img.thumbUrl"
-              mode="aspectFill"
-              :data-testid="`detail-image-${index}`"
-              @click="preview(index)"
-            />
-          </template>
+          这段改动顺手删掉了原来"单图按契约 width/height 算真实比例"的逻辑：
+          实测后端 `post_image.width`/`height` **恒为 0**（OSS 回调体里没有图片尺寸），
+          那段逻辑永远走 16:9 兜底，等于死代码（见报告 §N.3）。
+        -->
+        <view class="images">
+          <image
+            v-for="(img, index) in images"
+            :key="img.id"
+            class="images__grid-item"
+            :src="img.thumbUrl"
+            mode="aspectFill"
+            :data-testid="`detail-image-${index}`"
+            @click="preview(index)"
+          />
         </view>
         <text class="images__count">{{ images.length }} 张图片</text>
       </view>
@@ -199,26 +186,34 @@
           前端不自己造字段。
       -->
       <view class="card interact" data-testid="detail-interact">
+        <!--
+          ⚠️ 图标用**实心/线框两态**：点亮后是实心红爱心，未点亮是线框。
+          只改颜色不够 —— 一个灰色的线框爱心变红，在浅色背景上仍然"不像点过"。
+        -->
         <view
-          class="interact__item"
+          class="interact__item interact__item--liked"
           :class="{ 'interact__item--on': interaction.isPostLiked(postId) }"
           data-testid="detail-like"
           @click="toggleLike"
         >
-          <HyIcon type="heart" size="lg" />
+          <HyIcon :type="interaction.isPostLiked(postId) ? 'heartFilled' : 'heart'" size="xl" />
           <text class="interact__text">{{ likeCount }}</text>
         </view>
         <view class="interact__item" data-testid="detail-comment" @click="scrollToComments">
-          <HyIcon type="comment" size="lg" />
+          <HyIcon type="comment" size="xl" />
           <text class="interact__text">{{ commentCount }}</text>
         </view>
+        <!-- 收藏同理：实心书签 + 主色（不抢爱心的红色语义） -->
         <view
-          class="interact__item"
+          class="interact__item interact__item--collected"
           :class="{ 'interact__item--on': interaction.isPostCollected(postId) }"
           data-testid="detail-collect"
           @click="toggleCollect"
         >
-          <HyIcon type="bookmark" size="lg" />
+          <HyIcon
+            :type="interaction.isPostCollected(postId) ? 'bookmarkFilled' : 'bookmark'"
+            size="xl"
+          />
           <text class="interact__text">{{ collectCount }}</text>
         </view>
         <!-- 举报接口属 M5，契约里没有 → 明确提示，不做假成功 -->
@@ -227,7 +222,7 @@
           data-testid="detail-report"
           @click="notDelivered('举报')"
         >
-          <HyIcon type="shield" size="lg" />
+          <HyIcon type="shield" size="xl" />
           <text class="interact__text">举报</text>
         </view>
       </view>
@@ -360,16 +355,15 @@ const showDisk = computed(() => {
   return bool(p.boardIsResource) && text(p.diskUrl).trim().length > 0
 })
 
-/** 单图容器比例（padding-top 百分比）。无宽高时回退 16:9 */
-const singleRatio = computed(() => {
-  const img = images.value[0]
-  if (!img) return 56.25
-  const w = num(post.value?.images?.[0]?.width)
-  const h = num(post.value?.images?.[0]?.height)
-  if (!w || !h) return 56.25
-  // 夹到 120%（≈ 5:6 竖图）：再高就会让一张长图占满整屏
-  return Math.min((h / w) * 100, 120)
-})
+/*
+ * ⚠️ 这里**曾经**有一个 `singleRatio`：单图时按契约的 `width`/`height` 算出真实宽高比，
+ * 用 `padding-top` 撑出等比例容器（这样 `aspectFill` 不裁内容）。
+ * **已删除**，两个原因：
+ * 1. 需求方 2026-09-18 定了"图片一律走三列九宫格，有多少张就画多少格" —— 单图不再铺满整行；
+ * 2. 那个特性**从来没生效过**：实测后端 `post_image.width`/`height` **恒为 0**
+ *    （OSS 回调体里没有图片尺寸，后端也没去探测），所以它每次都走 16:9 兜底，是死代码。
+ *    要它生效需后端在回调时探测一次尺寸 —— 那是后端的事（已登记）。
+ */
 
 /** 当前登录用户是否为本帖作者（决定编辑/删除是否显示） */
 const isAuthor = computed(() => {
@@ -841,25 +835,10 @@ async function onDelete(): Promise<void> {
   word-break: break-word;
 }
 
-/* ---------- 图片 ---------- */
+/* ---------- 图片（三列九宫格，单图也是一格） ---------- */
 .images {
-  &__single {
-    position: relative;
-    width: 100%;
-    height: 0;
-    /* 高度由 padding-top 百分比撑开（比例来自契约的 width/height） */
-    border-radius: $hy-radius-sm;
-    overflow: hidden;
-    background-color: $hy-bg-hover;
-  }
-
-  &__single-img {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-  }
+  display: flex;
+  flex-wrap: wrap;
 
   &__grid-item {
     /* 三列。用 calc 而不是 gap：小程序旧基础库对 flex gap 支持不全 */
@@ -987,6 +966,8 @@ async function onDelete(): Promise<void> {
 .interact {
   display: flex;
   align-items: center;
+  /* 图标做大之后，整条互动栏也要跟着松一点，否则会挤成一团 */
+  padding: 18px 16px;
 
   &__item {
     flex: 1;
@@ -1004,8 +985,10 @@ async function onDelete(): Promise<void> {
      * ⚠️ 必须连图标一起变色（`:deep` 穿透到 HyIcon 内部）：
      *    HyIcon 在自己的 scoped 样式里写了 `color: $hy-icon-color`，
      *    只改文字颜色会得到"文字红了、图标还是灰的"这种半吊子状态。
+     * 点赞用**红色**（需求方明确要求"点亮的爱心要变红"），
+     * 收藏用**主色**（紫色）—— 两个都红会分不清哪个是哪个。
      */
-    &--on {
+    &--on.interact__item--liked {
       :deep(.hy-icon) {
         color: $hy-color-danger;
       }
@@ -1015,14 +998,24 @@ async function onDelete(): Promise<void> {
       }
     }
 
+    &--on.interact__item--collected {
+      :deep(.hy-icon) {
+        color: $hy-color-primary;
+      }
+
+      .interact__text {
+        color: $hy-color-primary;
+      }
+    }
+
     &:active {
       opacity: 0.6;
     }
   }
 
   &__text {
-    margin-top: 4px;
-    font-size: $hy-font-xs;
+    margin-top: 6px;
+    font-size: $hy-font-md;
     color: $hy-text-secondary;
   }
 }
