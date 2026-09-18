@@ -41,6 +41,38 @@
           <view v-else class="user__login">
             <text class="user__login-text">登录</text>
           </view>
+
+          <!--
+            下拉菜单**放在头像的父节点里面**（而不是放在顶栏根节点上）。
+            ⚠️ 这是一处真实修过的 bug（需求方 2026-09-18：「这个不知道跑去哪里了呀，
+               没有直接在那个打开的正下方」）：
+               原来 `.menu` 是 `position:absolute; right:24px`，定位基准是**顶栏整条**
+               （宽度 = 视口宽），而顶栏内容有 `max-width:1280px` 居中 ——
+               宽屏下内容右边缘在 x≈1576，菜单却贴到 x≈1896，
+               **跑到头像右边三百多像素**，看起来就像"不知道飞哪去了"。
+               现在基准是 `.actions`（`position:relative`），`right:0` + `top:100%`
+               → 菜单右边缘与头像右边缘对齐、紧贴其下方。
+          -->
+          <view v-if="menuOpen" class="menu" data-testid="topbar-menu">
+            <view class="menu__head">
+              <text class="menu__name" data-testid="topbar-menu-name">{{ auth.displayName }}</text>
+              <text class="menu__id">ID: {{ auth.user?.id ?? '—' }}</text>
+            </view>
+            <view class="menu__divider" />
+            <view class="menu__item" data-testid="topbar-menu-profile" @click="goProfile">
+              <HyIcon type="user" size="md" />
+              <text class="menu__label">个人资料</text>
+            </view>
+            <view class="menu__item" data-testid="topbar-menu-settings" @click="goSettings">
+              <HyIcon type="settings" size="md" />
+              <text class="menu__label">设置</text>
+            </view>
+            <view class="menu__divider" />
+            <view class="menu__item menu__item--danger" data-testid="topbar-menu-logout" @click="onLogout">
+              <HyIcon type="logout" size="md" color="#f53f3f" />
+              <text class="menu__label menu__label--danger">退出登录</text>
+            </view>
+          </view>
         </view>
       </view>
     </view>
@@ -52,26 +84,7 @@
          是唯一三端通用、又不依赖平台 API 的办法。
     -->
     <view v-if="menuOpen" class="menu-mask" @click="menuOpen = false" />
-    <view v-if="menuOpen" class="menu" data-testid="topbar-menu">
-      <view class="menu__head">
-        <text class="menu__name" data-testid="topbar-menu-name">{{ auth.displayName }}</text>
-        <text class="menu__id">ID: {{ auth.user?.id ?? '—' }}</text>
-      </view>
-      <view class="menu__divider" />
-      <view class="menu__item" data-testid="topbar-menu-profile" @click="goProfile">
-        <HyIcon type="user" size="md" />
-        <text class="menu__label">个人资料</text>
-      </view>
-      <view class="menu__item" data-testid="topbar-menu-settings" @click="goStub('设置')">
-        <HyIcon type="settings" size="md" />
-        <text class="menu__label">设置</text>
-      </view>
-      <view class="menu__divider" />
-      <view class="menu__item menu__item--danger" data-testid="topbar-menu-logout" @click="onLogout">
-        <HyIcon type="logout" size="md" color="#f53f3f" />
-        <text class="menu__label menu__label--danger">退出登录</text>
-      </view>
-    </view>
+
   </view>
 </template>
 
@@ -125,6 +138,12 @@ function onUserTap(): void {
  * 不用假页面冒充已完成（项目既有约定）：这些页面**确实还没铺**，
  * 所以跳到一个明确说明"这一页还没做"的占位页，而不是给一个空白页让人以为坏了。
  */
+/** 跳设置页（菜单里的「设置」） */
+function goSettings(): void {
+  menuOpen.value = false
+  uni.navigateTo({ url: '/pages/settings/index' })
+}
+
 function goStub(what: string): void {
   menuOpen.value = false
   uni.navigateTo({ url: `/pages/placeholder/index?title=${encodeURIComponent(what)}` })
@@ -258,6 +277,11 @@ async function onLogout(): Promise<void> {
   margin-left: auto;
   display: flex;
   align-items: center;
+  /*
+   * ⚠️ 必须 relative：下拉菜单以它（而不是顶栏整条）为定位基准。
+   * 见模板里那段注释 —— 用顶栏整条做基准会在宽屏把菜单推到头像右侧三百多像素。
+   */
+  position: relative;
 }
 
 .action {
@@ -330,11 +354,12 @@ async function onLogout(): Promise<void> {
 .menu {
   position: absolute;
   /*
-   * 右对齐到容器内边距（24px）处。
-   * 用 `right` 而不是固定 left：顶栏宽度随窗口变化，写死 left 会在窄屏上跑到屏幕外。
+   * 贴着头像：右边缘对齐、位于其正下方（需求方 2026-09-18 的原始要求）。
+   * 基准是 `.actions`（已设 position: relative），**不是顶栏整条** ——
+   * 后者宽度等于视口宽，而顶栏内容居中且有 max-width，宽屏下两者相差三百多像素。
    */
-  right: 24px;
-  top: calc(#{$hy-shell-header-height} - 6px);
+  right: 0;
+  top: calc(100% + 8px);
   z-index: 111;
   width: 200px;
   padding: 8px 0;
