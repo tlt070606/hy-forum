@@ -12,7 +12,14 @@
  * ⚠️ 这里只做"缺省值填充 + 展示格式化"，**不改字段名、不做业务重算**。
  */
 
-import type { PostDetailVO, PostImageVO, PostSummaryVO, UserBriefVO } from '@/api/types'
+import type {
+  CommentItemVO,
+  CommentReplyVO,
+  PostDetailVO,
+  PostImageVO,
+  PostSummaryVO,
+  UserBriefVO,
+} from '@/api/types'
 
 /* ---------------------------------------------------------------------------
  * 基础收敛
@@ -307,4 +314,67 @@ export function toImageView(image: PostImageVO): PostImageView {
 export function shouldShowDiskCard(post: PostDetailVO | null): boolean {
   if (!post) return false
   return bool(post.boardIsResource) && text(post.diskUrl).trim().length > 0
+}
+
+/* ---------------------------------------------------------------------------
+ * 评论（M4）
+ * ------------------------------------------------------------------------- */
+
+/** 楼中楼的视图模型 */
+export interface ReplyView {
+  id: number
+  content: string
+  likeCount: number
+  authorId: number
+  authorName: string
+  authorAvatarUrl: string
+  timeText: string
+  /** 被回复者昵称。为空 = 直接回复主楼 */
+  replyToNickname: string
+}
+
+/** 主楼评论的视图模型 */
+export interface CommentView {
+  id: number
+  content: string
+  likeCount: number
+  /** 该主楼下的楼中楼**总数**（用于"查看全部 N 条回复"） */
+  replyCount: number
+  authorId: number
+  authorName: string
+  authorAvatarUrl: string
+  timeText: string
+  /** 契约给的**预览**（前若干条），不是全部 —— 要看全部得调 `fetchReplies` */
+  replies: ReplyView[]
+}
+
+/** 楼中楼归一化 */
+export function toReplyView(r: CommentReplyVO): ReplyView {
+  const name = text(r.author?.nickname).trim() || '匿名用户'
+  return {
+    id: num(r.id),
+    content: text(r.content),
+    likeCount: num(r.likeCount),
+    authorId: num(r.author?.id),
+    authorName: name,
+    authorAvatarUrl: text(r.author?.avatarUrl),
+    timeText: relativeTime(r.createdAt),
+    replyToNickname: text(r.replyToNickname).trim(),
+  }
+}
+
+/** 主楼归一化。`replies` 是预览，**不过滤不重排**（口径 7 的同源理由：后端给什么就显示什么） */
+export function toCommentView(c: CommentItemVO): CommentView {
+  const name = text(c.author?.nickname).trim() || '匿名用户'
+  return {
+    id: num(c.id),
+    content: text(c.content),
+    likeCount: num(c.likeCount),
+    replyCount: num(c.replyCount),
+    authorId: num(c.author?.id),
+    authorName: name,
+    authorAvatarUrl: text(c.author?.avatarUrl),
+    timeText: relativeTime(c.createdAt),
+    replies: (c.replies ?? []).map(toReplyView),
+  }
 }

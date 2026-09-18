@@ -39,28 +39,35 @@
       data-testid="post-card-cover"
     />
 
-    <view class="post-card__foot">
+    <!-- 版块标签：单独一行，放在互动行**上方** -->
+    <view v-if="post.boardName" class="post-card__board-row">
       <view class="board-chip" data-testid="post-card-board" @click.stop="openBoard">
         <text class="board-chip__text">{{ post.boardName }}</text>
       </view>
+    </view>
 
-      <view class="metrics">
-        <view class="metric" data-testid="post-card-like">
-          <HyIcon type="heart" size="sm" />
-          <text class="metric__text">{{ compactCount(post.likeCount) }}</text>
-        </view>
-        <view class="metric" data-testid="post-card-comment">
-          <HyIcon type="comment" size="sm" />
-          <text class="metric__text">{{ compactCount(post.commentCount) }}</text>
-        </view>
-        <view class="metric" data-testid="post-card-collect">
-          <HyIcon type="bookmark" size="sm" />
-          <text class="metric__text">{{ compactCount(post.collectCount) }}</text>
-        </view>
-        <view class="metric metric--last" data-testid="post-card-view">
-          <HyIcon type="eye" size="sm" />
-          <text class="metric__text">{{ compactCount(post.viewCount) }}</text>
-        </view>
+    <!--
+      互动行：**铺在卡片底部一整行**（需求方 2026-09-17 定）。
+      之前是「版块标签在左、互动挤在右下角」，看过去像把操作塞进角落；
+      现在点赞/评论/收藏从左往右排开、浏览量靠右，与参考图一致。
+    -->
+    <view class="post-card__foot">
+      <view class="metric" data-testid="post-card-like">
+        <HyIcon type="heart" size="sm" />
+        <text class="metric__text">{{ compactCount(post.likeCount) }}</text>
+      </view>
+      <view class="metric" data-testid="post-card-comment">
+        <HyIcon type="comment" size="sm" />
+        <text class="metric__text">{{ compactCount(post.commentCount) }}</text>
+      </view>
+      <view class="metric" data-testid="post-card-collect">
+        <HyIcon type="bookmark" size="sm" />
+        <text class="metric__text">{{ compactCount(post.collectCount) }}</text>
+      </view>
+      <!-- 浏览量属于"参考信息"，靠右放，不跟三个操作抢注意力 -->
+      <view class="metric metric--trailing" data-testid="post-card-view">
+        <HyIcon type="eye" size="sm" />
+        <text class="metric__text">{{ compactCount(post.viewCount) }}</text>
       </view>
     </view>
   </view>
@@ -184,8 +191,16 @@ function onMore(): void {
     background-color: $hy-bg-hover;
   }
 
+  &__board-row {
+    margin-top: 10px;
+    display: flex;
+  }
+
   &__foot {
     margin-top: 12px;
+    /* 与内容之间加一条分隔线：互动行是"卡片底部的一栏"，不是正文的延续 */
+    padding-top: 10px;
+    border-top: 1px solid $hy-border-color;
     display: flex;
     align-items: center;
   }
@@ -222,18 +237,15 @@ function onMore(): void {
   }
 }
 
-.metrics {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-}
-
+/* 互动行里的单项：从左往右排开，不再挤在角落 */
 .metric {
   display: flex;
   align-items: center;
-  margin-right: 18px;
+  margin-right: 32px;
 
-  &--last {
+  /* 浏览量靠右：`margin-left: auto` 把它推到行尾，同时不影响左边三项的位置 */
+  &--trailing {
+    margin-left: auto;
     margin-right: 0;
   }
 

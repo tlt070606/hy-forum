@@ -114,13 +114,50 @@ export const ENDPOINTS = {
   ossCallback: { methods: ['POST'], path: '/api/oss/callback', status: 'ready', calledBy: 'OSS' },
 
   /*
-   * ---- 以下端点由《技术方案》§6 规划，**尚未交付**（当前契约里没有这些路径）----
+   * ---- M4（2026-09-17 契约重导后：29 路径 / 52 schema）已交付 ----
+   * 逐个核对过 `openapi.json` 的 methods，**不是从《技术方案》§6 抄的** ——
+   * 抄文档会漏掉"同一路径其实支持 DELETE"这种情况。
+   *
+   * ⚠️ 这批互动端点全部返回 `ApiResponseVoid`（**没有 data**）：
+   *    服务端不会把新的计数还给你，所以调用方要么乐观更新、要么重新取一次详情。
+   */
+  /** 帖子点赞 / 取消（幂等） */
+  postLike: { methods: ['POST', 'DELETE'], path: '/api/posts/{id}/like', status: 'ready' },
+  /** 帖子收藏 / 取消（幂等） */
+  postCollect: { methods: ['POST', 'DELETE'], path: '/api/posts/{id}/collect', status: 'ready' },
+  /** 某帖的主楼评论（分页；每条带**前若干条**楼中楼预览） */
+  postComments: { methods: ['GET'], path: '/api/posts/{id}/comments', status: 'ready' },
+  /** 发评论（主楼 / 楼中楼都由这一个端点） */
+  comments: { methods: ['POST'], path: '/api/comments', status: 'ready' },
+  /** 删除评论（仅作者或管理员） */
+  commentDelete: { methods: ['DELETE'], path: '/api/comments/{id}', status: 'ready' },
+  /** 评论点赞 / 取消（幂等） */
+  commentLike: { methods: ['POST', 'DELETE'], path: '/api/comments/{id}/like', status: 'ready' },
+  /** 某主楼下的**全部**楼中楼（分页） */
+  commentReplies: { methods: ['GET'], path: '/api/comments/{rootId}/replies', status: 'ready' },
+  /** 关注 / 取关（幂等；后端禁止关注自己） */
+  follow: { methods: ['POST', 'DELETE'], path: '/api/follow/{userId}', status: 'ready' },
+  /** 个人主页资料（**含 `isFollowing` / `isFollowedBy`** —— 关注态是契约真有的） */
+  userProfile: { methods: ['GET'], path: '/api/users/{id}', status: 'ready' },
+  /** 某用户的帖子（分页） */
+  userPosts: { methods: ['GET'], path: '/api/users/{id}/posts', status: 'ready' },
+  /** 某用户的评论（分页，带 `postTitle` 可跳回原帖） */
+  userComments: { methods: ['GET'], path: '/api/users/{id}/comments', status: 'ready' },
+  /** 某人关注的人 */
+  userFollows: { methods: ['GET'], path: '/api/users/{id}/follows', status: 'ready' },
+  /** 某人的粉丝 */
+  userFans: { methods: ['GET'], path: '/api/users/{id}/fans', status: 'ready' },
+  /** 我的收藏（**需登录**） */
+  collections: { methods: ['GET'], path: '/api/user/collections', status: 'ready' },
+  /** 首页信息流：`type=follow|all`（§8.5 的"双流"） */
+  feed: { methods: ['GET'], path: '/api/feed', status: 'ready' },
+
+  /*
+   * ---- 以下端点由《技术方案》规划，**尚未交付**（当前契约里没有这些路径）----
    * 只登记路径与所属里程碑，**不声明请求/响应类型**（那是编造契约）。
    * 判定口径：以仓库根 `openapi.json` 的 paths 为准，不以本文的注释为准。
    */
   notifications: { methods: ['GET'], path: '/api/notifications', status: 'todo', milestone: 'M5' },
-  collections: { methods: ['GET'], path: '/api/user/collections', status: 'todo', milestone: 'M4' },
-  userProfile: { methods: ['GET'], path: '/api/users/{id}', status: 'todo', milestone: 'M4' },
 } as const
 
 /** 已就绪端点的 key 集合（用于在页面里做开发期守卫） */

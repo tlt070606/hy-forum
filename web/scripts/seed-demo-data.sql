@@ -31,7 +31,12 @@ SET NAMES utf8mb4;
 
 -- ---------------------------------------------------------------------------
 -- 0. 清理上一批（作者用户名前缀 demo_）
+--    ⚠️ 顺序：**先删评论，再删帖子** —— comment 引用 post_id，先删帖子会留下孤儿评论
 -- ---------------------------------------------------------------------------
+DELETE FROM `comment` WHERE `user_id` IN (SELECT `id` FROM `user` WHERE LEFT(`username`, 5) = 'demo_');
+DELETE FROM `comment` WHERE `post_id` IN (
+  SELECT `id` FROM `post` WHERE `user_id` IN (SELECT `id` FROM `user` WHERE LEFT(`username`, 5) = 'demo_')
+);
 DELETE FROM `post` WHERE `user_id` IN (SELECT `id` FROM `user` WHERE LEFT(`username`, 5) = 'demo_');
 DELETE FROM `user` WHERE LEFT(`username`, 5) = 'demo_';
 
@@ -120,8 +125,46 @@ VALUES
  NULL, 0, NULL, NULL, NULL, 0, 0, 0, 0, 0, 0, 1, NOW() - INTERVAL 6 DAY, 0);
 
 -- ---------------------------------------------------------------------------
+-- 2b. 演示评论（**两层：主楼 + 楼中楼**）
+--     ⚠️ P1-3 归并语义（`schema.sql` 的 `chk_comment_two_levels` 会强制校验）：
+--        - 主楼：`parent_id = 0` 且 `root_id = 0`
+--        - 楼中楼：`parent_id = root_id = 所属主楼的 id`
+--        **不要**把楼中楼的 parent_id 写成另一条楼中楼的 id —— CHECK 约束会直接拒绝插入。
+--     `reply_count` 只有主楼维护（与 schema 的注释一致），所以插完楼中楼要回写主楼。
+--     计数一律为 0，理由与帖子相同（见文件头第 2 条）。
+-- ---------------------------------------------------------------------------
+SET @p_ai    = (SELECT `id` FROM `post` WHERE `title` LIKE 'AI 工具实测%' LIMIT 1);
+SET @p_food  = (SELECT `id` FROM `post` WHERE `title` LIKE '带饭上班%' LIMIT 1);
+SET @u_man   = (SELECT `id` FROM `user` WHERE `username` = 'demo_xiaoman');
+SET @u_lin   = (SELECT `id` FROM `user` WHERE `username` = 'demo_xiaolin');
+SET @u_ai    = (SELECT `id` FROM `user` WHERE `username` = 'demo_azhe');
+SET @u_wang  = (SELECT `id` FROM `user` WHERE `username` = 'demo_laowang');
+
+-- AI 帖：主楼 1
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_ai, @u_man, 0, 0, '第二点说得对。我也发现它读陌生代码库特别强，但"编 API"这事踩过两次了，现在写之前都先去翻文档。', 0, 0, 1, NOW() - INTERVAL 2 HOUR, 0);
+SET @c_ai_1 = LAST_INSERT_ID();
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_ai, @u_ai, @c_ai_1, @c_ai_1, '同感。我现在的规矩是：只要它给的接口我不认识，一律当"可能不存在"处理。', 0, 0, 1, NOW() - INTERVAL 1 HOUR, 0);
+UPDATE `comment` SET `reply_count` = 1 WHERE `id` = @c_ai_1;
+
+-- AI 帖：主楼 2
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_ai, @u_lin, 0, 0, '求那 5 个工具的清单，帖子里的链接打不开（可能是我这边网络问题）。', 0, 0, 1, NOW() - INTERVAL 40 MINUTE, 0);
+
+-- 带饭帖：主楼 + 两条楼中楼
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_food, @u_lin, 0, 0, '周日一次做完分装冷冻，那解冻之后口感还行吗？尤其是绿叶菜。', 0, 0, 1, NOW() - INTERVAL 3 HOUR, 0);
+SET @c_food_1 = LAST_INSERT_ID();
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_food, @u_wang, @c_food_1, @c_food_1, '绿叶菜我一般当天做，冷冻的主要是肉类和根茎类，那些解冻后基本没差。', 0, 0, 1, NOW() - INTERVAL 2 HOUR - INTERVAL 30 MINUTE, 0);
+INSERT INTO `comment` (`post_id`, `user_id`, `parent_id`, `root_id`, `content`, `like_count`, `reply_count`, `status`, `created_at`, `is_deleted`)
+VALUES (@p_food, @u_ai, @c_food_1, @c_food_1, '土豆烧肉我试过，微波炉热完更入味，推荐。', 0, 0, 1, NOW() - INTERVAL 1 HOUR, 0);
+UPDATE `comment` SET `reply_count` = 2 WHERE `id` = @c_food_1;
+
+-- ---------------------------------------------------------------------------
 -- 3. 把冗余计数补齐
---    ⚠️ 只补 `post_count`（它等于真实行数，不是编造的数字）。
+--    ⚠️ 只补 `post_count` / `comment_count`（它们等于真实行数，不是编造的数字）。
 --       **不要**在这里给 view/like/comment/collect 填值 —— 理由见文件头第 2 条。
 -- ---------------------------------------------------------------------------
 UPDATE `user` u
@@ -130,6 +173,14 @@ WHERE LEFT(u.`username`, 5) = 'demo_';
 
 UPDATE `board` b
 SET b.`post_count` = (SELECT COUNT(*) FROM `post` p WHERE p.`board_id` = b.`id` AND p.`is_deleted` = 0);
+
+-- `post.comment_count` = 该帖**全部**未删除评论数（主楼 + 楼中楼）——
+-- 与契约 `PostDetailVO.commentCount` 的语义保持一致（它是"评论总数"的展示值）
+UPDATE `post` p
+SET p.`comment_count` = (
+  SELECT COUNT(*) FROM `comment` c WHERE c.`post_id` = p.`id` AND c.`is_deleted` = 0
+)
+WHERE p.`user_id` IN (SELECT `id` FROM `user` WHERE LEFT(`username`, 5) = 'demo_');
 
 -- ---------------------------------------------------------------------------
 -- 4. 修正 `updated_at`：**必须等于 `created_at`**
@@ -146,7 +197,12 @@ SET p.`updated_at` = p.`created_at`
 WHERE LEFT(u.`username`, 5) = 'demo_';
 
 -- 校验输出（跑完能一眼看到结果）
+-- ⚠️ 标签要写准：`like/collect` 的**不变量是 0**（我们从没给它们编过数字）；
+--    而 `comment_count` 现在**不等于 0 是对的** —— 演示评论是真的插进去了（见 2b 节）；
+--    `view_count` 会随真实访问由后端累加，也不该期望为 0。
+--    早先把这三样混在一起叫 "sum of fake counts" 并期望 0，是**一个会误导人的检查**。
 SELECT 'demo users' AS what, COUNT(*) AS n FROM `user` WHERE LEFT(`username`,5)='demo_'
 UNION ALL SELECT 'demo posts', COUNT(*) FROM `post` p JOIN `user` u ON u.`id`=p.`user_id` WHERE LEFT(u.`username`,5)='demo_'
-UNION ALL SELECT 'visible posts', COUNT(*) FROM `post` WHERE `is_deleted`=0
-UNION ALL SELECT 'sum of fake counts', (SELECT IFNULL(SUM(view_count+like_count+comment_count+collect_count),0) FROM `post`);
+UNION ALL SELECT 'demo comments', COUNT(*) FROM `comment` c JOIN `post` p ON p.`id`=c.`post_id` JOIN `user` u ON u.`id`=p.`user_id` WHERE LEFT(u.`username`,5)='demo_' AND c.`is_deleted`=0
+UNION ALL SELECT 'demo like+collect (must be 0)', IFNULL((SELECT SUM(p.`like_count`+p.`collect_count`) FROM `post` p JOIN `user` u ON u.`id`=p.`user_id` WHERE LEFT(u.`username`,5)='demo_'),0)
+UNION ALL SELECT 'visible posts (all)', COUNT(*) FROM `post` WHERE `is_deleted`=0;

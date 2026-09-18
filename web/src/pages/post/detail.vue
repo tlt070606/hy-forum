@@ -190,29 +190,60 @@
 
       <!-- ==================== 互动栏 ==================== -->
       <!--
-        ⚠️ 这三个按钮**可点但只提示"未交付"**，不做假成功（需求方 2026-09-17 选定）。
-        理由：点赞/收藏/评论接口**不在契约的 14 个路径里**（属 M4）——
-        做成不可点，用户不知道有这功能；做成假成功，则是拿假数据冒充已完成。
-        正解是**提 CR 让后端补 M4 互动接口**（已登记报告 CR-I），接口到位后把这里接上即可。
+        ⚠️ 点赞/收藏的端点都返回 `ApiResponseVoid`（**没有新计数**），而契约里
+        `PostDetailVO` **没有 `isLiked` / `isCollected`**。所以这里采取：
+        - **计数以服务端为准**（进入页面时那份），操作后本地 ±1（乐观更新）；
+        - **不重新拉详情来对齐计数** —— 详情每拉一次后端就把浏览量 +1（§8.3），
+          为了一个数字多加一次浏览不值得；
+        - **激活态只在本次会话内有效**（刷新即丢）。这是契约缺口，已登记 CR，
+          前端不自己造字段。
       -->
       <view class="card interact" data-testid="detail-interact">
-        <view class="interact__item" data-testid="detail-like" @click="notDelivered('点赞')">
+        <view
+          class="interact__item"
+          :class="{ 'interact__item--on': interaction.isPostLiked(postId) }"
+          data-testid="detail-like"
+          @click="toggleLike"
+        >
           <HyIcon type="heart" size="lg" />
-          <text class="interact__text">{{ post.likeCount ?? 0 }}</text>
+          <text class="interact__text">{{ likeCount }}</text>
         </view>
-        <view class="interact__item" data-testid="detail-comment" @click="notDelivered('评论')">
+        <view class="interact__item" data-testid="detail-comment" @click="scrollToComments">
           <HyIcon type="comment" size="lg" />
-          <text class="interact__text">{{ post.commentCount ?? 0 }}</text>
+          <text class="interact__text">{{ commentCount }}</text>
         </view>
-        <view class="interact__item" data-testid="detail-collect" @click="notDelivered('收藏')">
+        <view
+          class="interact__item"
+          :class="{ 'interact__item--on': interaction.isPostCollected(postId) }"
+          data-testid="detail-collect"
+          @click="toggleCollect"
+        >
           <HyIcon type="bookmark" size="lg" />
-          <text class="interact__text">{{ post.collectCount ?? 0 }}</text>
+          <text class="interact__text">{{ collectCount }}</text>
         </view>
-        <view class="interact__item interact__item--last" data-testid="detail-report" @click="notDelivered('举报')">
+        <!-- 举报接口属 M5，契约里没有 → 明确提示，不做假成功 -->
+        <view
+          class="interact__item interact__item--last"
+          data-testid="detail-report"
+          @click="notDelivered('举报')"
+        >
           <HyIcon type="shield" size="lg" />
           <text class="interact__text">举报</text>
         </view>
       </view>
+
+      <!-- ==================== 评论区 ==================== -->
+      <!--
+        **默认收起、点击才展开**（需求方 2026-09-17 定）：
+        展开状态放在本页（`commentsOpen`），这样上面互动栏的「评论」也能把它打开。
+        `commentCount` 传给它是为了让收起态能显示「查看 N 条评论」而**不必先请求评论列表**。
+      -->
+      <CommentSection
+        v-model:open="commentsOpen"
+        :post-id="postId"
+        :comment-count="commentCount"
+        @count-change="onCommentCountChange"
+      />
 
       <!-- ==================== 作者操作 ==================== -->
       <!--
@@ -266,15 +297,19 @@
  * - `PUT` **确实**把 `status` 落回 0（"编辑重审"闭环成立，DB 与响应都核过）；
  * - 帖子被删 → 404。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import AppShell from '@/components/shell/AppShell.vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
+import CommentSection from '@/components/CommentSection.vue'
 import { deletePost, fetchPostDetail } from '@/api/posts'
+import { collectPost, likePost } from '@/api/interaction'
 import { BIZ_CODE } from '@/utils/error-code'
 import { ApiError } from '@/utils/request'
 import type { PostDetailVO } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
+import { useInteractionStore } from '@/stores/interaction'
 import {
   authorName,
   bool,
@@ -287,7 +322,6 @@ import {
   type PostImageView,
 } from '@/utils/postView'
 import { canOpenExternalLink, copyText, openExternalLink, shouldShowCustomToastAfterCopy } from '@/utils/platform'
-import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 
@@ -297,6 +331,17 @@ const loading = ref(false)
 const error = ref('')
 /** 404（不存在 / 已删除 / 无权限看）。与普通错误分开，用于渲染友好页而不是可重试的错误条 */
 const notFound = ref(false)
+
+const interaction = useInteractionStore()
+
+/*
+ * 互动计数（本地态）。
+ * 初值取详情响应里的真实值；点赞/收藏后本地 ±1 —— 为什么不重新拉详情对齐？
+ * 因为**详情每拉一次后端就把浏览量 +1**（§8.3），为一个数字多加一次浏览不值得。
+ */
+const likeCount = ref(0)
+const commentCount = ref(0)
+const collectCount = ref(0)
 
 /* ---------------------------------------------------------------------------
  * 派生
@@ -387,6 +432,10 @@ async function load(): Promise<void> {
   notFound.value = false
   try {
     post.value = await fetchPostDetail(postId.value)
+    // 互动的真值以服务端这份为准（本地态只是"点过之后"的增量）
+    likeCount.value = num(post.value?.likeCount)
+    commentCount.value = num(post.value?.commentCount)
+    collectCount.value = num(post.value?.collectCount)
   } catch (e) {
     post.value = null
     if (e instanceof ApiError) {
@@ -455,11 +504,85 @@ function openDisk(): void {
 /**
  * 未交付功能的统一提示。
  *
- * 刻意**不做假成功**：接口不在契约里（属 M4/M5），所以明确告知，
+ * 刻意**不做假成功**：接口不在契约里（属 M5），所以明确告知，
  * 而不是把按钮点亮、把计数 +1 骗用户。
  */
 function notDelivered(what: string): void {
-  uni.showToast({ title: `${what}功能将在 M4 交付`, icon: 'none', duration: 2000 })
+  uni.showToast({ title: `${what}功能将在 M5 交付`, icon: 'none', duration: 2000 })
+}
+
+/* ---------------------------------------------------------------------------
+ * 互动：点赞 / 收藏（M4）
+ * ------------------------------------------------------------------------- */
+
+/** 评论区是否展开（默认收起，点击才打开） */
+const commentsOpen = ref(false)
+
+/**
+ * 点赞/取消。
+ *
+ * 端点返回 `ApiResponseVoid`（**没有新计数**），所以本地先 ±1（乐观更新），
+ * 失败时**把计数与激活态一起回滚** —— 只退一半会让界面显示"点亮着但数字没变"这种自相矛盾的状态。
+ *
+ * ⚠️ 幂等（§8.1）：即使因为刷新丢了激活态而重复点赞，服务端也不会重复计数，
+ *    所以这个"会话内状态"的设计是安全的（最坏情况只是本地数字短暂不准，刷新即回真值）。
+ */
+async function toggleLike(): Promise<void> {
+  if (!auth.isLoggedIn) {
+    uni.showToast({ title: '请先登录', icon: 'none' })
+    setTimeout(() => uni.navigateTo({ url: '/pages/auth/index?mode=login' }), 700)
+    return
+  }
+  const on = !interaction.isPostLiked(postId.value)
+  const before = likeCount.value
+  interaction.markPostLiked(postId.value, on)
+  likeCount.value = Math.max(0, before + (on ? 1 : -1))
+  try {
+    await likePost(postId.value, on)
+  } catch (e) {
+    interaction.markPostLiked(postId.value, !on)
+    likeCount.value = before
+    uni.showToast({ title: e instanceof ApiError ? e.message : '操作失败，请稍后重试', icon: 'none' })
+  }
+}
+
+/** 收藏/取消。回滚口径与点赞一致 */
+async function toggleCollect(): Promise<void> {
+  if (!auth.isLoggedIn) {
+    uni.showToast({ title: '请先登录', icon: 'none' })
+    setTimeout(() => uni.navigateTo({ url: '/pages/auth/index?mode=login' }), 700)
+    return
+  }
+  const on = !interaction.isPostCollected(postId.value)
+  const before = collectCount.value
+  interaction.markPostCollected(postId.value, on)
+  collectCount.value = Math.max(0, before + (on ? 1 : -1))
+  try {
+    await collectPost(postId.value, on)
+  } catch (e) {
+    interaction.markPostCollected(postId.value, !on)
+    collectCount.value = before
+    uni.showToast({ title: e instanceof ApiError ? e.message : '操作失败，请稍后重试', icon: 'none' })
+  }
+}
+
+/**
+ * 点评论数字 → **展开评论区并滚过去**。
+ *
+ * 需求方 2026-09-17 定的交互是"评论点击才打开"，所以这里不能只是滚动 ——
+ * 收起状态下滚到底也看不到评论，用户会以为评论加载失败。
+ * 先 `nextTick` 等展开后的 DOM 长出来，再滚，否则滚动的目标高度还是旧的。
+ */
+function scrollToComments(): void {
+  commentsOpen.value = true
+  nextTick(() => {
+    uni.pageScrollTo({ scrollTop: 999999, duration: 300 })
+  })
+}
+
+/** 评论区增减了评论 → 同步互动栏的数字（**不重新拉详情**，见上面的说明） */
+function onCommentCountChange(delta: number): void {
+  commentCount.value = Math.max(0, commentCount.value + delta)
 }
 
 function goHome(): void {
@@ -874,6 +997,22 @@ async function onDelete(): Promise<void> {
     &--last {
       /* 举报在最后一格，去掉右间距 */
       margin-right: 0;
+    }
+
+    /*
+     * 已点赞 / 已收藏。
+     * ⚠️ 必须连图标一起变色（`:deep` 穿透到 HyIcon 内部）：
+     *    HyIcon 在自己的 scoped 样式里写了 `color: $hy-icon-color`，
+     *    只改文字颜色会得到"文字红了、图标还是灰的"这种半吊子状态。
+     */
+    &--on {
+      :deep(.hy-icon) {
+        color: $hy-color-danger;
+      }
+
+      .interact__text {
+        color: $hy-color-danger;
+      }
     }
 
     &:active {

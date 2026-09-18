@@ -136,6 +136,64 @@ export type OssSignatureVO = Schemas['OssSignatureVO']
 /** 上传回调落库后的结果（CR-G 裁决 A）：前端据此拿到图片 URL，**不用自己拼** */
 export type OssCallbackResultVO = Schemas['OssCallbackResultVO']
 
+/* ---------------------------------------------------------------------------
+ * M4 接口类型（评论 / 点赞 / 收藏 / 关注 / 个人主页 / 我的收藏 / 信息流）
+ * ---------------------------------------------------------------------------
+ * 依据重导后的 `openapi.json`（29 路径 / 52 schema）。字段名逐字对应。
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 互动场景下的作者摘要。
+ *
+ * ⚠️ 它与 M3 的 `UserBriefVO` **形状相同但是不同的 schema** ——
+ *    这是契约里的事实（`InteractionUserBriefVO`），前端不要假设两者可互换。
+ */
+export type InteractionUserBriefVO = Schemas['InteractionUserBriefVO']
+
+/** 主楼评论（`replies` 是**前若干条**楼中楼预览，不是全部） */
+export type CommentItemVO = Schemas['CommentItemVO']
+
+/** 楼中楼评论。`replyToNickname` 是被回复者的昵称（归并语义下由记录 `reply_to_user_id` 得出） */
+export type CommentReplyVO = Schemas['CommentReplyVO']
+
+/** 发评论请求体。`parentId` 不传 = 主楼；见 `api/comments.ts` 的口径说明 */
+export type CommentCreateRequest = Schemas['CommentCreateRequest']
+
+/** 个人主页资料。`isFollowing`（我是否关注了他）是**契约真有的**，前端据此渲染关注按钮 */
+export type UserProfileVO = Schemas['UserProfileVO']
+
+/** 信息流项（`GET /api/feed` 与 `GET /api/users/{id}/posts` 共用） */
+export type FeedItemVO = Schemas['FeedItemVO']
+
+/** 关注/粉丝列表项 */
+export type FollowUserVO = Schemas['FollowUserVO']
+
+/** 某用户的评论列表项（带 `postTitle`，可跳回原帖） */
+export type UserCommentVO = Schemas['UserCommentVO']
+
+/** 我的收藏项 */
+export type CollectionItemVO = Schemas['CollectionItemVO']
+
+/** 分页响应（M4 的几种列表共用同一形状） */
+export type PageResultCommentItemVO = Schemas['PageResultCommentItemVO']
+export type PageResultCommentReplyVO = Schemas['PageResultCommentReplyVO']
+export type PageResultFeedItemVO = Schemas['PageResultFeedItemVO']
+export type PageResultFollowUserVO = Schemas['PageResultFollowUserVO']
+export type PageResultUserCommentVO = Schemas['PageResultUserCommentVO']
+export type PageResultCollectionItemVO = Schemas['PageResultCollectionItemVO']
+
+/**
+ * 信息流的「双流」口径。
+ *
+ * 依据：《技术方案》§8.5 —— `type=follow|all`（关注流 / 全部流）。
+ * ⚠️ 契约里 `type` 是裸 `string`（**没有 enum**），所以这组取值只能来自文档。
+ *    与 `sort` 的情况同类，已登记为契约改进建议。
+ */
+export type FeedType = 'follow' | 'all'
+
+/** 信息流排序。与 `GET /api/posts` 的 `sort` 同口径 */
+export type FeedSort = 'latest' | 'hot'
+
 /**
  * 帖子列表排序口径。
  *
