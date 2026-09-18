@@ -155,9 +155,14 @@
         </view>
 
         <view class="disk__actions">
-          <!-- 一键复制：文案格式由《技术方案》§5.5 锁定，前端只负责复制 -->
+          <!--
+            一键复制：**只复制链接本身**（需求方 2026-09-18 定的口径变更，见
+            `utils/postView.ts` 的 `buildDiskCopyText`）。
+            ⚠️ 文案不再提"与提取码"—— 否则用户以为码也复制走了，
+               而提取码其实**只在页面上显示**（百度网盘那种帖子需要用户自己选中复制）。
+          -->
           <view class="btn btn--primary" data-testid="detail-copy-disk" @click="copyDisk">
-            <text class="btn__text">{{ diskCode ? '一键复制链接与提取码' : '复制链接' }}</text>
+            <text class="btn__text">复制链接</text>
           </view>
           <view
             v-if="canOpenLink"

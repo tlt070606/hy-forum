@@ -269,19 +269,19 @@ test('详情：正文与网盘信息正确展示，一键复制格式逐字正�
   await page.getByTestId('detail-copy-disk').click()
 
   /*
-   * ⚠️ 比较前把 `\r\n` 归一成 `\n`：Windows 的**系统剪贴板**会把 `\n` 规范化成 `\r\n`
-   * （平台行为，不是文案错 —— 粘到记事本里换行完全正确）。
-   * 不归一的话这条断言会永远失败，而失败信息里两段文本**长得一模一样**（只差不可见的 \r），
-   * 是本机真实踩过的坑。
+   * ⚠️ 期望值是**只有链接**（需求方 2026-09-18 的口径变更）：
+   *    原来是 §5.5 锁定的三行式（链接：… / 提取码：… / 来自 Hy论坛），
+   *    现在只复制链接本身 —— 见 `utils/postView.ts` 的 `buildDiskCopyText`。
+   *
+   * ⚠️ 比较前仍要把 `\r\n` 归一成 `\n`：Windows 的**系统剪贴板**会做这个规范化
+   *    （平台行为，不是文案错）。单行链接本来看不出差别，但保留这一步，
+   *    将来口径再变回多行时不会又踩一次 —— 那个坑当初的失败信息里两段文本"长得一模一样"。
    */
-  const expected =
-    `链接：${detail.diskUrl}\n` +
-    (detail.diskCode ? `提取码：${detail.diskCode}\n` : '') +
-    '来自 Hy论坛'
+  const expected = detail.diskUrl
   await expect
     .poll(
       async () =>
-        (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n'),
+        (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n').trim(),
       { timeout: 10_000 }
     )
     .toBe(expected)
