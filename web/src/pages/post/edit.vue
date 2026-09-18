@@ -166,34 +166,62 @@
 
         <text class="label label--mt">分享链接<text class="label__req">*</text></text>
         <view class="control">
+          <!--
+            ⚠️ **不做链接格式校验**（需求方 2026-09-18 要求）：用户从网盘 App 复制出来的
+            往往是**一整段文案**，这里全部接受。
+            提交前才把它里面那条 http(s) 链接抽出来（见 `utils/netdisk.ts`），
+            并且**明确显示"将保存为：…"**，不静默改写用户的输入。
+            `maxlength` 放到 2000 只为挡住异常长的粘贴，不是格式约束。
+          -->
           <input
             v-model="form.diskUrl"
             class="control__input"
             type="text"
-            :maxlength="500"
-            placeholder="粘贴网盘分享链接"
+            :maxlength="2000"
+            placeholder="把网盘给你的分享内容整段粘贴进来即可"
             placeholder-class="control__placeholder"
             data-testid="compose-disk-url"
           />
         </view>
-        <!--
-          提示"链接里带 pwd 也可以直接贴"：后端会拆出提取码并把链接清干净（§5.5 第 2 条）。
-          把这条告诉用户，能少一堆手填错误。
-        -->
-        <text class="hint">链接里带 pwd= 参数也可以直接粘贴，后端会自动拆出提取码</text>
+        <!-- 抽出了链接、且与粘贴内容不同 → 告诉用户最终会存什么（相同就不啰嗦） -->
+        <text
+          v-if="extractedDiskUrl && extractedDiskUrl !== form.diskUrl.trim()"
+          class="hint"
+          data-testid="compose-disk-url-preview"
+        >
+          将保存为：{{ extractedDiskUrl }}
+        </text>
+        <!-- 整段内容里没有链接 → 现在就说清楚（否则会被后端以 400 拒掉，用户看不懂为什么） -->
+        <text
+          v-else-if="form.diskUrl.trim()"
+          class="hint hint--error"
+          data-testid="compose-disk-url-invalid"
+        >
+          这段内容里没有找到链接，请把网盘给出的链接一起复制进来
+        </text>
 
-        <text class="label label--mt">提取码<text class="label__hint">可留空</text></text>
-        <view class="control">
-          <input
-            v-model="form.diskCode"
-            class="control__input"
-            type="text"
-            :maxlength="20"
-            placeholder="阿里云盘 / 夸克网盘没有提取码，留空即可"
-            placeholder-class="control__placeholder"
-            data-testid="compose-disk-code"
-          />
-        </view>
+        <!--
+          提取码：**阿里云盘 / 夸克网盘不显示**（这两种没有提取码机制，
+          需求方 2026-09-18 明确说了「提取码都内嵌在链接里」）。
+          百度网盘带 `?pwd=` 的链接，后端会自动把提取码拆出来（《技术方案》§5.5 第 2 条）。
+        -->
+        <template v-if="!codeNotApplicable">
+          <text class="label label--mt">提取码<text class="label__hint">可留空</text></text>
+          <view class="control">
+            <input
+              v-model="form.diskCode"
+              class="control__input"
+              type="text"
+              :maxlength="20"
+              placeholder="链接里没带提取码时才需要填"
+              placeholder-class="control__placeholder"
+              data-testid="compose-disk-code"
+            />
+          </view>
+        </template>
+        <text v-else class="hint" data-testid="compose-disk-code-not-needed">
+          {{ diskTypeLabel(form.diskType) }}的提取码就在链接里，不用单独填
+        </text>
       </view>
 
       <!-- ==================== 错误与提交 ==================== -->
@@ -250,7 +278,8 @@ import { fetchSignature } from '@/api/oss'
 import { uploadImage, type LocalImage, type UploadedImage } from '@/utils/upload'
 import { BIZ_CODE } from '@/utils/error-code'
 import { ApiError } from '@/utils/request'
-import { DISK_TYPES, bool, num, text, toImageView, type PostImageView } from '@/utils/postView'
+import { DISK_TYPES, bool, diskTypeLabel, num, text, toImageView, type PostImageView } from '@/utils/postView'
+import { diskTypeHasNoCode, extractUrl } from '@/utils/netdisk'
 import type { BoardVO, PostCreateRequest, PostDetailVO, PostUpdateRequest } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
@@ -309,6 +338,15 @@ const showDiskFields = computed(() => {
 const existingImages = computed<PostImageView[]>(() =>
   (post.value?.images ?? []).map(toImageView)
 )
+
+/**
+ * 从用户粘贴的内容里抽出来的**链接**。
+ * 提交用的是它，不是原始输入 —— 用户粘的常常是整段分享文案（见 `utils/netdisk.ts`）。
+ */
+const extractedDiskUrl = computed(() => extractUrl(form.diskUrl))
+
+/** 当前网盘类型是否有"提取码"这个概念（阿里云盘/夸克没有） */
+const codeNotApplicable = computed(() => diskTypeHasNoCode(form.diskType))
 
 /* ---------------------------------------------------------------------------
  * 加载
@@ -513,12 +551,17 @@ function validate(): string {
 
   /*
    * 资源版块必填网盘链接（口径 10）。
-   * 注意 `diskCode` **可空** —— 阿里云盘/夸克无提取码机制（§5.5）。
-   * 不能顺手把它也要求上，那会挡住两个主流网盘的用户。
+   * **不校验链接格式**（需求方 2026-09-18 要求：整段粘贴就该能发）——
+   * 只确认"这段内容里**有**一条链接"，因为没有任何链接的话后端会以 400 拒掉，
+   * 而那个 400 对用户毫无信息量（实测报文是「diskUrl 必须是 http/https 链接」）。
    */
-  if (showDiskFields.value && !form.diskUrl.trim()) return '资源版块必须填写网盘分享链接'
-  if (form.diskUrl.length > 500) return '网盘链接不能超过 500 字'
-  if (form.diskCode.length > 20) return '提取码不能超过 20 字'
+  if (showDiskFields.value) {
+    if (!form.diskUrl.trim()) return '资源版块必须填写网盘分享链接'
+    if (!extractedDiskUrl.value) return '这段内容里没有找到链接，请把网盘给出的链接一起复制进来'
+    if (extractedDiskUrl.value.length > 500) return '网盘链接不能超过 500 字'
+    // 阿里云盘/夸克没有提取码，那种情况下这个字段根本不显示，也就不校验
+    if (!codeNotApplicable.value && form.diskCode.length > 20) return '提取码不能超过 20 字'
+  }
 
   return ''
 }
@@ -545,9 +588,13 @@ function buildCreatePayload(): PostCreateRequest {
 
   if (showDiskFields.value) {
     payload.diskType = form.diskType
-    payload.diskUrl = form.diskUrl.trim()
-    // 提取码为空就不传：契约里它可空，传空串与不传语义等价但更干净
-    if (form.diskCode.trim()) payload.diskCode = form.diskCode.trim()
+    // 提交**抽出来的链接**，不是整段文案（整段过不了后端校验，也不是可点的分享地址）
+    payload.diskUrl = extractedDiskUrl.value
+    /*
+     * 提取码：阿里云盘/夸克**没有这个概念**，所以即使输入框里还留着字符也**不提交** ——
+     * 否则会把一个与链接无关的值写进库，详情页就显示出一个假的"提取码"。
+     */
+    if (!codeNotApplicable.value && form.diskCode.trim()) payload.diskCode = form.diskCode.trim()
   }
   return payload
 }
@@ -578,8 +625,10 @@ function buildUpdatePayload(): PostUpdateRequest {
     ...(showDiskFields.value
       ? {
           diskType: form.diskType,
-          diskUrl: form.diskUrl.trim(),
-          diskCode: form.diskCode.trim(),
+          // 同上：只提交抽出来的链接；整段文案存进去既过不了校验、也不是可点的地址
+          diskUrl: extractedDiskUrl.value,
+          // 阿里云盘/夸克没有提取码 → 显式给空串（PUT 是覆盖语义，不传 = 清空，两种等价）
+          diskCode: codeNotApplicable.value ? '' : form.diskCode.trim(),
         }
       : {}),
   }

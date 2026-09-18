@@ -400,3 +400,71 @@ test('发帖 → 详情 → 编辑后网盘仍在且回到待审 → 删除后 4
     .poll(async () => (await fetchDetail(id, token)).code, { timeout: 15_000 })
     .toBe(404)
 })
+
+/* ==========================================================================
+ * 用例 7：网盘链接「整段粘贴」（需求方 2026-09-18 的实测场景）
+ * ========================================================================== */
+
+test('发帖：整段粘贴分享文案也能发出去，最终只保存其中的链接；夸克不显示提取码', async ({
+  page,
+}) => {
+  /*
+   * 起因：用户从夸克 App 复制出来的是**一整段文案**，粘进来发帖得到
+   * `HTTP 400 {"code":400,"message":"diskUrl 必须是 http/https 链接"}`（已实测）。
+   * 需求方的要求是「不要校验，直接复制过去就行」—— 所以前端**接受整段内容**，
+   * 提交前把其中那条链接抽出来，并在界面上明说"将保存为：…"（不静默改写）。
+   */
+  await freshLoggedInUser(page, 'm3c')
+  const token = await readToken(page)
+
+  await page.goto('#/pages/post/edit')
+  await expect(page.getByTestId('compose-title')).toBeVisible({ timeout: 15_000 })
+  await page.getByTestId(`compose-board-${BOARD_RESOURCE}`).click()
+  await expect(page.getByTestId('compose-disk-card')).toBeVisible()
+
+  /* ---- 夸克（diskType=3）：**不显示提取码**，并说明原因 ---- */
+  await page.getByTestId('compose-disk-type-3').click()
+  await expect(page.getByTestId('compose-disk-code'), '夸克没有提取码，不该出现输入框').toHaveCount(0)
+  await expect(page.getByTestId('compose-disk-code-not-needed')).toBeVisible()
+
+  /* ---- 百度（diskType=1）：提取码输入框出现（它有这个概念） ---- */
+  await page.getByTestId('compose-disk-type-1').click()
+  await expect(page.getByTestId('compose-disk-code')).toHaveCount(1)
+
+  /* ---- 回到夸克，整段粘贴 ---- */
+  await page.getByTestId('compose-disk-type-3').click()
+  const title = `整段粘贴分享文案 ${uniq()}`
+  const link = 'https://pan.quark.cn/s/1a2b3c4d5e6f'
+  const shareText =
+    `我用夸克网盘给你分享了「26网课大全」，点击链接或复制整段内容，打开「夸克APP」即可获取。` +
+    ` /~1a2b3c4d~ 链接：${link}`
+
+  await uniInput(page, 'compose-title').fill(title)
+  await uniInput(page, 'compose-disk-url').fill(shareText)
+
+  // 界面必须**明确告知**最终会存什么（这是"不做静默改写"的落点）
+  await expect(page.getByTestId('compose-disk-url-preview')).toContainText(link)
+
+  const createResponse = page.waitForResponse(
+    (res) => res.url().endsWith('/api/posts') && res.request().method() === 'POST'
+  )
+  await page.getByTestId('compose-submit').click()
+  const created = await (await createResponse).json()
+  expect(created.code, `整段粘贴发帖应成功，实际 ${JSON.stringify(created)}`).toBe(0)
+
+  /* ---- 存下来的是**链接本身**，不是整段文案 ---- */
+  expect(created.data.diskUrl, '应只保存抽出来的链接').toBe(link)
+  expect(created.data.diskType).toBe(3)
+  expect(created.data.diskCode ?? null, '夸克不该有提取码').toBeNull()
+
+  /* ---- 详情页应能把它渲染成可点的网盘卡片 ---- */
+  await page.goto(`#/pages/post/detail?id=${created.data.id}`)
+  await expect(page.getByTestId('detail-disk-url')).toHaveText(link)
+  await expect(page.getByTestId('detail-disk-code')).toHaveCount(0)
+
+  // 清理
+  await fetch(`${API_BASE}/api/posts/${created.data.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: token },
+  })
+})
