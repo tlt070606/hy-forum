@@ -201,7 +201,7 @@
           data-testid="detail-like"
           @click="toggleLike"
         >
-          <HyIcon :type="interaction.isPostLiked(postId) ? 'heartFilled' : 'heart'" size="xl" />
+          <HyIcon :type="interaction.isPostLiked(postId) ? 'heartFilled' : 'heartOutline'" size="xl" />
           <text class="interact__text">{{ likeCount }}</text>
         </view>
         <view class="interact__item" data-testid="detail-comment" @click="scrollToComments">

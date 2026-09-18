@@ -69,22 +69,28 @@
       现在点赞/评论/收藏从左往右排开、浏览量靠右，与参考图一致。
     -->
     <view class="post-card__foot">
+      <!--
+        ⚠️ 图标尺寸（需求方 2026-09-18）：「我要的爱心变大是要在**我现在这个页面**啊，
+        不要点进去再变大」—— 所以**列表卡片**这里也要大，不是只有详情页大。
+        爱心用**线框**（heartOutline），未点赞时与参考站一致；点赞态在详情页才出现
+        （列表项的契约字段里没有 isLiked，见报告 CR-K）。
+      -->
       <view class="metric" data-testid="post-card-like">
-        <HyIcon type="heart" size="sm" />
+        <HyIcon type="heartOutline" size="xl" />
         <text class="metric__text">{{ compactCount(post.likeCount) }}</text>
       </view>
       <view class="metric" data-testid="post-card-comment">
-        <HyIcon type="comment" size="sm" />
+        <HyIcon type="comment" size="xl" />
         <text class="metric__text">{{ compactCount(post.commentCount) }}</text>
       </view>
       <view class="metric" data-testid="post-card-collect">
-        <HyIcon type="bookmark" size="sm" />
+        <HyIcon type="bookmark" size="xl" />
         <text class="metric__text">{{ compactCount(post.collectCount) }}</text>
       </view>
-      <!-- 浏览量属于"参考信息"，靠右放，不跟三个操作抢注意力 -->
+      <!-- 浏览量属于"参考信息"，比三个操作小一档，不抢注意力 -->
       <view class="metric metric--trailing" data-testid="post-card-view">
-        <HyIcon type="eye" size="sm" />
-        <text class="metric__text">{{ compactCount(post.viewCount) }}</text>
+        <HyIcon type="eye" size="lg" />
+        <text class="metric__text metric__text--muted">{{ compactCount(post.viewCount) }}</text>
       </view>
     </view>
   </view>
@@ -284,7 +290,8 @@ function onMore(): void {
 .metric {
   display: flex;
   align-items: center;
-  margin-right: 32px;
+  /* 图标放大到 28px 之后，间距也要跟着放大，否则会挤成一团 */
+  margin-right: 44px;
 
   /* 浏览量靠右：`margin-left: auto` 把它推到行尾，同时不影响左边三项的位置 */
   &--trailing {
@@ -293,9 +300,15 @@ function onMore(): void {
   }
 
   &__text {
-    margin-left: 4px;
-    font-size: $hy-font-xs;
+    margin-left: 8px;
+    font-size: $hy-font-md;
     color: $hy-text-secondary;
+
+    /* 浏览量那档小一点、浅一点 */
+    &--muted {
+      font-size: $hy-font-sm;
+      color: $hy-text-placeholder;
+    }
   }
 }
 </style>

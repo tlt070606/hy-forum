@@ -61,6 +61,7 @@ export type IconType =
   | 'search'
   | 'bell'
   | 'heart'
+  | 'heartOutline'
   | 'heartFilled'
   | 'comment'
   | 'moreH'
@@ -180,6 +181,24 @@ const SHAPES: Record<IconType, string[]> = {
     line(
       'position:absolute;left:50%;top:44%;width:44%;height:44%;margin-left:-22%;border-left:none;border-top:none;transform:rotate(45deg)'
     ),
+  ],
+
+  // 爱心（线框）：**实心爱心挖空中间**得到连续轮廓
+  //
+  // ⚠️ 为什么用"挖空"而不是"描边"：
+  //    爱心是"两个圆 + 一个旋转方块"的**并集**，如果只给这三个形状描边，
+  //    它们相交处的边框会露在轮廓内部（看起来像三个图形叠在一起，而不是一颗心）。
+  //    所以先画实心，再用**卡片底色**画一个按比例内缩的同形状把它掏空 —— 得到一条连续轮廓。
+  //    代价：挖空用的是白色，**只能放在白色底上**（当前两处用法都是白色卡片）。
+  //    若将来要用在非白底上，得把内层颜色改成所在容器的底色。
+  heartOutline: [
+    fill('position:absolute;left:8%;top:26%;width:50%;height:50%;border-radius:50%'),
+    fill('position:absolute;left:42%;top:26%;width:50%;height:50%;border-radius:50%'),
+    fill('position:absolute;left:50%;top:50%;width:60%;height:60%;margin-left:-30%;transform:rotate(45deg)'),
+    // 内缩一圈（各边约 7%）后同形状、底色填充
+    fill('position:absolute;left:15%;top:33%;width:36%;height:36%;border-radius:50%;background:#ffffff'),
+    fill('position:absolute;left:49%;top:33%;width:36%;height:36%;border-radius:50%;background:#ffffff'),
+    fill('position:absolute;left:50%;top:50%;width:46%;height:46%;margin-left:-23%;transform:rotate(45deg);background:#ffffff'),
   ],
 
   // 爱心（实心，表示"已点赞"）
