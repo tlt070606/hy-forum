@@ -209,12 +209,16 @@ const SHAPES: Record<IconType, string[]> = {
   /**
    * 爱心（线框）。
    *
-   * 画法：先画实心（描边色），再用**卡片底色**按同一心尖缩小 `scale(.7)` 挖空。
-   * ⚠️ 两个刻意的细节（都是试验台上比出来的）：
+   * 画法：先画实心（描边色），再用**卡片底色**按同一心尖缩小 `scale(.86)` 挖空。
+   * ⚠️ 三个刻意的细节（全部是试验台上比出来的，参数别凭感觉改）：
    * 1. **不能用"给两个墓碑描边"** —— 它们在中下部是**重叠**的，
    *    描边会在心形内部交叉成一个 X（试验台候选 C 就是这个下场）；
-   * 2. `margin-top: -9%` 是**手工补的内缩偏心**：缩放是绕"心尖"做的，
-   *    不补的话上半部分（两个圆瓣）的轮廓会明显比下半部分厚。
+   * 2. **`scale` 决定线宽**：`(1-s)/2` 大致就是单边厚度占比。
+   *    一开始用 `.7`（≈15%/边）在 28px 下渲染出来**又粗又笨**（用户原话「爱心还是不对」），
+   *    放大 5 倍才看清；现在用 `.86`（≈7%/边）才是参考图那种细线；
+   * 3. **`margin-top: -4%` 是手工补的内缩偏心**：缩放绕"心尖"做，不补的话上半部分
+   *    （两个圆瓣）会明显偏厚；补过头则心尖会多出一小截"尖刺"（-9% 就是这样）。
+   *    注意 `margin` 的百分比是按**容器宽度**算的，不是高度。
    *
    * ⚠️ 代价：挖空用白色，**只能放在白色底上**（当前两处用法都是白卡片）。
    *    将来要用在非白底上，得把内层颜色改成所在容器的底色。
@@ -227,10 +231,10 @@ const SHAPES: Record<IconType, string[]> = {
       'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg)'
     ),
     fill(
-      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg) scale(.7);background:#ffffff;margin-top:-9%'
+      'position:absolute;left:50%;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:0% 100%;transform:rotate(-45deg) scale(.88);background:#ffffff;margin-top:-2%'
     ),
     fill(
-      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg) scale(.7);background:#ffffff;margin-top:-9%'
+      'position:absolute;left:0;top:0;width:50%;height:80%;border-radius:50% 50% 0 0;transform-origin:100% 100%;transform:rotate(45deg) scale(.88);background:#ffffff;margin-top:-2%'
     ),
   ],
 

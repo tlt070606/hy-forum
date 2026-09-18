@@ -39,13 +39,24 @@ const WANT = (process.env.SHOT_VIEWPORTS || '').split(',').filter(Boolean)
 const VIEWPORTS = WANT.length ? ALL_VIEWPORTS.filter((v) => WANT.includes(v.name)) : ALL_VIEWPORTS
 const FULL = process.env.SHOT_FULL !== '0'
 
+/**
+ * 元素级高倍截图：`SHOT_SELECTOR` + `SHOT_SCALE`。
+ *
+ * ⚠️ 为什么需要它：**28px 的图标没法从整页截图里判断对错** —— 本机已因此误判两次
+ *    （先把盾形看成心形，后来又以为改动没生效）。看清小控件只有一条可靠的路：
+ *    **单独截它、放大 3~5 倍**。
+ *    例：SHOT_SELECTOR='[data-testid="post-card-like"]' SHOT_SCALE=5 SHOT_VIEWPORTS=mobile node scripts/shot.mjs
+ */
+const SELECTOR = process.env.SHOT_SELECTOR || ''
+const SCALE = Number(process.env.SHOT_SCALE || '1')
+
 mkdirSync(OUT, { recursive: true })
 
 const browser = await chromium.launch({ channel: 'chrome' })
 const errors = []
 
 for (const vp of VIEWPORTS) {
-  const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } })
+  const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: SELECTOR ? SCALE : 1 })
   page.on('console', (msg) => {
     if (msg.type() === 'error') errors.push(`[${vp.name}] console: ${msg.text()}`)
   })
@@ -58,7 +69,12 @@ for (const vp of VIEWPORTS) {
   await page.goto(`${BASE}/${ROUTE}`, { waitUntil: 'domcontentloaded' })
   // 等接口回来 + 首屏渲染稳定（信息流是 onShow 里请求的）
   await page.waitForTimeout(3500)
-  await page.screenshot({ path: `${OUT}/${NAME}-${vp.name}.png`, fullPage: FULL && vp.name !== 'desktop' })
+  if (SELECTOR) {
+    // 元素级 + 高倍：小控件只有这样才看得清
+    await page.locator(SELECTOR).first().screenshot({ path: `${OUT}/${NAME}-${vp.name}.png` })
+  } else {
+    await page.screenshot({ path: `${OUT}/${NAME}-${vp.name}.png`, fullPage: FULL && vp.name !== 'desktop' })
+  }
   console.log(`shot: ${OUT}/${NAME}-${vp.name}.png`)
   await page.close()
 }

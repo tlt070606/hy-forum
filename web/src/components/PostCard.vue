@@ -383,21 +383,40 @@ function onMore(): void {
   /* 图标放大到 28px 之后，间距也要跟着放大，否则会挤成一团 */
   margin-right: 44px;
 
+  /*
+   * 图标一起加深（需求方：「字体的颜色可以深一点」）。
+   * ⚠️ 只在这条互动行里加深，**不动全局的 `$hy-icon-color`** ——
+   * 那个变量所有页面都在用，为一个局部观感去改全局值，别处会跟着变。
+   * 已点赞/已收藏时由下面的 `--on`（多一个类名，优先级更高）覆盖成红/紫。
+   */
+  :deep(.hy-icon) {
+    color: $hy-text-regular;
+  }
+
   /* 浏览量靠右：`margin-left: auto` 把它推到行尾，同时不影响左边三项的位置 */
   &--trailing {
     margin-left: auto;
     margin-right: 0;
+
+    :deep(.hy-icon) {
+      color: $hy-text-secondary;
+    }
   }
 
   &__text {
     margin-left: 8px;
     font-size: $hy-font-md;
-    color: $hy-text-secondary;
+    /*
+     * ⚠️ 用 `$hy-text-regular`（#4e5969）而不是 `$hy-text-secondary`（#86909c）：
+     * 需求方 2026-09-18「字体的颜色可以深一点」—— 计数是这个行里唯一的信息，
+     * 原来的浅灰在白色卡片上偏虚。
+     */
+    color: $hy-text-regular;
 
-    /* 浏览量那档小一点、浅一点 */
+    /* 浏览量那档小一点、浅一点（它是参考信息，不该和三个操作一样重） */
     &--muted {
       font-size: $hy-font-sm;
-      color: $hy-text-placeholder;
+      color: $hy-text-secondary;
     }
   }
 
