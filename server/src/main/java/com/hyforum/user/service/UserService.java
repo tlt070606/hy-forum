@@ -232,6 +232,14 @@ public class UserService {
                     post.getTitle(),
                     post.getCoverUrl(),
                     nullToZero(post.getImageCount()),
+                    // CR-L / CR-K 的四个字段：由 FeedController 用 CardViewerStateEnricher
+                    // 在接入层补齐（本包不依赖 post 包，也不该知道"谁在看"）。
+                    // 这里给"安全默认"：空数组与 false —— 绝不可能是"未登录却显示已点赞"那种谎。
+                    java.util.List.of(),
+                    post.getDiskType(),
+                    post.getDiskUrl() != null && !post.getDiskUrl().isBlank(),
+                    false,
+                    false,
                     post.getIsTop() != null && post.getIsTop() == 1,
                     post.getIsEssence() != null && post.getIsEssence() == 1,
                     nullToZero(post.getViewCount()),

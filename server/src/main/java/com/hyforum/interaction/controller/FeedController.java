@@ -4,6 +4,7 @@ import com.hyforum.common.api.ApiResponse;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.security.CurrentUser;
 import com.hyforum.common.security.OptionalLogin;
+import com.hyforum.interaction.service.CardViewerStateEnricher;
 import com.hyforum.interaction.service.FeedService;
 import com.hyforum.interaction.vo.FeedItemVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,8 +33,12 @@ public class FeedController {
 
     private final FeedService feedService;
 
-    public FeedController(FeedService feedService) {
+    /** CR-K / CR-L：卡片的 liked/collected/imageThumbs 由它在接入层补齐（与版块列表同一口径）。 */
+    private final CardViewerStateEnricher enricher;
+
+    public FeedController(FeedService feedService, CardViewerStateEnricher enricher) {
         this.feedService = feedService;
+        this.enricher = enricher;
     }
 
     /**
@@ -51,6 +56,11 @@ public class FeedController {
             @RequestParam(required = false, defaultValue = "latest") String sort,
             @RequestParam(required = false, defaultValue = "1") int page,
             @RequestParam(required = false, defaultValue = "20") int size) {
-        return ApiResponse.ok(feedService.feed(type, sort, CurrentUser.idOrNull(), page, size));
+        // 先让 Service 查帖子，再在**接入层**补"请求者视角字段"：
+        // 这层才知道"谁在看"，而 interaction 的 Mapper 也只允许这层用（铁律 3）。
+        Long viewerId = CurrentUser.idOrNull();
+        PageResult<FeedItemVO> result = feedService.feed(type, sort, viewerId, page, size);
+        return ApiResponse.ok(new PageResult<>(
+                enricher.enrich(result.list(), viewerId), result.total(), result.page(), result.size()));
     }
 }

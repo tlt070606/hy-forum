@@ -44,11 +44,17 @@ public record UserProfileVO(
         String nickname,
         String avatarUrl,
         String bio,
+        @Schema(description = "性别：0 = 未知 / 1 = 男 / 2 = 女。"
+                + "取值语义与 docs/db/schema.sql 的 user.gender 列注释一致（CR-M）")
         Integer gender,
         Integer postCount,
         Integer followCount,
         Integer fansCount,
         Integer likeReceivedCount,
+        @Schema(description = "【reserved 预留字段】当前无任何写入口径：注册时被固定写成 1"
+                + "（见 AuthService.register），schema 默认值也是 1 —— 即**恒为 1、不随任何行为变化**。"
+                + "含义待定，**前端不得展示为'等级'**（把恒为 1 的数字渲染成'等级 1'属于界面在说谎，"
+                + "与 CR-M 要消灭的'等级 0'是同一类问题）。需要等级体系时先定义写入口径。")
         Integer level,
         Boolean isFollowing,
         Boolean isFollowedBy,

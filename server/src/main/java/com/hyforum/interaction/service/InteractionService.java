@@ -27,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 帖子互动服务：点赞 / 收藏 / 取消（§6.5、§8.1、§8.2）与"我的收藏列表"（§6.3）。
@@ -366,6 +368,47 @@ public class InteractionService {
     public boolean hasLikedComment(long userId, long commentId) {
         return commentLikeMapper.selectCount(Wrappers.<CommentLike>lambdaQuery()
                 .eq(CommentLike::getCommentId, commentId).eq(CommentLike::getUserId, userId)) > 0;
+    }
+
+    /**
+     * 一批帖子里，哪些是 {@code userId} 点过赞的（CR-K 的 {@code liked} 字段用）。
+     *
+     * <p><b>为什么是"批"而不是逐条 {@code hasLiked}</b>：列表一页 20 条，逐条问就是 20 次往返（N+1）。
+     * 这里一次 {@code post_id IN (...)} 取回集合，调用方在内存里 {@code contains} ——
+     * 查询次数与页大小无关。</p>
+     *
+     * <p>未登录（{@code userId == null}）或空列表时<b>直接返回空集合、不查库</b>：
+     * 契约要求未登录时 {@code liked} 恒为 {@code false}（§13.1）。
+     * 这里返回空集合表达的是"确定地没有任何点赞"，而不是"猜一个" ——
+     * 与"取不到就当 0"那种静默错法有本质区别。</p>
+     *
+     * @param userId  当前请求者；未登录为 {@code null}
+     * @param postIds 一页帖子的 id
+     * @return 其中被该用户点过赞的帖子 id 集合
+     */
+    @Transactional(readOnly = true)
+    public Set<Long> likedPostIds(Long userId, List<Long> postIds) {
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return Set.of();
+        }
+        return postLikeMapper.selectList(Wrappers.<PostLike>lambdaQuery()
+                        .eq(PostLike::getUserId, userId)
+                        .in(PostLike::getPostId, postIds)
+                        .select(PostLike::getPostId))
+                .stream().map(PostLike::getPostId).collect(Collectors.toSet());
+    }
+
+    /** 一批帖子里，哪些是 {@code userId} 收藏过的（CR-K 的 {@code collected} 字段用）；与点赞同源同形状。 */
+    @Transactional(readOnly = true)
+    public Set<Long> collectedPostIds(Long userId, List<Long> postIds) {
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return Set.of();
+        }
+        return postCollectMapper.selectList(Wrappers.<PostCollect>lambdaQuery()
+                        .eq(PostCollect::getUserId, userId)
+                        .in(PostCollect::getPostId, postIds)
+                        .select(PostCollect::getPostId))
+                .stream().map(PostCollect::getPostId).collect(Collectors.toSet());
     }
 
     /** 关系行的权威条数（对账用：{@code like_count} 必须等于它）。 */

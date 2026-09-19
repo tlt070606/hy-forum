@@ -758,6 +758,11 @@ public class PostService {
                 nullToZero(post.getLikeCount()),
                 nullToZero(post.getCommentCount()),
                 nullToZero(post.getCollectCount()),
+                // CR-K：liked / collected 由 PostController 用 withViewerState(...) 填 ——
+                // 本包不得依赖 interaction（铁律 3），且"请求者是谁"属接入层知识。
+                // 这里给 false 作为**安全默认**（绝不可能是"未登录却显示已点赞"那种谎）。
+                false,
+                false,
                 post.getIsTop() != null && post.getIsTop() == 1,
                 post.getIsEssence() != null && post.getIsEssence() == 1,
                 nullToZero(post.getStatus()),
@@ -816,6 +821,18 @@ public class PostService {
                     // §12：库里存裸 URL，对外组装时才现签（桶是私有的）
                     readUrlSigner.sign(post.getCoverUrl()),
                     nullToZero(post.getImageCount()),
+                    // CR-L：列表只给"前最多 3 张缩略图"，而缩略图要**逐张读时签名**，
+                    // 且需要一次按 postId 批量的图片查询（不是每条帖子查一次）。
+                    // 这两件事都不属于"把帖子查出来"，因此由 PostController 在组装响应时
+                    // 用 withViewerState(...) 填进去；这里先给空列表，保证**绝不为 null**。
+                    java.util.List.of(),
+                    post.getDiskType(),
+                    // CR-L：列表只给"有没有网盘资源"这个布尔，不给 diskUrl（产品裁决）。
+                    // 它只能由读得到实体的一方算，所以在这里算好。
+                    post.getDiskUrl() != null && !post.getDiskUrl().isBlank(),
+                    // CR-K：liked / collected 同样由 Controller 填（铁律 3 不允许本包依赖 interaction）
+                    false,
+                    false,
                     post.getIsTop() != null && post.getIsTop() == 1,
                     post.getIsEssence() != null && post.getIsEssence() == 1,
                     nullToZero(post.getViewCount()),

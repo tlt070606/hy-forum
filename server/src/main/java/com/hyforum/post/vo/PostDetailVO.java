@@ -31,6 +31,8 @@ import java.util.List;
  * @param likeCount       点赞数
  * @param commentCount    评论数
  * @param collectCount    收藏数
+ * @param liked           <b>当前查看者</b>是否点过赞；未登录一律 {@code false}（CR-K）
+ * @param collected       <b>当前查看者</b>是否收藏过；未登录一律 {@code false}（CR-K）
  * @param isTop           是否置顶
  * @param isEssence       是否加精
  * @param status          0 待审核 / 1 正常 / 2 已屏蔽
@@ -57,6 +59,11 @@ public record PostDetailVO(
         Integer likeCount,
         Integer commentCount,
         Integer collectCount,
+        @Schema(description = "当前请求者是否点过赞（相对于请求者，未登录恒为 false；"
+                + "未登录不会因此报 401）")
+        Boolean liked,
+        @Schema(description = "当前请求者是否收藏过（相对于请求者，未登录恒为 false）")
+        Boolean collected,
         @JsonProperty("isTop")
         Boolean isTop,
         @JsonProperty("isEssence")
@@ -66,4 +73,26 @@ public record PostDetailVO(
         UserBriefVO author,
         LocalDateTime createdAt,
         LocalDateTime updatedAt) {
+
+    /**
+     * 带出<b>请求者视角字段</b>的副本：{@code liked} / {@code collected}（CR-K）。
+     *
+     * <p>为什么由 Controller 复制而不是 Service 直接填，理由与
+     * {@link PostSummaryVO#withViewerState} 完全相同（铁律 3 禁止 {@code post} 依赖
+     * {@code interaction} 去查互动关系表；"请求者是谁"属于接入层知识）。
+     * 详情页<b>不发</b> {@code imageThumbs}：它已经有完整的 {@code images}（含签名后的
+     * {@code thumbUrl}），再给一份"前 3 张"是纯冗余。</p>
+     *
+     * @param liked     请求者是否点过赞（未登录传 {@code false}）
+     * @param collected 请求者是否收藏过（未登录传 {@code false}）
+     */
+    public PostDetailVO withViewerState(Boolean liked, Boolean collected) {
+        return new PostDetailVO(
+                id, boardId, boardName, boardIsResource, title, content, coverUrl, imageCount, images,
+                diskType, diskUrl, diskCode, viewCount, likeCount, commentCount, collectCount,
+                // 未登录时这里是 false（不是 null）：契约 §13.1 明确"未登录一律 false"
+                liked != null && liked,
+                collected != null && collected,
+                isTop, isEssence, status, author, createdAt, updatedAt);
+    }
 }

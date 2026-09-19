@@ -5,6 +5,7 @@ import com.hyforum.common.api.PageResult;
 import com.hyforum.common.security.AllowAnonymous;
 import com.hyforum.common.security.CurrentUser;
 import com.hyforum.common.security.OptionalLogin;
+import com.hyforum.interaction.service.CardViewerStateEnricher;
 import com.hyforum.interaction.service.InteractionService;
 import com.hyforum.interaction.vo.CollectionItemVO;
 import com.hyforum.interaction.vo.FeedItemVO;
@@ -25,10 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
  *   <caption>端点</caption>
  *   <tr><th>方法</th><th>路径</th><th>鉴权</th></tr>
  *   <tr><td>GET</td><td>/api/users/{id}</td><td><b>可选</b>（{@code @OptionalLogin}）</td></tr>
- *   <tr><td>GET</td><td>/api/users/{id}/posts</td><td>否</td></tr>
+ *   <tr><td>GET</td><td>/api/users/{id}/posts</td>
+ *       <td><b>可选</b>（{@code @OptionalLogin}，CR-K 之后）</td></tr>
  *   <tr><td>GET</td><td>/api/users/{id}/comments</td><td>否</td></tr>
  *   <tr><td>GET</td><td>/api/user/collections</td><td>是</td></tr>
  * </table>
+ *
+ * <p>三种模式的区别（{@code @OptionalLogin} vs {@code @AllowAnonymous}）见
+ * {@link com.hyforum.common.security.OptionalLogin} 的类注释 ——
+ * <b>要"因人而异"的字段就必须用前者</b>，后者连 token 都不解析。</p>
  *
  * <h2>⚠️ 为什么不叫 {@code UserController}（实测踩到的坑，后来者必读）</h2>
  * <p>本类第二版曾命名为 {@code UserController}，结果<b>整个 Spring 上下文起不来</b>：</p>
@@ -63,9 +69,15 @@ public class UserProfileController {
     private final UserService userService;
     private final InteractionService interactionService;
 
-    public UserProfileController(UserService userService, InteractionService interactionService) {
+    /** CR-K / CR-L：个人主页的帖子卡片也要有 liked/collected/imageThumbs（与首页、版块列表同一口径）。 */
+    private final CardViewerStateEnricher enricher;
+
+    public UserProfileController(UserService userService,
+                                 InteractionService interactionService,
+                                 CardViewerStateEnricher enricher) {
         this.userService = userService;
         this.interactionService = interactionService;
+        this.enricher = enricher;
     }
 
     /**
@@ -79,15 +91,29 @@ public class UserProfileController {
         return ApiResponse.ok(userService.getProfile(id, CurrentUser.idOrNull()));
     }
 
-    /** 该用户的帖子列表（§6.3）：只含正常可见的帖子，时间倒序。 */
+    /**
+     * 该用户的帖子列表（§6.3）：只含正常可见的帖子，时间倒序。
+     *
+     * <p><b>注解必须是 {@code @OptionalLogin}，不能是 {@code @AllowAnonymous}</b>：
+     * CR-K 要求这些卡片也带 {@code liked}/{@code collected}（与首页流、版块列表同一口径），
+     * 而 {@code @AllowAnonymous} 会让拦截器<b>连 token 都不看</b>，
+     * 于是 {@code CurrentUser} 恒为空 → 卡片<b>永远</b>显示未点赞。
+     * 那正是"某个入口静默丢状态"，与 CR-K 要消灭的谎是同一类 ——
+     * 实测就是这么红的：`[DIAG-enrich] viewerId=null ... liked=[]`。</p>
+     */
     @GetMapping("/api/users/{id}/posts")
-    @AllowAnonymous
-    @Operation(summary = "某用户的帖子", description = "只返回 status=1（正常）的帖子，时间倒序分页")
+    @OptionalLogin
+    @Operation(summary = "某用户的帖子",
+            description = "只返回 status=1（正常）的帖子，时间倒序分页；"
+                    + "可选鉴权：liked/collected 反映请求者状态（未登录恒 false，仍 200）")
     public ApiResponse<PageResult<FeedItemVO>> listPosts(
             @PathVariable long id,
             @RequestParam(required = false, defaultValue = "1") int page,
             @RequestParam(required = false, defaultValue = "20") int size) {
-        return ApiResponse.ok(userService.listUserPosts(id, page, size));
+        Long viewerId = CurrentUser.idOrNull();
+        PageResult<FeedItemVO> result = userService.listUserPosts(id, page, size);
+        return ApiResponse.ok(new PageResult<>(
+                enricher.enrich(result.list(), viewerId), result.total(), result.page(), result.size()));
     }
 
     /** 该用户的评论列表（§6.3）：只含正常状态的评论，带所属帖子标题。 */

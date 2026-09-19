@@ -436,6 +436,21 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
     // 落库断言用到的小工具
     // ==================================================================
 
+    /**
+     * 帖子详情。
+     *
+     * @param token 带 token 时走"可选鉴权"分支（CR-K 的 {@code liked} 会反映该用户的状态）；
+     *              <b>传 {@code null} 表示未登录</b>（那时 {@code liked} 必须仍是 {@code false}
+     *              且 HTTP 仍为 200 —— §13.1 的第 ② 条硬断言）
+     */
+    protected Response getPostDetail(String token, long postId) {
+        io.restassured.specification.RequestSpecification request = RestAssured.given();
+        if (token != null) {
+            request = request.header("Authorization", token);
+        }
+        return request.get("/api/posts/" + postId);
+    }
+
     /** 单值查询（列名由测试自己写死，不接受外部输入）。 */
     protected <T> T scalar(String sql, Class<T> type, Object... args) {
         return jdbcTemplate.queryForObject(sql, type, args);
