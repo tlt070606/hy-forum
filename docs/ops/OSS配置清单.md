@@ -466,6 +466,42 @@ powershell -NoProfile -File scripts\start_oss_callback_tunnel.ps1
 这正是 CI 漂移检查曾经**假红**的根因（`servers[0].url` 里带了监听端口/Host）——
 所以两处比对都**两侧摘掉 `servers`** 再比。**端口与 Host 不属于契约。**
 
+#### 坑 4：**"僵尸监听者"** —— 表现为 **504**，不是连接拒绝（2026-09-17 实遇）
+
+**现象**：`GET /hy-forum-tunnel-health` → **HTTP 504**；同时 OSS 回调报
+`CallbackFailed: Error status : -1. OSS can not connect to your callbackUrl`（EC `0007-00000203`）。
+
+**两层真相同时存在**（所以只修一条没用）：
+
+| 层 | 状况 |
+|---|---|
+| 本机 | **隧道 ssh 进程数 = 0** —— 隧道根本没起（supervisor 起过但没绑上端口，静默没成功） |
+| ECS | **18080 仍被一个 sshd 占着** —— ssh -R 的**客户端早就死了，sshd 还守着端口**；nginx 连上去**没人转发** → 超时 → **504** |
+
+**为什么难查**：`504 Gateway Time-out` 看起来像"后端挂了/后端慢"，真相却是"远端有个**僵尸**占着端口"。
+
+**判据（记住这一条就够）**：
+- **连接被拒绝（refused）** → 端口上**没有监听者** → 隧道没起；
+- **504** → 端口上**有监听者但不转发** → 十有八九是**僵尸**。
+
+**处置（顺序不能反）**：
+
+```powershell
+@(Get-CimInstance Win32_Process -Filter "Name='ssh.exe'").Count   # ① 本机有没有隧道（0 = 没起）
+ssh myserver "ss -ltnp | grep 18080"                              # ② ECS 上 18080 的占用者是谁
+ssh myserver "kill <pid>"                                         # ③ 杀孤儿（否则新隧道永远绑不上）
+powershell -NoProfile -File scripts\start_oss_callback_tunnel.ps1 # ④ 起隧道
+curl.exe -s -o NUL -w "%{http_code}`n" http://8.138.237.212/hy-forum-tunnel-health   # ⑤ 期望 200
+```
+
+**与坑 2 的区别**：坑 2 是"**有活的隧道**时别起第二个"（报 `remote port forwarding failed`）；
+坑 4 是"**端口被不工作的监听者占着**"（报 504）。**两种都表现为"隧道起不来"，但一个是重叠、一个是残留。**
+
+**同日一条更重要的教训**：这次故障的第一现场是**前端最小闭环用例红了一条**
+（`OSS 直传应返回 200，实际 203`）。第一反应容易是"前端的用例挂了" ——
+**而真因是 L1 起后端时漏设了 `OSS_CALLBACK_URL`**（后端那条环回 WARN 三行日志就把它指出来了）。
+**看到别人红，先查自己给的环境。**
+
 
 ---
 
