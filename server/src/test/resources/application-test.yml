@@ -17,6 +17,22 @@
 #      2) $env:TEST_DB='hy_forum_test_m4'  （再跑 mvn test）
 #    不设 TEST_DB 时行为与从前完全一致（仍是 hy_forum_test）。
 #    ⚠️ 假红比慢更危险：它会让人去查一个不存在的 bug。这条是花钱买来的教训。
+#
+# 🔴 2026-09-18 更正（重要）：**上面那段说的"可用环境变量覆盖"是错的。**
+#    本文件在 Maven 资源过滤之下，`${...}` 会在**构建期**被处理 ——
+#    写 `${TEST_DB:hy_forum_test}` 这类占位符，**运行期设环境变量不生效**。
+#    而 W4-M4 为了绕开它改用了 `@TestPropertySource` 硬编码库名，
+#    结果让测试在 CI 里恒定去连一个**不存在的库**（CI 只建 hy_forum_test）
+#    → 28 个集成测试全部 `CannotGetJdbcConnection`，CI 连红多次。
+#
+#    所以：**本文件不再使用任何 ${...} 占位符。** 要临时换库，用命令行系统属性（优先级高于本文件）：
+#      cd server
+#      mvn test '-Dhy.test.db=hy_forum_test_m4' ^
+#               '-Dspring.datasource.url=jdbc:mysql://127.0.0.1:3306/hy_forum_test_m4?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true'
+#    ① `hy.test.db` 决定 TestTableCleaner 的"期望库名"（防误清开发库的那道守卫用它比对）；
+#    ② `spring.datasource.url` 决定真正连哪个库。**两者必须一致**，否则会出现
+#       "url 指着 A 库、清表工具却去清 B 库"这种最坏组合。
+#    **测试代码里也不要再出现 `@TestPropertySource` 硬编码库名** —— 那会让 CI 永远连不上。
 #   - Redis 在 VMware VM 里：192.168.100.128:6380（本机 Windows 无 Redis，
 #     且已决策不装 Docker Desktop；不使用 Testcontainers，见 docs/testing/README.md §3.1）
 #
@@ -27,7 +43,7 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/${TEST_DB:hy_forum_test}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/hy_forum_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: 1234
     hikari:
