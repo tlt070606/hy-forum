@@ -105,6 +105,11 @@ class M4InteractionPropertyTest extends IntegrationTestBase {
      * <p><b>不再写死库名</b>：写死那版让 CI 恒连一个不存在的库（见类上
      * {@code @TestPropertySource} 的注释）。</p>
      */
+    /**
+     * 兜底直连用的库名 —— 与 {@code TestTableCleaner} 同源（系统属性 {@code hy.test.db}，
+     * 缺省 {@code hy_forum_test}），**不再写死 m4 库名**（写死那版让 CI 恒连不存在的库）。
+     * 注意：真正清表时用的是 {@link #actualDatabase}（实际连上的库），这一个只用于兜底连接。
+     */
     private static final String M4_DATABASE = resolveExpectedDatabase();
 
     private static String resolveExpectedDatabase() {
@@ -198,7 +203,11 @@ class M4InteractionPropertyTest extends IntegrationTestBase {
     @BeforeTry
     void seed() {
         org.springframework.jdbc.core.JdbcTemplate localJdbc = jdbcForBaseline();
-        new TestTableCleaner(localJdbc, M4_DATABASE).truncate(M4_TABLES);
+        // ★ 期望库名取自**实际连上的那个库**（`SELECT DATABASE()`），而不是自己推一个。
+        //   理由：本类的手动容器与兜底连接可能连到不同的库，而"清哪张表"必须与
+        //   "实际连的是哪个库"完全一致 —— 这样结构上不可能出现
+        //   "url 指着 A 库、清表工具去清 B 库"（CI 里 B 库不存在会直接 CannotGetJdbcConnection）。
+        new TestTableCleaner(localJdbc, actualDatabase(localJdbc)).truncate(M4_TABLES);
 
         TestFixtures localFixtures = new TestFixtures(localJdbc);
         long boardId = localFixtures.insertBoard("属性测试版块");
@@ -246,7 +255,22 @@ class M4InteractionPropertyTest extends IntegrationTestBase {
     /** try 结束后清理，避免反例打印时被残留数据干扰（基类只覆盖 @Test 方法）。 */
     @AfterTry
     void cleanUp() {
-        new TestTableCleaner(jdbcForBaseline(), M4_DATABASE).truncate(M4_TABLES);
+        org.springframework.jdbc.core.JdbcTemplate localJdbc = jdbcForBaseline();
+        new TestTableCleaner(localJdbc, actualDatabase(localJdbc)).truncate(M4_TABLES);
+    }
+
+    /**
+     * 实际连上的库名（{@code SELECT DATABASE()}）。
+     *
+     * <p>"清哪张表"必须与"实际连的是哪个库"完全一致 —— 取实际值就不会出现
+     * "期望 A 库、实际连 B 库"那种错配（CI 里 B 库不存在会直接报连不上）。</p>
+     */
+    private static String actualDatabase(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        String name = jdbc.queryForObject("SELECT DATABASE()", String.class);
+        if (name == null || name.isBlank()) {
+            throw new IllegalStateException("当前连接没有库名（SELECT DATABASE() 为空），拒绝清表");
+        }
+        return name;
     }
 
     // ==================================================================

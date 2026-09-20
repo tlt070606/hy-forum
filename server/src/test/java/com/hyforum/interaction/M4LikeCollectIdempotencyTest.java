@@ -358,6 +358,16 @@ class M4LikeCollectIdempotencyTest extends M4ApiTestSupport {
         //    （MySQL 实测，见交付报告 CR-M4-3）。发帖接口会把 post_count 正确置为 1，
         //    于是这条用例测的是"删帖的计数回退"，而不是"人工制造出来的不可能状态"。
         //    这样也顺带真实地覆盖了"发帖 → 互动 → 删帖"这条完整链路。
+        //
+        // ⚠️ 发帖前必须**先清掉本用例自己的发帖配额**：§8.7 对新注册用户限 3 帖/24 小时
+        //    （`PostRateLimiter` 的 action 是 `post-new-user-24h`，键含用户 id；`TestFixtures`
+        //    造的用户 `created_at = NOW()`，因此每条用例的用户都算"新用户"）。
+        //    不清的话，同一个用户 id 在多条用例里累积计数 → 第 4 次发帖就被 429，
+        //    报错是 `请求过于频繁，请 86322 秒后再试`（实测就这样红过一次）。
+        //    这里只清**本用例这个用户**的两条键 —— 不是通配符，因此不会动别人的配额。
+        stringRedisTemplate.delete("hy:rl:post-new-user-24h:" + author.id());
+        stringRedisTemplate.delete("hy:rl:post-hourly:" + author.id());
+
         long apiPostId = postService.create(author.id(),
                 new com.hyforum.post.dto.PostCreateRequest(
                         boardId, "M4 删帖用例帖", "正文", null, null, null, null)).id();

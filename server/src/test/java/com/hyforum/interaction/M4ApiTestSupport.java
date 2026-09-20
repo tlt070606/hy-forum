@@ -130,14 +130,12 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
     /** 每个用例前把测试库与 Redis 恢复成确定起点。 */
     @BeforeEach
     void restoreM4Baseline() {
-        // ★ 把清表工具的"期望库名"也钉到独占库。
-        //   基类默认拿 System.getProperty("hy.test.db", "hy_forum_test")，那不跟着
-        //   spring.datasource.url 走 —— 于是会出现最坏的一种组合：
-        //   **url 指着 hy_forum_test_m4、清表工具却去清 hy_forum_test**（清错了库，
-        //   而独占库里的残留数据永远清不掉）。
-        //   实测症状：用户名唯一键没被清 → 残留用户与新建用户混在一起 → 登录返回 1002，
-        //   看起来像"密码校验坏了"。这类"看着像业务 bug 的基础设施 bug"必须靠
-        //   单一事实来源（本常量）堵掉，而不是靠记得多传一个 -D 参数。
+        // 清表工具的"期望库名"必须与数据源**同源**（都来自 hy.test.db），
+        // 否则会出现最坏的一种组合：**url 指着 A 库、清表工具却去清 B 库** ——
+        // 独占库里的残留数据永远清不掉，而共享库被别人清空。
+        // 实测症状：用户名唯一键没被清 → 残留用户与新建用户混在一起 → 登录返回 1002，
+        // 看起来像"密码校验坏了"。这类"看着像业务 bug 的基础设施 bug"必须靠
+        // 单一事实来源堵掉，而不是靠记得多传一个 -D 参数。
         tableCleaner = new com.hyforum.support.TestTableCleaner(jdbcTemplate, EXPECTED_TEST_DATABASE);
         assertConnectedToM4Database();
 
@@ -218,27 +216,18 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
     }
 
     /**
-     * 防线：本次运行必须真的连在 {@value #EXPECTED_TEST_DATABASE} 上。
-     *
-     * <p><b>为什么这条断言不可省</b>（它是这一轮最有价值的产出）：
-     * {@code application-test.yml} 里的 {@code ${TEST_DB:hy_forum_test}} 在<b>构建期</b>
-     * 就被 Maven 资源过滤解析成了默认值（见类注释），于是"跑测试前设 TEST_DB"这个
-     * 文档化做法<b>根本不生效</b>，测试会静默连上共享库。共享库上两条流水线互相清表，
-     * 症状是"我的并发用例说 20 个线程全部插入成功"——看起来像幂等实现坏了，
-     * 实际是别人写进来的行。**假红比慢更危险**（任务书 §4 的原话），
-     * 所以这里必须有一条会当场喊出来的断言，而不是继续依赖"我记得设了环境变量"。</p>
-     */
-    /**
-     * 只在**显式指定** {@code -Dhy.test.db=<库名>} 时才覆盖数据源。
+     * 只在**显式指定** {@code -Dhy.test.db=<库名>} 时才覆盖数据源（CI 变绿的关键）。
      *
      * <p>未指定 → **不注册任何属性** → 完全交给配置
      * （{@code application-test.yml} 的字面 {@code hy_forum_test}，或 CI 注入的
      * {@code SPRING_DATASOURCE_URL}）—— 这正是 CI 能跑通的前提。</p>
      *
      * <p><b>为什么不能用 {@code @TestPropertySource} 做这件事</b>：注解里的值必须是
-     * <b>编译期常量</b>，而"库名从系统属性推导"是运行期的。第一版正是用注解 + **硬编码库名**，
-     * 于是 {@code @TestPropertySource} 的优先级压过了 CI 的 {@code SPRING_DATASOURCE_URL}，
-     * CI 里恒定去连一个**不存在的库**（28 个 {@code CannotGetJdbcConnection}）。</p>
+     * <b>编译期常量</b>，而"库名从系统属性推导"是运行期的。第一版正是用注解 +
+     * **硬编码库名** `hy_forum_test_m4`，于是它的优先级压过了 CI 的
+     * {@code SPRING_DATASOURCE_URL}，CI 里恒定去连一个**不存在的库** ——
+     * `#64`–`#66` 那 28 个 {@code CannotGetJdbcConnection} 就是它，
+     * 而 M1/M3 一条都没红（它们走正常配置）。</p>
      */
     @org.springframework.test.context.DynamicPropertySource
     static void datasourceOverrideForParallelRun(
@@ -252,14 +241,26 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
     }
 
     /**
-     * 本次运行**期望**的库名 —— 唯一事实来源。
+     * 本次运行**期望**的库名 —— 与上面那个 {@code @DynamicPropertySource} 同一来源
+     * （系统属性 {@code hy.test.db}，缺省 {@code hy_forum_test}）。
      *
-     * <p>显式指定 {@code hy.test.db} 则用它，否则用默认测试库。**它必须与数据源来自同一处**，
-     * 否则会出现最坏组合："url 指着 A 库、清表工具却去清 B 库"。</p>
+     * <p><b>为什么必须同源</b>：两者一旦不一致，就会出现最坏组合 ——
+     * "url 指着 A 库、清表工具却去清 B 库"：独占库里的残留数据永远清不掉，
+     * 而共享库被别人清空，症状是"刚建的用户立刻 1002/1004/404"。</p>
      */
     protected static final String EXPECTED_TEST_DATABASE =
             System.getProperty("hy.test.db", "hy_forum_test");
 
+    /**
+     * 防线：本次运行必须真的连在 {@link #EXPECTED_TEST_DATABASE} 上。
+     *
+     * <p><b>为什么这条断言不可省</b>：它把"数据源被别处覆盖"这类**静默错配**
+     * 变成一条当场就红的断言。历史教训有两条：① 曾经的
+     * {@code ${TEST_DB:hy_forum_test}} 被 Maven 资源过滤在**构建期**吃掉，
+     * 于是"跑测试前设 TEST_DB"这个文档化做法根本不生效；
+     * ② 修它的时候用 {@code @TestPropertySource} 写死了库名，反而让 CI 恒定连不存在的库。
+     * 两次都属于"配置静默地指向了另一个库"，而**假红比慢更危险**（任务书 §4）。</p>
+     */
     private void assertConnectedToM4Database() {
         String current = tableCleaner.currentDatabase();
         assertThat(current)
