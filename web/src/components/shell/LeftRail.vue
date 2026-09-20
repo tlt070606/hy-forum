@@ -20,36 +20,13 @@
 
     <view class="divider" />
 
-    <!-- ============ 热门话题（前 3 个） ============ -->
-    <view class="block">
-      <view class="block__head">
-        <text class="block__title">热门话题</text>
-        <text class="block__more" data-testid="left-topics-more" @click="goTopic">更多 ›</text>
-      </view>
-      <view
-        v-for="(topic, index) in sidebarTopics"
-        :key="topic.name"
-        class="topic"
-        :data-testid="`left-topic-${index}`"
-        @click="goTopic"
-      >
-        <view class="topic__mark">
-          <text class="topic__mark-text">#</text>
-        </view>
-        <view class="topic__text">
-          <text class="topic__name">{{ topic.name }}</text>
-          <text class="topic__meta">{{ topic.discussCount }} 讨论</text>
-        </view>
-      </view>
-    </view>
-
-    <view v-if="hasPostTotal" class="divider" />
-
     <!-- ============ 今日数据 ============ -->
     <!--
-      真/假边界（需求方口径：真接口优先）：
+      真/假边界（需求方 2026-09-18 裁定：**假数据一律去掉**）：
       - 帖子总数 → **真**：来自 `GET /api/posts` 的 `total`，由父页面传进来
-      - 活跃用户 → **假**：需要行为数据（登录/发帖/评论），契约里没有任何此类接口
+      - 原来这里还有一个「活跃用户」→ **已删除**：它是写死的 8，而契约里
+        **没有任何**行为/统计接口能把它做成真的（登录时间、发帖活跃度都没有接口）。
+        假的就删掉，不做半真半假的卡片。
 
       ⚠️ 整块**只在知道帖子总数时渲染**。详情页不请求列表接口，拿不到 `total`，
          若照旧渲染就会出现「— / 帖子总数」这种看着像坏掉的东西。
@@ -63,10 +40,12 @@
           <text class="stats__value" data-testid="stats-post-total">{{ postTotalText }}</text>
           <text class="stats__label">帖子总数</text>
         </view>
-        <view class="stats__item">
-          <text class="stats__value">{{ activeUsers }}</text>
-          <text class="stats__label">活跃用户</text>
-        </view>
+        <!--
+          原来这里还有一个「活跃用户」。它是**假数据**（8），而且契约里**没有任何**
+          行为/统计接口能把它做成真的（登录时间、发帖活跃度都没有接口）——
+          按需求方"换成有后端接口的"这条口径，**假的就去掉**，不做半真半假的卡片。
+          如果 L1 将来加了统计接口，这里可以再补回来。
+        -->
       </view>
     </view>
   </aside>
@@ -80,11 +59,6 @@
  */
 import { computed } from 'vue'
 import HyIcon, { type IconType } from '@/components/HyIcon.vue'
-import {
-  HOT_TOPICS,
-  MOCK_ACTIVE_USER_COUNT,
-  SIDEBAR_TOPIC_COUNT,
-} from '@/mock/hotContent'
 import { num } from '@/utils/postView'
 
 const props = withDefaults(
@@ -96,7 +70,7 @@ const props = withDefaults(
      *    而不是类型不完备（共用外壳要能把同一个值转发给左栏和底部导航两处）。
      * `''` = 不高亮任何一项（搜索页 / 版块页 / 详情页都用它）。
      */
-    active?: 'home' | 'topic' | 'collect' | 'me' | 'notifications' | ''
+    active?: 'home' | 'boards' | 'collect' | 'me' | 'notifications' | ''
     /**
      * 帖子总数（真实数据，来自 `GET /api/posts` 的 `total`）。
      * `null` = **还不知道**（请求中 / 失败 / 该页面根本不请求列表，例如详情页）
@@ -108,7 +82,7 @@ const props = withDefaults(
 )
 
 interface NavItem {
-  key: 'home' | 'topic' | 'collect'
+  key: 'home' | 'boards' | 'collect'
   label: string
   desc: string
   icon: IconType
@@ -117,14 +91,13 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { key: 'home', label: '首页', desc: '全部最新帖子', icon: 'home', url: null },
-  { key: 'topic', label: '话题', desc: '带话题标签的帖子', icon: 'hash', url: '/pages/topic/index' },
+  /* 2026-09-18 需求方裁定：'话题' 去掉（占位页、无表无接口），换成有真接口的 '版块' */
+  { key: 'boards', label: '版块', desc: '按版块浏览帖子', icon: 'hash', url: '/pages/boards/index' },
   { key: 'collect', label: '收藏', desc: '我的收藏', icon: 'bookmark', url: '/pages/collect/index' },
 ] as const
 
-/** 左栏只取榜单前 N 个（不重排，顺序就是榜单顺序） */
-const sidebarTopics = computed(() => HOT_TOPICS.slice(0, SIDEBAR_TOPIC_COUNT))
 
-const activeUsers = MOCK_ACTIVE_USER_COUNT
+
 
 const postTotalText = computed(() => String(num(props.postTotal)))
 
@@ -137,9 +110,6 @@ function onNav(item: NavItem): void {
   uni.navigateTo({ url: item.url })
 }
 
-function goTopic(): void {
-  uni.navigateTo({ url: '/pages/topic/index' })
-}
 </script>
 
 <style lang="scss" scoped>

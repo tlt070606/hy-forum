@@ -2,7 +2,7 @@
   <!--
     通用占位页：接受 `?title=xxx`。
     用于**临时入口**（顶栏菜单里的"设置"等），它们没有独立的路由价值。
-    有独立路由的页面走各自的薄壳（见 pages/topic/index.vue 等），理由见 PagePlaceholder 的说明。
+    有独立路由的页面走各自的薄壳，理由见 PagePlaceholder 的说明。
   -->
   <PagePlaceholder :title="title" />
 </template>

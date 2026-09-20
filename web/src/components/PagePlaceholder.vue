@@ -51,7 +51,7 @@ withDefaults(
     /** 页面名，用于标题。例如「帖子详情」 */
     title: string
     /** 底部/左侧导航该高亮哪一项 */
-    activeNav?: 'home' | 'topic' | 'collect' | 'me'
+    activeNav?: 'home' | 'boards' | 'collect' | 'me' | 'notifications' | ''
   }>(),
   { activeNav: 'home' }
 )

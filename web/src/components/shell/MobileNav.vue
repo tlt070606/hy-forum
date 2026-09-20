@@ -41,10 +41,10 @@ import { useNotifyStore } from '@/stores/notify'
 
 const notify = useNotifyStore()
 
-withDefaults(defineProps<{ active?: 'home' | 'topic' | 'collect' | 'me' | 'notifications' | '' }>(), { active: '' })
+withDefaults(defineProps<{ active?: 'home' | 'boards' | 'collect' | 'me' | 'notifications' | '' }>(), { active: '' })
 
 interface NavItem {
-  key: 'home' | 'topic' | 'notifications' | 'collect' | 'me'
+  key: 'home' | 'boards' | 'notifications' | 'collect' | 'me'
   label: string
   icon: IconType
   url: string | null
@@ -52,7 +52,8 @@ interface NavItem {
 
 const ITEMS: readonly NavItem[] = [
   { key: 'home', label: '首页', icon: 'home', url: null },
-  { key: 'topic', label: '话题', icon: 'hash', url: '/pages/topic/index' },
+  /* ⚠️ 必须与左栏一起改：/pages/topic 的路由已删除，留着就是死链 */
+  { key: 'boards', label: '版块', icon: 'hash', url: '/pages/boards/index' },
   /*
    * ⚠️ 这个入口是**必须有的**：窄屏下顶栏的铃铛被 `display:none` 隐藏了
    *    （顶栏注释写着"底部导航才是移动端主入口"），而在本项加入之前，

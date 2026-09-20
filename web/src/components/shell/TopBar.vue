@@ -22,7 +22,7 @@
       </view>
 
       <view class="actions">
-        <!-- 通知。接口属 M5，契约里没有 → 未读数是假数据（见 mock/hotContent.ts） -->
+        <!-- 通知（M5 已交付）：未读数是**真数据**，来自 GET /api/notifications/unread-count -->
         <view class="action" data-testid="topbar-bell" @click="goNotifications">
           <HyIcon type="bell" size="lg" color="#4e5969" />
           <view v-if="unread > 0" class="action__badge">

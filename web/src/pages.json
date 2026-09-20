@@ -14,10 +14,11 @@
         "navigationStyle": "custom"
       }
     },
+
     {
-      "path": "pages/topic/index",
+      "path": "pages/boards/index",
       "style": {
-        "navigationBarTitleText": "话题",
+        "navigationBarTitleText": "版块",
         "navigationStyle": "custom"
       }
     },
