@@ -26,12 +26,14 @@ public class BizException extends RuntimeException {
         super(errorCode.message());
         this.errorCode = errorCode;
         this.retryAfterSeconds = null;
+        this.httpStatusOverride = null;
     }
 
     public BizException(ErrorCode errorCode, String detailMessage) {
         super(detailMessage);
         this.errorCode = errorCode;
         this.retryAfterSeconds = null;
+        this.httpStatusOverride = null;
     }
 
     /** 需要保留原始异常时使用（如把 SQL 异常翻译成业务异常）。 */
@@ -39,6 +41,7 @@ public class BizException extends RuntimeException {
         super(detailMessage, cause);
         this.errorCode = errorCode;
         this.retryAfterSeconds = null;
+        this.httpStatusOverride = null;
     }
 
     /**
@@ -67,6 +70,45 @@ public class BizException extends RuntimeException {
         super(detailMessage);
         this.errorCode = errorCode;
         this.retryAfterSeconds = retryAfterSeconds;
+        this.httpStatusOverride = null;
+    }
+
+    /** 见 {@link #httpStatusOverride()}。 */
+    private final org.springframework.http.HttpStatus httpStatusOverride;
+
+    private BizException(ErrorCode errorCode, String detailMessage, Long retryAfterSeconds,
+                         org.springframework.http.HttpStatus httpStatusOverride) {
+        super(detailMessage);
+        this.errorCode = errorCode;
+        this.retryAfterSeconds = retryAfterSeconds;
+        this.httpStatusOverride = httpStatusOverride;
+    }
+
+    /**
+     * 业务动作维度的限流异常：<b>业务码不变、HTTP 状态改成 200</b>。
+     *
+     * <p>为什么需要它（§5 裁决 #6／#8 的"分层"）：契约把限流分成两层，
+     * 而两层的**HTTP 状态不同**：</p>
+     * <ul>
+     *   <li><b>入口维度</b>（登录/注册按 IP）→ HTTP <b>429</b>；</li>
+     *   <li><b>业务动作维度</b>（发帖 2002、举报 ≤10 次/天）→ <b>HTTP 200</b> + 业务码。</li>
+     * </ul>
+     * <p>但"请求过于频繁"这个业务码在 {@link ErrorCode#TOO_MANY_REQUESTS} 上
+     * <b>自带 429</b>（{@code ErrorCode} 把码与 HTTP 状态绑在一起，这是 M1 冻结的契约）。
+     * 于是"想用 429 这个业务码、但要 HTTP 200"在原来做不到 —— 除非新增一个错误码
+     * （要走契约变更流程，本任务不许）或复用语义不对的 {@code 2002}
+     * （那会让前端把举报限流显示成"发帖太频繁"，**语义错误比缺信息更糟**）。</p>
+     *
+     * <p>因此这里给异常一个"HTTP 状态覆盖"的口子：<b>业务码仍是契约里的 429，
+     * HTTP 状态按分层给 200</b>。它只有这一个用法，所以做成静态工厂而不是公开构造器 ——
+     * 避免被用到别的场景（那会让"HTTP 状态从哪来"变得难以推理）。</p>
+     *
+     * @param errorCode   业务码
+     * @param detailMessage 提示语（应说明是**每日**上限等用户能据以行动的信息）
+     */
+    public static BizException businessActionRateLimited(ErrorCode errorCode, String detailMessage) {
+        return new BizException(errorCode, detailMessage, null,
+                org.springframework.http.HttpStatus.OK);
     }
 
     public ErrorCode errorCode() {
@@ -76,6 +118,15 @@ public class BizException extends RuntimeException {
     /** {@code Retry-After} 秒数；不需要时为 {@code null}。 */
     public Long retryAfterSeconds() {
         return retryAfterSeconds;
+    }
+
+    /**
+     * HTTP 状态覆盖；{@code null} 表示按 {@link ErrorCode#httpStatus()} 走（默认，绝大多数情况）。
+     *
+     * @see #businessActionRateLimited(ErrorCode, String)
+     */
+    public org.springframework.http.HttpStatus httpStatusOverride() {
+        return httpStatusOverride;
     }
 
     /** 业务异常不需要堆栈：它是预期内的流程分支，打全栈只会污染日志。 */

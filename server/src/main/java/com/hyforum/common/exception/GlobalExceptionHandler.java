@@ -38,7 +38,12 @@ public class GlobalExceptionHandler {
         log.warn("业务异常 {} {} -> code={} message={}",
                 request.getMethod(), request.getRequestURI(), code.code(), ex.getMessage());
 
-        ResponseEntity.BodyBuilder builder = ResponseEntity.status(code.httpStatus());
+        // 业务动作维度的限流要 HTTP 200 + 业务码（§5 裁决 #6/#8 的分层），
+        // 而 ErrorCode.TOO_MANY_REQUESTS 自带 429 —— 因此异常可以覆盖 HTTP 状态。
+        // 未覆盖时（绝大多数）仍按 ErrorCode.httpStatus() 走，**行为与从前一字不差**。
+        org.springframework.http.HttpStatus httpStatus =
+                ex.httpStatusOverride() != null ? ex.httpStatusOverride() : code.httpStatus();
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(httpStatus);
         // ★ H2：429 带 Retry-After 头（验收项 SEC_rate_limit_returns_429_with_retry_after）。
         //
         // 这是本方法里**唯一的新增**（L1 给的边界：只做"把 retryAfter 传到响应头"这一件事，
