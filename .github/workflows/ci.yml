@@ -221,6 +221,15 @@ jobs:
           SPRING_DATA_REDIS_HOST: ${{ env.REDIS_HOST }}
           SPRING_DATA_REDIS_PORT: ${{ env.REDIS_PORT }}
           SERVER_PORT: '18080'
+          # §9（2026-09-20）的 fail-fast：**回调地址必须显式配置**，否则应用拒绝启动
+          # （不设时它只能按请求推导出环回地址，而 OSS 在公网够不到 → 现象是
+          #  "上传成功、界面正常、但图永远不出现"，日志里还没有异常）。
+          # 本步骤只抓 /v3/api-docs、**不触发任何回调**，所以给环回地址 +
+          # **显式允许环回**（默认 false —— 降级必须写明，这正是 §9 的设计）。
+          # ⚠️ 与 `scripts/export_openapi.ps1` §0.7 是同一处副作用的两面：
+          #    fail-fast 新增一项，所有"只想让应用启动"的调用方都要跟着处理。
+          OSS_CALLBACK_URL: http://127.0.0.1:18080/api/oss/callback
+          HY_OSS_UPLOAD_ALLOW_LOOPBACK_CALLBACK: 'true'
         run: |
           set -euo pipefail
 
