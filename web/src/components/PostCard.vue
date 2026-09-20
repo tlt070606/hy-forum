@@ -136,16 +136,26 @@ import { compactCount, num, type PostCardView } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
 import { useInteractionStore } from '@/stores/interaction'
 
-const props = defineProps<{
-  /** 已归一化的卡片数据（可选字段已在 `utils/postView.ts` 收敛） */
-  post: PostCardView
-  /**
-   * 是否显示作者行。默认 `true`（信息流）。
-   * **收藏列表传 `false`** —— `CollectionItemVO` 里确实没有作者字段
-   * （收藏记录本身不存作者），显示一个空的作者行比不显示更糟。
-   */
-  showAuthor?: boolean
-}>()
+/*
+ * ⚠️ 这里**必须用 `withDefaults` 真正把默认值设上**，不能只在注释里写"默认 true"。
+ * 本机踩过：写成 `defineProps<{ showAuthor?: boolean }>()` 时，
+ * 不传就是 `undefined` → `v-if="showAuthor"` 判假 → **作者行在首页也被隐藏了**
+ * （需求方一眼看出来："首页的发帖列表里面都没有个人头像还有时间"）。
+ * 注释不是默认值 —— 只有 `withDefaults` 才是。
+ */
+const props = withDefaults(
+  defineProps<{
+    /** 已归一化的卡片数据（可选字段已在 `utils/postView.ts` 收敛） */
+    post: PostCardView
+    /**
+     * 是否显示作者行。默认 `true`（信息流）。
+     * **收藏列表传 `false`** —— `CollectionItemVO` 里确实没有作者字段
+     * （收藏记录本身不存作者），显示一个空的作者行比不显示更糟。
+     */
+    showAuthor?: boolean
+  }>(),
+  { showAuthor: true }
+)
 
 const auth = useAuthStore()
 const interaction = useInteractionStore()

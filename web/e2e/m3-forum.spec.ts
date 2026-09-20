@@ -164,6 +164,17 @@ test('首页：信息流来自 GET /api/posts，未登录点「＋」会跳登�
 
   await expect(page.getByTestId('home-feed')).toBeVisible()
   await expect(page.getByTestId('post-card').first()).toBeVisible()
+
+  /*
+   * ⚠️ 这条断言是**事后补的**：我给 PostCard 加 `showAuthor` 开关时，
+   *    注释里写了"默认 true"但代码里没设默认值（`defineProps` 不传就是 `undefined`）
+   *    → **首页卡片的作者行也被隐藏了**，需求方一眼看出来
+   *    （"为什么首页都没有个人头像还有时间"）。
+   *    当时这里只断言了卡片"可见"、没断言"作者行在" —— 所以放过了这个回归。
+   *    教训：**加开关型 prop 时，必须有一条断言盯着"不传时的默认行为"**。
+   */
+  await expect(page.getByTestId('post-card-author').first()).toBeVisible()
+  await expect(page.getByTestId('post-card-author').first()).not.toHaveText('')
   // 左栏「今日数据」的帖子总数是**真数据**（同一个响应的 total）
   await expect(page.getByTestId('stats-post-total')).toHaveText(String(body.data.total))
 

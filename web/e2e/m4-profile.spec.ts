@@ -220,6 +220,8 @@ test('我的收藏：未登录给登录引导且不发请求；登录后可取�
   await page.goto('#/pages/collect/index')
   const card = page.locator('[data-testid="collect-card"]').first()
   await expect(card).toBeVisible({ timeout: 15_000 })
+  // 收藏项契约里没有作者字段 → 卡片**不该**有作者行（也不该显示"匿名用户"这种假东西）
+  await expect(card.locator('[data-testid="post-card-author"]')).toHaveCount(0)
 
   /*
    * ⚠️ 断言必须写成"**减少恰好 1**"，不能写"变成 0"。
