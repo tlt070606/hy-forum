@@ -97,16 +97,31 @@
  * - 退出登录 → **真**（`POST /api/auth/logout`）
  * - 未读通知数 → **假**（通知接口属 M5，契约 14 个路径里没有）
  */
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
-import { MOCK_UNREAD_NOTIFICATION_COUNT } from '@/mock/hotContent'
 import { useAuthStore } from '@/stores/auth'
+import { useNotifyStore } from '@/stores/notify'
 
 const auth = useAuthStore()
 
-/** 未读通知数（假数据，见文件头说明） */
-const unread = ref(MOCK_UNREAD_NOTIFICATION_COUNT)
+/*
+ * 未读数是**真数据**了（M5：`GET /api/notifications/unread-count`）。
+ * 放在 `stores/notify.ts` 里与消息页共享 —— 两处各请求一次的话，
+ * 会出现"顶栏 3、页面 2"这种自相矛盾的状态。
+ */
+const notify = useNotifyStore()
+const unread = computed(() => notify.unread)
+
+/*
+ * 冷启动取一次未读数。用 `onMounted` 而不是 `onShow`：
+ * 顶栏是**全局组件**（每个页面都有），`onShow` 会在每次切页时都打一次接口 ——
+ * 那是"每翻一页多一个请求"，不值得。消息页自己会在 `onShow` 里刷新，
+ * 顶栏拿共享值即可。
+ */
+onMounted(() => {
+  void notify.refresh()
+})
 
 const menuOpen = ref(false)
 
@@ -119,8 +134,10 @@ function goSearch(): void {
   uni.navigateTo({ url: '/pages/search/index' })
 }
 
+/** 跳消息页（M5 已交付，不再是"未交付"提示） */
 function goNotifications(): void {
-  uni.showToast({ title: '通知功能将在 M5 交付', icon: 'none', duration: 2000 })
+  menuOpen.value = false
+  uni.navigateTo({ url: '/pages/notifications/index' })
 }
 
 /** 点头像：已登录展开菜单，未登录直接去登录页（而不是弹一句"请先登录"） */

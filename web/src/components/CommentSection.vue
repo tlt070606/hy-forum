@@ -111,6 +111,14 @@
           <text class="act act--plain" :data-testid="`comment-reply-${c.id}`" @click="startReply(c)">
             回复
           </text>
+          <!-- 举报评论（M5）：targetType=2、targetId=这条评论的 id -->
+          <text
+            class="act act--plain"
+            :data-testid="`comment-report-${c.id}`"
+            @click="openReport(c.id)"
+          >
+            举报
+          </text>
           <text
             v-if="isMine(c.authorId)"
             class="act act--danger"
@@ -213,6 +221,7 @@ import { computed, ref, watch } from 'vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import ListState from '@/components/ListState.vue'
+import ReportSheet from '@/components/ReportSheet.vue'
 import { createComment, deleteComment, fetchComments, fetchReplies } from '@/api/comments'
 import { likeComment } from '@/api/interaction'
 import { ApiError, PAGE_SIZE_MAX } from '@/utils/request'
@@ -269,6 +278,14 @@ const error = ref('')
 
 /** 正在回复的目标。`rootId` 恒为**主楼 id**（见文件头第 2 条） */
 const replyTo = ref<{ rootId: number; name: string } | null>(null)
+
+/** 举报弹层：eportTargetId > 0 表示打开，举报的是那条**评论**（targetType=2） */
+const reportTargetId = ref(0)
+
+/** 打开举报弹层 */
+function openReport(commentId: number): void {
+  reportTargetId.value = commentId
+}
 
 /** 哪些主楼已经"展开全部楼中楼"（避免重复请求） */
 const expanded = ref<Set<number>>(new Set())

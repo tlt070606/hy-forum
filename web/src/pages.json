@@ -71,6 +71,13 @@
       }
     },
     {
+      "path": "pages/notifications/index",
+      "style": {
+        "navigationBarTitleText": "消息",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/settings/index",
       "style": {
         "navigationBarTitleText": "设置",

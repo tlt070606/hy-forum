@@ -242,7 +242,7 @@
         <view
           class="interact__item interact__item--last"
           data-testid="detail-report"
-          @click="notDelivered('举报')"
+          @click="reportOpen = true"
         >
           <HyIcon type="shield" size="xl" />
           <text class="interact__text">举报</text>
@@ -255,6 +255,14 @@
         展开状态放在本页（`commentsOpen`），这样上面互动栏的「评论」也能把它打开。
         `commentCount` 传给它是为了让收起态能显示「查看 N 条评论」而**不必先请求评论列表**。
       -->
+      <!-- 举报弹层（M5）：举报的是**这篇帖子**（targetType=1） -->
+      <ReportSheet
+        v-model:open="reportOpen"
+        :target-type="1"
+        :target-id="postId"
+        target-label="帖子"
+      />
+
       <CommentSection
         v-model:open="commentsOpen"
         :post-id="postId"
@@ -320,6 +328,7 @@ import AppShell from '@/components/shell/AppShell.vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import CommentSection from '@/components/CommentSection.vue'
+import ReportSheet from '@/components/ReportSheet.vue'
 import { deletePost, fetchPostDetail } from '@/api/posts'
 import { collectPost, followUser, likePost } from '@/api/interaction'
 import { fetchUserProfile } from '@/api/users'
@@ -550,6 +559,9 @@ function notDelivered(what: string): void {
  * ------------------------------------------------------------------------- */
 
 /** 评论区是否展开（默认收起，点击才打开）—— 声明见页面顶部（`onLoad` 要用它） */
+
+/** 举报弹层是否打开（M5）。举报的是本篇帖子，	argetType=1 */
+const reportOpen = ref(false)
 
 /**
  * 作者的关注态。`null` = 还不知道/不需要（未登录、或作者资料拉取失败）。

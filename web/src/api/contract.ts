@@ -157,7 +157,19 @@ export const ENDPOINTS = {
    * 只登记路径与所属里程碑，**不声明请求/响应类型**（那是编造契约）。
    * 判定口径：以仓库根 `openapi.json` 的 paths 为准，不以本文的注释为准。
    */
-  notifications: { methods: ['GET'], path: '/api/notifications', status: 'todo', milestone: 'M5' },
+  /*
+   * ---- M5（2026-09-19 契约重导后：35 路径 / 63 schema）已交付 ----
+   * ⚠️ M5 里只有这两块属于本前端；`/api/admin/comments*` 与其余 `/api/admin/**`
+   *    是 **M6 的独立管理后台工程**，不在这个端里（PLAN.md 的 M6 定义）。
+   */
+  /** 我的消息列表（分页；`type` 1赞/2评论/3回复/4关注/5系统） */
+  notifications: { methods: ['GET'], path: '/api/notifications', status: 'ready' },
+  /** 未读条数（顶栏红点）。⚠️ `data` 是**一个裸数字**，不是对象 */
+  notificationsUnreadCount: { methods: ['GET'], path: '/api/notifications/unread-count', status: 'ready' },
+  /** 标记已读（`{ids}` 或 `{all:true}`） */
+  notificationsRead: { methods: ['PUT'], path: '/api/notifications/read', status: 'ready' },
+  /** 举报（targetType 1帖子/2评论/3用户；reasonType 1违法违规/2色情低俗/3广告垃圾/4侵权/5其他） */
+  report: { methods: ['POST'], path: '/api/report', status: 'ready' },
 } as const
 
 /** 已就绪端点的 key 集合（用于在页面里做开发期守卫） */

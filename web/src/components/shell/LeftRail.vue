@@ -96,7 +96,7 @@ const props = withDefaults(
      *    而不是类型不完备（共用外壳要能把同一个值转发给左栏和底部导航两处）。
      * `''` = 不高亮任何一项（搜索页 / 版块页 / 详情页都用它）。
      */
-    active?: 'home' | 'topic' | 'collect' | 'me' | ''
+    active?: 'home' | 'topic' | 'collect' | 'me' | 'notifications' | ''
     /**
      * 帖子总数（真实数据，来自 `GET /api/posts` 的 `total`）。
      * `null` = **还不知道**（请求中 / 失败 / 该页面根本不请求列表，例如详情页）

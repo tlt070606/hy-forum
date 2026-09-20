@@ -45,6 +45,32 @@ export function expectObject<T>(data: unknown, what: string): T {
 }
 
 /**
+ * 断言"数据就是一个数字"（`ApiResponseLong` / `ApiResponseInteger` 这类响应）。
+ *
+ * ⚠️ 为什么单独要一个：契约里有些接口的 `data` **不是对象也不是数组** ——
+ *    例如 `GET /api/notifications/unread-count` 与 `PUT /api/notifications/read`
+ *    都返回 `ApiResponseLong`（`data` = 一个裸数字）。
+ *    拿 `expectObject` 去收敛它们会**直接抛"形状不对"**，
+ *    而真正的 bug 可能只是后端多包了一层 —— 两种情况要能区分开：
+ * - 数字（含数字字符串，某些序列化器会给 `"3"`）→ 正常返回；
+ * - `null`/`undefined` → 视为**无法识别**（不能当 0：0 是"确实没有未读"，与"没拿到"语义相反）；
+ * - 对象/数组 → 抛错，提示形状不对。
+ */
+export function expectNumber(data: unknown, what: string): number {
+  if (typeof data === 'number' && Number.isFinite(data)) return data
+  // 后端若把 Long 序列化成字符串，这里也接受（但显式说明，避免有人以为它本来就是 number）
+  if (typeof data === 'string' && data.trim() !== '' && Number.isFinite(Number(data))) {
+    return Number(data)
+  }
+
+  throw new ApiError({
+    kind: 'http',
+    code: -1,
+    message: `${what}返回的数据格式无法识别，请稍后重试`,
+  })
+}
+
+/**
  * 断言分页结果形状（`{list, total, page, size}`）。
  *
  * 只修正 `list`：它缺失时退化为空数组（显示"暂无内容"是合理降级）；

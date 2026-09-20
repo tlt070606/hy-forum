@@ -221,3 +221,28 @@ export interface AuthState {
   token: string
   user: UserVO | null
 }
+
+/* ---------------------------------------------------------------------------
+ * M5 接口类型（通知 / 举报）
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 一条通知。
+ *
+ * `type` 的取值由契约的 description 给出（**这就是敢按它写代码的依据**）：
+ * 1 点赞 / 2 评论 / 3 回复 / 4 关注 / 5 系统。
+ * `targetType`：1 帖子 / 2 评论；无具体目标时为 null。
+ *
+ * ⚠️ `content` 是**后端给的可读文案**。前端优先显示它；
+ *    为空时才用 `type` + 昵称兜一句（不自己编业务文案，见 `utils/notifyView.ts`）。
+ */
+export type NotificationVO = Schemas['NotificationVO']
+
+/** 标记已读的请求体：传 id 列表，或 `all: true` 全部已读 */
+export type MarkReadRequest = Schemas['MarkReadRequest']
+
+/** 举报请求体。取值见 `api/report.ts` 的 REPORT_TARGET / REPORT_REASONS */
+export type ReportCreateRequest = Schemas['ReportCreateRequest']
+
+/** 通知列表分页 */
+export type PageResultNotificationVO = Schemas['PageResultNotificationVO']

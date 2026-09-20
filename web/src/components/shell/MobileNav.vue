@@ -21,7 +21,15 @@
       :data-testid="`mobile-nav-${item.key}`"
       @click="onTap(item)"
     >
-      <HyIcon :type="item.icon" size="lg" class="mobile-nav__icon" />
+      <view class="mobile-nav__icon-wrap">
+        <HyIcon :type="item.icon" size="lg" class="mobile-nav__icon" />
+        <!-- 未读红点：只在「消息」上、且确实有未读时出现（数与顶栏同源） -->
+        <view
+          v-if="item.key === 'notifications' && notify.unread > 0"
+          class="mobile-nav__badge"
+          data-testid="mobile-nav-badge"
+        />
+      </view>
       <text class="mobile-nav__label">{{ item.label }}</text>
     </view>
   </view>
@@ -29,11 +37,14 @@
 
 <script setup lang="ts">
 import HyIcon, { type IconType } from '@/components/HyIcon.vue'
+import { useNotifyStore } from '@/stores/notify'
 
-withDefaults(defineProps<{ active?: 'home' | 'topic' | 'collect' | 'me' | '' }>(), { active: '' })
+const notify = useNotifyStore()
+
+withDefaults(defineProps<{ active?: 'home' | 'topic' | 'collect' | 'me' | 'notifications' | '' }>(), { active: '' })
 
 interface NavItem {
-  key: 'home' | 'topic' | 'collect' | 'me'
+  key: 'home' | 'topic' | 'notifications' | 'collect' | 'me'
   label: string
   icon: IconType
   url: string | null
@@ -42,6 +53,13 @@ interface NavItem {
 const ITEMS: readonly NavItem[] = [
   { key: 'home', label: '首页', icon: 'home', url: null },
   { key: 'topic', label: '话题', icon: 'hash', url: '/pages/topic/index' },
+  /*
+   * ⚠️ 这个入口是**必须有的**：窄屏下顶栏的铃铛被 `display:none` 隐藏了
+   *    （顶栏注释写着"底部导航才是移动端主入口"），而在本项加入之前，
+   *    底部导航里**没有任何消息入口** —— 也就是说**手机上根本进不去消息页**。
+   *    这是新增消息功能后由 E2E 抓到的真问题（原注释的假设对通知不成立）。
+   */
+  { key: 'notifications', label: '消息', icon: 'bell', url: '/pages/notifications/index' },
   { key: 'collect', label: '收藏', icon: 'bookmark', url: '/pages/collect/index' },
   { key: 'me', label: '我的', icon: 'user', url: '/pages/me/index' },
 ] as const
@@ -101,9 +119,21 @@ function onTap(item: NavItem): void {
       }
     }
 
-    &__icon {
+    &__icon-wrap {
+      position: relative;
       /* 图标与文字之间留 2px，太高会把文字挤出导航条 */
       margin-bottom: 2px;
+    }
+
+    /* 红点：绝对定位到图标右上角，不参与布局（不会把 5 个入口挤变形） */
+    &__badge {
+      position: absolute;
+      right: -4px;
+      top: -2px;
+      width: 8px;
+      height: 8px;
+      background-color: $hy-color-danger;
+      border-radius: 50%;
     }
 
     &__label {
