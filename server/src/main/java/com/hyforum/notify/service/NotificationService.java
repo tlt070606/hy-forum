@@ -52,15 +52,6 @@ public class NotificationService implements NotificationPublisher {
     /** 文案长度上限，与 {@code notification.content} 的 VARCHAR(200) 一致。 */
     private static final int MAX_CONTENT_LENGTH = 200;
 
-    /** 目标类型：1 帖子。 */
-    public static final int TARGET_POST = 1;
-
-    /** 目标类型：2 评论。 */
-    public static final int TARGET_COMMENT = 2;
-
-    /** 已读标记。 */
-    private static final int READ = 1;
-
     private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
 
@@ -225,7 +216,7 @@ public class NotificationService implements NotificationPublisher {
         LambdaUpdateWrapper<Notification> update = Wrappers.<Notification>lambdaUpdate()
                 .eq(Notification::getUserId, userId)   // ← 越权防线：只能动自己的
                 .eq(Notification::getIsRead, 0)        // ← 幂等：已读的不再重复计入影响行数
-                .set(Notification::getIsRead, READ);
+                .set(Notification::getIsRead, Notification.READ);
         if (!all) {
             update.in(Notification::getId, ids);
         }
