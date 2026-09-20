@@ -108,6 +108,16 @@ foreach ($credKey in 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET') {
     }
 }
 
+# ---------- 0.7 回调地址的 fail-fast（§9，2026-09-20 补）----------
+# media 包另有一处 fail-fast：**回调地址必须显式配置**（不设且未显式允许环回 → 启动即失败）。
+# 而本脚本只抓 /v3/api-docs，**不触发任何回调** —— 所以这里给一个环回地址并显式允许环回。
+#   ⚠️ 允许环回是**显式声明**的（默认 false），这正是 §9 的设计：默认路径安全、降级必须写明。
+if (-not [Environment]::GetEnvironmentVariable('OSS_CALLBACK_URL', 'Process')) {
+    [Environment]::SetEnvironmentVariable('OSS_CALLBACK_URL', ('http://127.0.0.1:{0}/api/oss/callback' -f $Port), 'Process')
+    Write-Host '  [i] OSS_CALLBACK_URL 未设置 -> 本次导出用环回地址（导出不触发回调）' -ForegroundColor DarkGray
+}
+[Environment]::SetEnvironmentVariable('HY_OSS_UPLOAD_ALLOW_LOOPBACK_CALLBACK', 'true', 'Process')
+
 # ---------- 1. 打包 ----------
 if (-not $SkipBuild) {
     Write-Host '  [1/5] mvn package ...' -ForegroundColor Cyan
