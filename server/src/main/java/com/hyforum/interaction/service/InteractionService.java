@@ -7,6 +7,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
+import com.hyforum.common.notify.NotificationPublisher;
+import com.hyforum.common.notify.NotificationType;
 import com.hyforum.domain.interaction.entity.Comment;
 import com.hyforum.domain.interaction.entity.CommentLike;
 import com.hyforum.domain.interaction.entity.PostCollect;
@@ -15,6 +17,7 @@ import com.hyforum.domain.interaction.mapper.CommentLikeMapper;
 import com.hyforum.domain.interaction.mapper.CommentMapper;
 import com.hyforum.domain.interaction.mapper.PostCollectMapper;
 import com.hyforum.domain.interaction.mapper.PostLikeMapper;
+import com.hyforum.domain.notify.entity.Notification;
 import com.hyforum.domain.post.entity.Post;
 import com.hyforum.domain.post.mapper.PostMapper;
 import com.hyforum.interaction.vo.CollectionItemVO;
@@ -62,16 +65,27 @@ public class InteractionService {
     private final CommentMapper commentMapper;
     private final PostMapper postMapper;
 
+    /**
+     * 通知发布（M5 触发点）。
+     *
+     * <p>依赖的是 {@code common.notify} 里的<b>接口</b>，不是 {@code notify} 包的实现 ——
+     * 否则会构成业务包互相依赖（铁律 3，ArchUnit 按包判）。同 {@code PostService}
+     * 依赖 {@code common.audit.SensitiveTextChecker} 而不是 {@code audit} 包的形状。</p>
+     */
+    private final NotificationPublisher notificationPublisher;
+
     public InteractionService(PostLikeMapper postLikeMapper,
                               PostCollectMapper postCollectMapper,
                               CommentLikeMapper commentLikeMapper,
                               CommentMapper commentMapper,
-                              PostMapper postMapper) {
+                              PostMapper postMapper,
+                              NotificationPublisher notificationPublisher) {
         this.postLikeMapper = postLikeMapper;
         this.postCollectMapper = postCollectMapper;
         this.commentLikeMapper = commentLikeMapper;
         this.commentMapper = commentMapper;
         this.postMapper = postMapper;
+        this.notificationPublisher = notificationPublisher;
     }
 
     // ==================================================================
@@ -86,7 +100,7 @@ public class InteractionService {
      */
     @Transactional
     public void likePost(long userId, long postId) {
-        requireVisiblePost(postId);
+        Post post = requireVisiblePost(postId);
         PostLike like = new PostLike();
         like.setPostId(postId);
         like.setUserId(userId);
@@ -101,6 +115,17 @@ public class InteractionService {
         postMapper.update(null, Wrappers.<Post>lambdaUpdate()
                 .setSql("like_count = like_count + 1")
                 .eq(Post::getId, postId));
+
+        // ★ M5 触发点：点赞成功 → 通知帖子作者（同一事务内，任务书 §5 第 1 条）。
+        //   放在"计数已递增"之后：只有真正落了一条点赞关系才通知。
+        //   三点说明：
+        //   ① 接收人是**帖子作者**，取自已读出的实体（无需再查一次）；
+        //   ② "自己点赞自己的帖子"**不在本方法判断** —— 由 NotificationPublisher 的实现
+        //      统一判断（§5 第 2 条）。触发点只如实描述"谁对谁做了什么"；
+        //   ③ targetType=1（帖子）+ targetId，前端据此拼跳转链接；content 留空
+        //      （文案是展示层的事，后端硬编码"赞了你"以后改文案要发后端）。
+        notificationPublisher.publish(NotificationType.LIKE, post.getUserId(), userId,
+                Notification.TARGET_POST, postId, null);
     }
 
     /**

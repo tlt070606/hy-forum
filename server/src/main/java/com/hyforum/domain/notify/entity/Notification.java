@@ -26,6 +26,26 @@ import java.time.LocalDateTime;
 @TableName("notification")
 public class Notification {
 
+    /**
+     * 目标类型：1 帖子（schema 列注释：{@code 1帖子 2评论}）。
+     *
+     * <p><b>为什么这个常量放在实体上（{@code domain}）而不是 {@code notify} 包</b>：
+     * 触发点在 {@code interaction}，而 {@code interaction} 不得依赖 {@code notify}
+     * （铁律 3；ArchUnit 按包判，controller/常量引用一样算）。
+     * {@code domain} 是共享层，任何业务包都可以读 ——
+     * 与 M4 把 {@code Comment.ROOT_MARKER} 放在实体上是同一个理由。</p>
+     */
+    public static final int TARGET_POST = 1;
+
+    /** 目标类型：2 评论。 */
+    public static final int TARGET_COMMENT = 2;
+
+    /** 已读。 */
+    public static final int READ = 1;
+
+    /** 未读。 */
+    public static final int UNREAD = 0;
+
     @TableId(type = IdType.AUTO)
     private Long id;
 

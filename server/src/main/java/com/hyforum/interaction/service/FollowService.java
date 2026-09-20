@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
+import com.hyforum.common.notify.NotificationPublisher;
+import com.hyforum.common.notify.NotificationType;
 import com.hyforum.domain.interaction.entity.Follow;
 import com.hyforum.domain.interaction.mapper.FollowMapper;
 import com.hyforum.domain.user.entity.User;
@@ -52,9 +54,17 @@ public class FollowService {
     private final FollowMapper followMapper;
     private final UserMapper userMapper;
 
-    public FollowService(FollowMapper followMapper, UserMapper userMapper) {
+    /**
+     * 通知发布（M5 触发点）：依赖 {@code common.notify} 的**接口**，不是 {@code notify} 实现
+     * （铁律 3 禁止业务包互相依赖，ArchUnit 按包判）。
+     */
+    private final NotificationPublisher notificationPublisher;
+
+    public FollowService(FollowMapper followMapper, UserMapper userMapper,
+                         NotificationPublisher notificationPublisher) {
         this.followMapper = followMapper;
         this.userMapper = userMapper;
+        this.notificationPublisher = notificationPublisher;
     }
 
     /**
@@ -103,6 +113,13 @@ public class FollowService {
         userMapper.update(null, Wrappers.<User>lambdaUpdate()
                 .setSql("fans_count = fans_count + 1")
                 .eq(User::getId, targetId));
+
+        // ★ M5 触发点：关注成功 → 通知被关注者（同一事务内）。
+        //   放在"双侧计数已更新"之后：只有真的插入了关注关系才通知
+        //   （重复关注走上面的幂等 return，不会重复通知）。
+        //   targetType/targetId 留空：关注的目标是"人"，而契约里只有 1帖子/2评论 两种，
+        //   硬塞一个不存在的取值会让前端拿到无法解释的数据。
+        notificationPublisher.publish(NotificationType.FOLLOW, targetId, userId, null, null, null);
     }
 
     /**

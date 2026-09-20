@@ -7,7 +7,10 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
+import com.hyforum.common.notify.NotificationPublisher;
+import com.hyforum.common.notify.NotificationType;
 import com.hyforum.domain.interaction.entity.Comment;
+import com.hyforum.domain.notify.entity.Notification;
 import com.hyforum.domain.interaction.entity.CommentLike;
 import com.hyforum.domain.interaction.mapper.CommentLikeMapper;
 import com.hyforum.domain.interaction.mapper.CommentMapper;
@@ -75,14 +78,22 @@ public class CommentService {
     private final PostMapper postMapper;
     private final UserMapper userMapper;
 
+    /**
+     * 通知发布（M5 触发点）：依赖 {@code common.notify} 的**接口**而不是 {@code notify} 实现
+     * （铁律 3 禁止业务包互相依赖；ArchUnit 按包判，引常量与调方法一样算）。
+     */
+    private final NotificationPublisher notificationPublisher;
+
     public CommentService(CommentMapper commentMapper,
                           CommentLikeMapper commentLikeMapper,
                           PostMapper postMapper,
-                          UserMapper userMapper) {
+                          UserMapper userMapper,
+                          NotificationPublisher notificationPublisher) {
         this.commentMapper = commentMapper;
         this.commentLikeMapper = commentLikeMapper;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
+        this.notificationPublisher = notificationPublisher;
     }
 
     // ==================================================================
@@ -206,6 +217,31 @@ public class CommentService {
         postMapper.update(null, Wrappers.<Post>lambdaUpdate()
                 .setSql("comment_count = comment_count + 1")
                 .eq(Post::getId, post.getId()));
+
+        // ★ M5 触发点：评论/回复成功 → 写通知（同一事务内，§5 第 1 条）。
+        //
+        // **主楼 vs 楼中楼要分成两种通知类型**（契约的 type 就是这么分的：
+        // 2 评论 = 有人评论了你的帖子；3 回复 = 有人回复了你的评论）：
+        //   · 主楼（rootId == 0）→ 通知**帖子作者**，type=COMMENT，target 指向帖子；
+        //   · 楼中楼 → 通知**被回复的人**，type=REPLY，target 指向**主楼评论**。
+        //
+        // 被回复的人怎么取：`replyToUserId` 由本方法上面那段归并逻辑算好了
+        // （回复主楼 → 主楼作者；回复楼中楼 → 那条楼中楼记着的 reply_to_user_id，没有则其作者）。
+        // 但有个边界：当被回复者**就是发起人自己**时，上面把它置成了 null ——
+        // 那时的语义是"有人回复了这条主楼"，接收人应当是主楼作者，因此这里回落到它。
+        // 至于"回落之后仍等于发起人"（= 自己回复自己的帖子），**不在本方法判断**：
+        // 由 NotificationPublisher 的实现统一处理（§5 第 2 条），触发点只描述事实。
+        if (rootId == Comment.ROOT_MARKER) {
+            notificationPublisher.publish(NotificationType.COMMENT, post.getUserId(), userId,
+                    Notification.TARGET_POST, post.getId(), null);
+        } else {
+            Comment rootComment = commentMapper.selectById(rootId);
+            Long receiver = replyToUserId != null
+                    ? replyToUserId
+                    : (rootComment == null ? post.getUserId() : rootComment.getUserId());
+            notificationPublisher.publish(NotificationType.REPLY, receiver, userId,
+                    Notification.TARGET_COMMENT, rootId, null);
+        }
 
         // 作者摘要用返回值（本次会话里的用户对象），省一次查询
         return toReplyVO(comment, UserBriefVO.from(userMapper.selectById(userId)), null);
