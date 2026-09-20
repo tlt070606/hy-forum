@@ -1,4 +1,4 @@
-package com.hyforum.admin.controller;
+package com.hyforum.audit.controller;
 
 import com.hyforum.common.api.ApiResponse;
 import com.hyforum.common.api.PageResult;
