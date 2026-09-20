@@ -159,10 +159,14 @@ public class AuthController {
         RateLimiter.Decision decision = rateLimiter.check(
                 action, ip, rateLimitProperties.ipPerMinute(), ONE_MINUTE);
         if (!decision.allowed()) {
-            // Retry-After 头由 §8.7 要求；在 M1 阶段先通过错误信息承载，
-            // 正式的响应头由 M5 的统一限流切面补齐（已在交付报告中登记）
+            // H2 已落地（M5）：把限流器算出的"还要等几秒"一并带上，
+            // 由 GlobalExceptionHandler 写成 `Retry-After` 响应头
+            // （§8.7 要求；此前只靠错误信息承载，前端拿不到头就得自己正则解析 message）。
+            // 注意：**分层不变** —— 入口维度仍是 HTTP 429 + 业务码 429，
+            // 发帖那个"业务动作维度"的 2002 保持 HTTP 200 + 业务码，两者不是同一层。
             throw new BizException(ErrorCode.TOO_MANY_REQUESTS,
-                    ErrorCode.TOO_MANY_REQUESTS.message() + "，请 " + decision.retryAfter() + " 秒后重试");
+                    ErrorCode.TOO_MANY_REQUESTS.message() + "，请 " + decision.retryAfter() + " 秒后重试",
+                    decision.retryAfter());
         }
     }
 

@@ -37,8 +37,25 @@ public class GlobalExceptionHandler {
         // 只记"哪个接口 + 哪个码"，不记请求体（可能含密码）
         log.warn("业务异常 {} {} -> code={} message={}",
                 request.getMethod(), request.getRequestURI(), code.code(), ex.getMessage());
-        return ResponseEntity.status(code.httpStatus())
-                .body(ApiResponse.fail(code, ex.getMessage()));
+
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(code.httpStatus());
+        // ★ H2：429 带 Retry-After 头（验收项 SEC_rate_limit_returns_429_with_retry_after）。
+        //
+        // 这是本方法里**唯一的新增**（L1 给的边界：只做"把 retryAfter 传到响应头"这一件事，
+        // 不顺手改其它异常分支 —— 那是 M1 的地盘，且本项目已因"顺手改"出过事）。
+        //
+        // 为什么必须由异常把它带过来：限流器拒绝时（RateLimiter.check）知道"还要等几秒"，
+        // 而到了这一层那个信息已经丢了。让这里反向去查 Redis 也不行 ——
+        // 多一次 IO，且查到的值已经不是"拒绝那一刻"的值。
+        //
+        // 为什么 null / ≤0 时**不设头**：设 "Retry-After: 0" 会让客户端**立刻重试**，
+        // 等于把一次拒绝放大成一串重试，比不设头更糟。
+        // （"兜底给个 0"看起来很自然，所以这条值得写下来。）
+        Long retryAfter = ex.retryAfterSeconds();
+        if (retryAfter != null && retryAfter > 0) {
+            builder.header("Retry-After", String.valueOf(retryAfter));
+        }
+        return builder.body(ApiResponse.fail(code, ex.getMessage()));
     }
 
     /** @Valid 校验失败（请求体）→ 400 参数错误，message 带首个字段的提示，便于前端定位。 */
