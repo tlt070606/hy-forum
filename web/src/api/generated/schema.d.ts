@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/user/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 修改自己的资料
+         * @description PUT=覆盖（省略即清空）；只接受 nickname/avatarUrl/bio/gender，出现 username/password/role/id 等字段返回 400（不是静默忽略）；avatarUrl 必须在本项目 OSS 的 avatar/{自己id}/ 目录下
+         */
+        put: operations["updateProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/posts/{id}": {
         parameters: {
             query?: never;
@@ -541,7 +561,7 @@ export interface paths {
         };
         /**
          * 获取 OSS 直传签名
-         * @description 返回 {host, policy, signature, dir, expire, callback}；需登录；policy 限定目录 post/、单图 ≤5MB、仅 image/*
+         * @description 返回 {host, policy, signature, dir, expire, callback}；需登录。target=post（默认）→ dir=post/；target=avatar → dir=avatar/{当前用户id}/（用户 id 取自登录态，不接受参数）。policy 限定目录、单图 ≤5MB、仅 image/*
          */
         get: operations["signature"];
         put?: never;
@@ -736,6 +756,43 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        JsonNode: Record<string, never>;
+        ApiResponseUserProfileVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["UserProfileVO"];
+        };
+        /** @description 个人主页信息（含双向关注状态） */
+        UserProfileVO: {
+            /** Format: int64 */
+            id?: number;
+            nickname?: string;
+            avatarUrl?: string;
+            bio?: string;
+            /**
+             * Format: int32
+             * @description 性别：0 = 未知 / 1 = 男 / 2 = 女。取值语义与 docs/db/schema.sql 的 user.gender 列注释一致（CR-M）
+             */
+            gender?: number;
+            /** Format: int32 */
+            postCount?: number;
+            /** Format: int32 */
+            followCount?: number;
+            /** Format: int32 */
+            fansCount?: number;
+            /** Format: int32 */
+            likeReceivedCount?: number;
+            /**
+             * Format: int32
+             * @description 【reserved 预留字段】当前无任何写入口径：注册时被固定写成 1（见 AuthService.register），schema 默认值也是 1 —— 即**恒为 1、不随任何行为变化**。含义待定，**前端不得展示为'等级'**（把恒为 1 的数字渲染成'等级 1'属于界面在说谎，与 CR-M 要消灭的'等级 0'是同一类问题）。需要等级体系时先定义写入口径。
+             */
+            level?: number;
+            isFollowing?: boolean;
+            isFollowedBy?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
         /** @description 改帖请求体（仅作者、仅发布后 30 分钟内；任何内容变更都会让帖子回到待审） */
         PostUpdateRequest: {
             /**
@@ -1030,42 +1087,6 @@ export interface components {
             code?: number;
             message?: string;
             data?: components["schemas"]["AdminLoginVO"];
-        };
-        ApiResponseUserProfileVO: {
-            /** Format: int32 */
-            code?: number;
-            message?: string;
-            data?: components["schemas"]["UserProfileVO"];
-        };
-        /** @description 个人主页信息（含双向关注状态） */
-        UserProfileVO: {
-            /** Format: int64 */
-            id?: number;
-            nickname?: string;
-            avatarUrl?: string;
-            bio?: string;
-            /**
-             * Format: int32
-             * @description 性别：0 = 未知 / 1 = 男 / 2 = 女。取值语义与 docs/db/schema.sql 的 user.gender 列注释一致（CR-M）
-             */
-            gender?: number;
-            /** Format: int32 */
-            postCount?: number;
-            /** Format: int32 */
-            followCount?: number;
-            /** Format: int32 */
-            fansCount?: number;
-            /** Format: int32 */
-            likeReceivedCount?: number;
-            /**
-             * Format: int32
-             * @description 【reserved 预留字段】当前无任何写入口径：注册时被固定写成 1（见 AuthService.register），schema 默认值也是 1 —— 即**恒为 1、不随任何行为变化**。含义待定，**前端不得展示为'等级'**（把恒为 1 的数字渲染成'等级 1'属于界面在说谎，与 CR-M 要消灭的'等级 0'是同一类问题）。需要等级体系时先定义写入口径。
-             */
-            level?: number;
-            isFollowing?: boolean;
-            isFollowedBy?: boolean;
-            /** Format: date-time */
-            createdAt?: string;
         };
         ApiResponsePageResultFeedItemVO: {
             /** Format: int32 */
@@ -1472,6 +1493,30 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    updateProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JsonNode"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseUserProfileVO"];
+                };
+            };
+        };
+    };
     getPost: {
         parameters: {
             query?: never;
@@ -2217,7 +2262,9 @@ export interface operations {
     };
     signature: {
         parameters: {
-            query?: never;
+            query?: {
+                target?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
