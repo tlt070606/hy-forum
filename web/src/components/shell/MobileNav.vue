@@ -41,7 +41,7 @@ import { useNotifyStore } from '@/stores/notify'
 
 const notify = useNotifyStore()
 
-withDefaults(defineProps<{ active?: 'home' | 'boards' | 'collect' | 'me' | 'notifications' | '' }>(), { active: '' })
+const props = withDefaults(defineProps<{ active?: 'home' | 'boards' | 'collect' | 'me' | 'notifications' | '' }>(), { active: '' })
 
 interface NavItem {
   key: 'home' | 'boards' | 'notifications' | 'collect' | 'me'
@@ -51,7 +51,12 @@ interface NavItem {
 }
 
 const ITEMS: readonly NavItem[] = [
-  { key: 'home', label: '首页', icon: 'home', url: null },
+  /*
+   * ⚠️ 「首页」必须有 url（原来是 null）—— 与左栏同一个 bug：
+   * 旧代码把 `url === null` 当成"当前页"，而底部导航在每个页面都显示，
+   * 于是**在任何非首页点「首页」都没反应**（需求方实测反馈，两处同时修掉）。
+   */
+  { key: 'home', label: '首页', icon: 'home', url: '/pages/index/index' },
   /* ⚠️ 必须与左栏一起改：/pages/topic 的路由已删除，留着就是死链 */
   { key: 'boards', label: '版块', icon: 'hash', url: '/pages/boards/index' },
   /*
@@ -65,13 +70,25 @@ const ITEMS: readonly NavItem[] = [
   { key: 'me', label: '我的', icon: 'user', url: '/pages/me/index' },
 ] as const
 
+/**
+ * 点底部导航项。规则与左栏一致（两处行为必须一样，否则宽窄屏体验会打架）：
+ * - 已在本页 → 不做（首页额外滚回顶部）；判据是 `active`，**不是** `url === null`；
+ * - **「首页」用 `reLaunch`**（它是根页面，`navigateTo` 会让返回栈越堆越深）；
+ * - 其余 `navigateTo`，保留"从哪来回哪去"。
+ */
 function onTap(item: NavItem): void {
   if (!item.url) return
-  // 「我的」是 tabBar 语义的根页 → reLaunch；其余用 navigateTo 保留返回栈
-  if (item.key === 'me' || item.key === 'home') {
-    uni.navigateTo({ url: item.url })
+
+  if (item.key === props.active) {
+    if (item.key === 'home') uni.pageScrollTo({ scrollTop: 0, duration: 200 })
     return
   }
+
+  if (item.key === 'home') {
+    uni.reLaunch({ url: item.url })
+    return
+  }
+
   uni.navigateTo({ url: item.url })
 }
 </script>

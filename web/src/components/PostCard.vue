@@ -12,7 +12,7 @@
        它是真实存在的分类维度，且点击能进版块页，不是拿假标签充数。
   -->
   <view class="post-card" data-testid="post-card" @click="openDetail">
-    <view class="post-card__head">
+    <view v-if="showAuthor" class="post-card__head">
       <Avatar :url="post.authorAvatarUrl" :nickname="post.authorName" :size="40" />
       <view class="post-card__author">
         <view class="post-card__name-row">
@@ -69,6 +69,13 @@
       现在点赞/评论/收藏从左往右排开、浏览量靠右，与参考图一致。
     -->
     <view class="post-card__foot">
+      <!--
+        调用方可以往底栏左侧塞内容（收藏页用来放「收藏于 X」与「取消收藏」）。
+        ⚠️ 用插槽而不是再写一份卡片：需求方 2026-09-18 明确要求
+        「**收藏的UI和首页的UI做成一样**」—— 复制一份样式迟早会漂，
+        共用同一个组件才是"一样"的唯一保证。
+      -->
+      <slot name="extra" />
       <!--
         ⚠️ 这三个是**可点的**（需求方 2026-09-18：「为什我在那个页面不能直接点赞什么之类的，
         一定要点进去才可以呀？」）。之前它们只是数字展示，点了没反应。
@@ -132,6 +139,12 @@ import { useInteractionStore } from '@/stores/interaction'
 const props = defineProps<{
   /** 已归一化的卡片数据（可选字段已在 `utils/postView.ts` 收敛） */
   post: PostCardView
+  /**
+   * 是否显示作者行。默认 `true`（信息流）。
+   * **收藏列表传 `false`** —— `CollectionItemVO` 里确实没有作者字段
+   * （收藏记录本身不存作者），显示一个空的作者行比不显示更糟。
+   */
+  showAuthor?: boolean
 }>()
 
 const auth = useAuthStore()

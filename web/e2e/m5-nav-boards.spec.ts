@@ -91,3 +91,48 @@ test('右栏：版块榜的帖子数与接口一致；「最新发帖的人」�
   await expect(page.getByTestId('recommend-people')).toHaveCount(0)
   await expect(page.getByTestId('hot-activities')).toHaveCount(0)
 })
+
+/* ==========================================================================
+ * 用例 3：点「首页」能直接从别的页面回去（需求方实测反馈）
+ * ========================================================================== */
+
+test('左栏：在版块页点「首页」直接回首页，不需要点返回', async ({ page }) => {
+  /*
+   * 修之前这里**点了没反应**：左栏把「首页」的 url 写成 null，
+   * 而 onNav 用"url === null = 当前页 → 不跳"当判据 ——
+   * 那条假设只在首页成立（左栏是全局外壳的一部分，在版块页/详情页也显示），
+   * 于是任何非首页点「首页」都是死键。判据改成 active，并让首页走 reLaunch（清栈）。
+   */
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('#/pages/index/index')
+  await expect(page.getByTestId('nav-home')).toBeVisible({ timeout: 15_000 })
+
+  // 先去版块页（走真实入口，不直接改 URL）
+  await page.getByTestId('nav-boards').click()
+  await expect(page.getByTestId('board-card').first()).toBeVisible({ timeout: 15_000 })
+
+  // 关键断言：点「首页」应当**回到首页**（有发帖入口 + 信息流）
+  await page.getByTestId('nav-home').click()
+  await expect(page.getByTestId('home-composer')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByTestId('post-card').first()).toBeVisible({ timeout: 15_000 })
+
+  /*
+   * 已在首页时再点一次**不该把页面搞坏**（旧实现的 no-op 语义要保住：
+   * 不能因为"修了跳转"就变成"每次点都重新加载、把滚动位置和已加载的分页丢掉"）。
+   */
+  await page.getByTestId('nav-home').click()
+  await expect(page.getByTestId('home-composer')).toBeVisible()
+  await expect(page.getByTestId('post-card').first()).toBeVisible()
+})
+
+test('窄屏底部导航：在版块页点「首页」同样能直接回首页', async ({ page }) => {
+  // 窄屏才是底部导航的形态（本配置默认视口就是 420×900）
+  await page.goto('#/pages/index/index')
+  await expect(page.getByTestId('mobile-nav-home')).toBeVisible({ timeout: 15_000 })
+
+  await page.getByTestId('mobile-nav-boards').click()
+  await expect(page.getByTestId('board-card').first()).toBeVisible({ timeout: 15_000 })
+
+  await page.getByTestId('mobile-nav-home').click()
+  await expect(page.getByTestId('home-composer')).toBeVisible({ timeout: 15_000 })
+})

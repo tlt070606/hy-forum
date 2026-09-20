@@ -90,7 +90,14 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { key: 'home', label: '首页', desc: '全部最新帖子', icon: 'home', url: null },
+  /*
+   * ⚠️ 「首页」**必须有 url**（原来写的是 `null`）。
+   * 旧逻辑是"`url === null` = 当前页，不跳"，而那条假设**只在首页成立**：
+   * 左栏是全局外壳的一部分，**在版块页/详情页也显示**，而「首页」的 url 恒为 null
+   * → 于是在任何非首页点「首页」都**毫无反应**，用户只能去点「返回」（需求方实测反馈）。
+   * 正确做法：把它当成一个真实目的地，**是不是"当前页"由 `active` 判断**（见 `onNav`）。
+   */
+  { key: 'home', label: '首页', desc: '全部最新帖子', icon: 'home', url: '/pages/index/index' },
   /* 2026-09-18 需求方裁定：'话题' 去掉（占位页、无表无接口），换成有真接口的 '版块' */
   { key: 'boards', label: '版块', desc: '按版块浏览帖子', icon: 'hash', url: '/pages/boards/index' },
   { key: 'collect', label: '收藏', desc: '我的收藏', icon: 'bookmark', url: '/pages/collect/index' },
@@ -104,9 +111,31 @@ const postTotalText = computed(() => String(num(props.postTotal)))
 /** 是否知道帖子总数。`false` 时整块「今日数据」不渲染（见模板注释） */
 const hasPostTotal = computed(() => props.postTotal !== null && props.postTotal !== undefined)
 
+/**
+ * 点导航项。
+ *
+ * 三条规则，顺序不能反：
+ * 1. **已经在本页 → 什么都不做**（判据是 `active`，**不是** `url === null`：
+ *    后者只在首页成立，见 `NAV_ITEMS` 上的注释）。
+ *    对「首页」额外把页面滚回顶部 —— 这是列表类首页的常规行为，成本一行。
+ * 2. **「首页」用 `reLaunch`**：它是根页面，用 `navigateTo` 会把返回栈越堆越深
+ *    （首页 → 版块 → 版块详情 → 首页 → …），用户要按好几次返回才能退出。
+ *    `reLaunch` 清掉整个栈，**这才是"点首页快速回去"该有的语义**。
+ * 3. 其余入口用 `navigateTo`，保留"从哪来回哪去"的返回栈。
+ */
 function onNav(item: NavItem): void {
-  // 当前页（`url === null`）不跳，避免 reLaunch 把页面栈清掉、丢失滚动位置
   if (!item.url) return
+
+  if (item.key === props.active) {
+    if (item.key === 'home') uni.pageScrollTo({ scrollTop: 0, duration: 200 })
+    return
+  }
+
+  if (item.key === 'home') {
+    uni.reLaunch({ url: item.url })
+    return
+  }
+
   uni.navigateTo({ url: item.url })
 }
 
