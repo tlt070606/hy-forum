@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
+import com.hyforum.common.audit.SensitiveTextChecker;
 import com.hyforum.common.exception.BizException;
 import com.hyforum.common.notify.NotificationPublisher;
 import com.hyforum.common.notify.NotificationType;
@@ -84,16 +85,28 @@ public class CommentService {
      */
     private final NotificationPublisher notificationPublisher;
 
+    /**
+     * 敏感词检查（M5 接线）。
+     *
+     * <p>依赖 {@code common.audit.SensitiveTextChecker} 这个**接口**，而不是
+     * {@code audit} 包里的 {@code InMemorySensitiveTextChecker} 实现 ——
+     * 后者会构成 {@code interaction → audit} 的业务包依赖（铁律 3，ArchUnit 按包判）。
+     * 与 {@code PostService} 的引用方式一致。</p>
+     */
+    private final SensitiveTextChecker sensitiveTextChecker;
+
     public CommentService(CommentMapper commentMapper,
                           CommentLikeMapper commentLikeMapper,
                           PostMapper postMapper,
                           UserMapper userMapper,
-                          NotificationPublisher notificationPublisher) {
+                          NotificationPublisher notificationPublisher,
+                          SensitiveTextChecker sensitiveTextChecker) {
         this.commentMapper = commentMapper;
         this.commentLikeMapper = commentLikeMapper;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.notificationPublisher = notificationPublisher;
+        this.sensitiveTextChecker = sensitiveTextChecker;
     }
 
     // ==================================================================
@@ -199,12 +212,17 @@ public class CommentService {
         comment.setLikeCount(0);
         // reply_count 仅主楼维护：楼中楼自己这一列恒为 0
         comment.setReplyCount(rootId == Comment.ROOT_MARKER ? 0 : 0);
-        // 评论本期**不接敏感词过滤**：§8.6 第 2 条要求"命中 → status=0 进待审队列"，
-        // 而评论的审核出口 PUT /api/admin/comments/{id}/status 属 M6（§6.11）。
-        // 若现在就把命中词置 0，会造出一个**只进不出的队列**（该内容永远无法放行也不可见）
-        // —— 这与 §8.6 反复强调的"队列必须有出口"直接冲突。因此本任务一律落 status=1，
-        // 敏感词接入随 M5/M6 的审核出口一起做（已登记为交接事项）。
-        comment.setStatus(Comment.STATUS_NORMAL);
+
+        // 敏感词判定（M5 接线，§8.6 第 2 条）：命中 → status=0 待审、前台不可见。
+        //
+        // 为什么现在才接（M4 时**刻意**没接，如实记录这段决定）：
+        // §8.6 要求"命中 → 进待审队列"，但**队列必须有出口**是本项目已经吃过一次的原则
+        // （CR-006/P1-2：图片审核队列曾经只进不出）。M4 交付时审核出口还没做，
+        // 若那时就置 0，就会造出一个只进不出的队列 —— 内容既无法放行也不可见。
+        // M5 把出口（PUT /api/admin/comments/{id}/status，放行/屏蔽两个方向）做出来了，
+        // 入口才敢接上：**出入口成对存在**才是这条规则的正确形态。
+        boolean sensitive = sensitiveTextChecker.containsSensitive(content);
+        comment.setStatus(sensitive ? Comment.STATUS_PENDING : Comment.STATUS_NORMAL);
         comment.setCreatedAt(LocalDateTime.now());
         commentMapper.insert(comment);
 
