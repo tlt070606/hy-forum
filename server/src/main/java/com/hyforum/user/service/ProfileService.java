@@ -83,8 +83,24 @@ public class ProfileService {
             throw new BizException(ErrorCode.BAD_REQUEST, "简介不能超过 200 字");
         }
         int gender = normalizeGender(request.gender());
+        log.info("用户 {} 更新资料：avatarUrl 是否设置={} bio 是否设置={} gender={}",
+                userId, avatarUrl != null, bio != null, gender);
 
-        userMapper.update(null, com.baomidou.mybatisplus.core.toolkit.Wrappers.<User>lambdaUpdate()
+        // ★ 返回"刚刚应用的三个值"，而不是重新读一遍实体、也**不是**用手上这个陈旧实体。
+        //
+        //   这里踩过一次（被用例当场抓住，如实记录）：
+        //   第一版把**更新前**读出来的 `user` 传给了 toProfileVO ——
+        //   于是响应里是旧昵称/旧头像，而库里其实已经改成功了。
+        //   现象最恶劣的一点是：**它看起来像"改资料没生效"**，
+        //   客户端据此显示旧值，用户以为保存失败、反复重试 ——
+        //   也就是本项目反复吃过的"界面在说谎"，只不过这次说谎的是**接口响应**。
+        //
+        //   为什么选"用刚应用的值"而不是"再 selectById 读一次"：
+        //   ① 刚写进去的就是真值，不需要再查（少一次查询）；
+        //   ② 再读一次也**不能**证明写入成功 —— 它只是把同样的信任问题推迟了一步。
+        //      真要证明，靠的是下面这条：affected rows 必须为 1。
+        int affected = userMapper.update(null, com.baomidou.mybatisplus.core.toolkit.Wrappers
+                .<User>lambdaUpdate()
                 .eq(User::getId, userId)
                 .set(User::getNickname, nickname)
                 // ★ PUT 覆盖语义：不传就是 null（清空），不是"保持原值"。
@@ -92,10 +108,12 @@ public class ProfileService {
                 .set(User::getAvatarUrl, avatarUrl)
                 .set(User::getBio, bio)
                 .set(User::getGender, gender));
-
-        log.info("用户 {} 更新资料：avatarUrl 是否设置={} bio 是否设置={} gender={}",
-                userId, avatarUrl != null, bio != null, gender);
-        return toProfileVO(user);
+        if (affected != 1) {
+            // 0 行说明"这个 id 在更新语句执行时已经不存在了"（并发注销/删除）。
+            // 不静默返回成功：那会让客户端拿到一份"看起来改好了"的响应，而库里什么都没变。
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在或已被删除，资料未更新");
+        }
+        return toProfileVO(user, nickname, avatarUrl, bio, gender);
     }
 
     /**
@@ -139,21 +157,32 @@ public class ProfileService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    /** 返回更新后的主页视图（复用 UserProfileVO，字段与 {@code GET /api/users/{id}} 一致）。 */
-    private UserProfileVO toProfileVO(User user) {
+    /**
+     * 组装更新后的主页视图。
+     *
+     * <p><b>四个可编辑字段用"刚应用的值"传进来</b>（见 {@link #updateProfile} 的注释：
+     * 用手上的陈旧实体做过一次，响应会显示旧值 —— 那是"接口在说谎"）；
+     * 其余字段（计数、等级、注册时间）来自实体，它们不受本次更新影响。</p>
+     */
+    private UserProfileVO toProfileVO(User user, String nickname, String avatarUrl,
+                                      String bio, int gender) {
         return new UserProfileVO(
                 user.getId(),
-                user.getNickname(),
-                user.getAvatarUrl(),
-                user.getBio(),
-                user.getGender(),
+                nickname,
+                avatarUrl,
+                bio,
+                gender,
                 nullToZero(user.getPostCount()),
                 nullToZero(user.getFollowCount()),
                 nullToZero(user.getFansCount()),
                 nullToZero(user.getLikeReceivedCount()),
                 user.getLevel(),
-                // 改自己资料时"我是否关注我"没有意义 → 两个关注标志都留 null 的语义会被误解，
-                // 因此这里给 false：调用方是本人，他当然没有关注自己（follow 表不允许自我关注）
+                // 自己看自己：两个关注标志为 false。
+                // **不是另定的口径** —— UserService.getProfile 在已登录时就是算
+                // isFollowing(me, me) / isFollowedBy(me, me)，而 follow 表不允许自我关注，
+                // 因此结果就是 false（与既有路径逐字一致）。
+                // 这里刻意不用 null：null 在本项目里的语义是"未登录、未知"，
+                // 用它会让前端把"我自己"当成未登录态渲染。
                 false,
                 false,
                 user.getCreatedAt());

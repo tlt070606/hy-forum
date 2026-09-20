@@ -17,15 +17,24 @@ import jakarta.validation.constraints.Size;
  *   <li><b>400 明确拒绝（本项目选的）</b>：错误信息直接说"这个字段不可修改"。</li>
  * </ul>
  *
- * <p><b>为什么用 {@code @JsonIgnoreProperties(ignoreUnknown = false)} 而不是在方法体里逐个检查</b>：
- * 逐个检查要求"穷举所有不可编辑字段"，而 {@code user} 表有 20 列 ——
- * 漏掉任何一列（例如 {@code points}、{@code level}、{@code status}）就是一个静默忽略的缺口。
- * 反过来做（默认拒绝一切未声明字段）则由**结构**保证：DTO 里只有那 4 个字段，
- * 其余任何 key 都会被 Jackson 拒绝。<b>白名单比黑名单可靠。</b></p>
+ * <p><b>为什么用黑名单（{@code ignoreUnknown = false} + 显式列名）而不是"开启全局
+ * FAIL_ON_UNKNOWN"</b>（这是我第一版写错、被用例当场抓住的地方，如实记录）：
+ * 第一版只写了 {@code @JsonIgnoreProperties(ignoreUnknown = false)} 就以为够了 ——
+ * 而 <b>Spring Boot 默认把 {@code FAIL_ON_UNKNOWN_PROPERTIES} 关掉了</b>
+ * （{@code application.yml} 的 {@code jackson} 段只设了 time-zone/date-format），
+ * 于是未知字段被<b>静默忽略</b>，{@code profile_update} 那条用例直接红：
+ * 请求里带着 {@code username} 却返回 200。
+ * 改全局开关会影响所有接口的入参容忍度（那是 L1 的地盘，且今天已因"顺手改"出过事），
+ * 所以改成在这里显式点名。</p>
  *
- * <p>代价（如实记录）：客户端若"顺手"多传一个前端内部字段（例如 {@code _dirty}），
- * 也会被 400。这是刻意的取舍 —— 宁可让调用方改掉多余的 key，
- * 也不要让"改了但没生效"这种事悄悄发生。</p>
+ * <p><b>为什么点名这些</b>：本任务书 §14.3 明确要求
+ * {@code username} / {@code password} / {@code role} / {@code id} 必须 400；
+ * 另外几个是 {@code user} 表里**同样的"用户不该自己改"**的列
+ * （{@code points} 积分、{@code level} 等级、{@code status} 封禁状态、两个计数），
+ * 一个 HTTP 客户端完全可以顺手传它们。<b>这条黑名单是唯一需要维护的地方</b>，
+ * 而它被用例逐字段覆盖（漏一个就在 {@code M4_..._rejects_non_editable} 里红）——
+ * 这也是我选黑名单而不是"全局白名单"的原因：全局白名单会让**所有**接口
+ * 多传一个前端内部字段就 400，代价落到别人头上。</p>
  *
  * <h2>PUT = 覆盖，省略即清空</h2>
  * <p>{@code avatarUrl}/{@code bio} 不传就是清空（置 null），不是"保持原值"。
@@ -38,7 +47,13 @@ import jakarta.validation.constraints.Size;
  * @param bio       个性签名，≤200 字符；不传/null = 清空
  * @param gender    0 未知 / 1 男 / 2 女；不传按 0（未设置）
  */
-@JsonIgnoreProperties(ignoreUnknown = false)
+@JsonIgnoreProperties(value = {
+        // 见类注释：Spring Boot 把 FAIL_ON_UNKNOWN 关掉了，因此必须显式点名
+        "username", "password", "role", "id",
+        "points", "level", "status",
+        "postCount", "followCount", "fansCount", "likeReceivedCount",
+        "isDeleted", "createdAt", "updatedAt"
+}, ignoreUnknown = true)
 @Schema(name = "ProfileUpdateRequest",
         description = "修改自己的资料（PUT=覆盖，省略即清空）。"
                 + "只接受 nickname/avatarUrl/bio/gender；出现 username/password/role/id 等字段会 400")

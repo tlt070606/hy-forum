@@ -1,6 +1,8 @@
 package com.hyforum.user.controller;
 
 import com.hyforum.common.api.ApiResponse;
+import com.hyforum.common.exception.BizException;
+import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.security.AllowAnonymous;
 import com.hyforum.common.security.CurrentUser;
@@ -75,17 +77,30 @@ public class UserProfileController {
     private final InteractionService interactionService;
     private final ProfileService profileService;
 
+    /**
+     * 用于"先把请求体当原始 JSON 树收下来"（见 {@link #bindRejectingForbiddenFields}）：
+     * 参数声明成 DTO 时多余字段已被 Jackson 丢弃，因此必须自己收树、自己判、再自己绑定。
+     */
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    /** 参数改成 JsonNode 后，Bean Validation 不再自动触发，需要显式校验一次。 */
+    private final jakarta.validation.Validator validator;
+
     /** CR-K / CR-L：个人主页的帖子卡片也要有 liked/collected/imageThumbs（与首页、版块列表同一口径）。 */
     private final CardViewerStateEnricher enricher;
 
     public UserProfileController(UserService userService,
                                  InteractionService interactionService,
                                  CardViewerStateEnricher enricher,
-                                 ProfileService profileService) {
+                                 ProfileService profileService,
+                                 com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+                                 jakarta.validation.Validator validator) {
         this.userService = userService;
         this.interactionService = interactionService;
         this.enricher = enricher;
         this.profileService = profileService;
+        this.objectMapper = objectMapper;
+        this.validator = validator;
     }
 
     /**
@@ -101,9 +116,9 @@ public class UserProfileController {
      *
      * <p><b>请求体里出现 {@code username}/{@code password}/{@code role}/{@code id} 等 → 400</b>，
      * <b>不是静默忽略</b>（§14.3）：静默忽略会让客户端以为"用户名/密码改成功了"，
-     * 而那正是本项目反复吃过的"界面在说谎"。实现方式是把
-     * {@code ProfileUpdateRequest} 声明成"未知字段即拒绝"
-     * （白名单比逐个黑名单可靠 —— {@code user} 表有 20 列，穷举会漏）。</p>
+     * 而那正是本项目反复吃过的"界面在说谎"。
+     * 实现方式见 {@link #bindRejectingForbiddenFields} —— 那里记了<b>两轮失败</b>的经过，
+     * 因为"在 DTO 上加注解"这条看起来最自然的路在本项目里其实是无效的。</p>
      *
      * <p>不加 {@code @AllowAnonymous}/{@code @OptionalLogin}：本端点语义上必须登录
      * （未登录没有"自己的资料"可改），走拦截器 → {@code requireId()} 是唯一正确的形态。</p>
@@ -113,8 +128,70 @@ public class UserProfileController {
             description = "PUT=覆盖（省略即清空）；只接受 nickname/avatarUrl/bio/gender，"
                     + "出现 username/password/role/id 等字段返回 400（不是静默忽略）；"
                     + "avatarUrl 必须在本项目 OSS 的 avatar/{自己id}/ 目录下")
-    public ApiResponse<UserProfileVO> updateProfile(@Valid @RequestBody ProfileUpdateRequest request) {
+    public ApiResponse<UserProfileVO> updateProfile(
+            @RequestBody com.fasterxml.jackson.databind.JsonNode body) {
+        ProfileUpdateRequest request = bindRejectingForbiddenFields(body);
         return ApiResponse.ok(profileService.updateProfile(CurrentUser.requireId(), request));
+    }
+
+    /**
+     * 不可通过本接口修改的字段（§14.3）。
+     *
+     * <p>前四个是任务书明确点名的（{@code username}/{@code password}/{@code role}/{@code id}）；
+     * 其余是 {@code user} 表里同样"用户不该自己改"的列 ——
+     * {@code points} 积分、{@code level} 等级、{@code status} 封禁状态、
+     * 四个计数、逻辑删除标志与两个时间戳。
+     * 一个 HTTP 客户端完全可以顺手传它们，而"顺手传了却没生效"正是本接口要消灭的现象。</p>
+     */
+    private static final java.util.List<String> FORBIDDEN_FIELDS = java.util.List.of(
+            "username", "password", "role", "id",
+            "points", "level", "status",
+            "postCount", "followCount", "fansCount", "likeReceivedCount",
+            "isDeleted", "deleted", "createdAt", "updatedAt");
+
+    /**
+     * 把请求体绑定成 DTO，<b>并且拒绝"不可编辑字段"</b>（§14.3：必须 400，不是静默忽略）。
+     *
+     * <h2>为什么不直接在 DTO 上加注解（这里踩了两轮，如实记录）</h2>
+     * <p><b>第一版</b>：在 DTO 上写 {@code @JsonIgnoreProperties(ignoreUnknown = false)}，
+     * 以为能拒未知字段 —— <b>无效</b>。Spring Boot 默认把
+     * {@code FAIL_ON_UNKNOWN_PROPERTIES} 关掉了（{@code application.yml} 的 {@code jackson} 段
+     * 只设了 time-zone / date-format），因此未知 key 在反序列化阶段就被<b>丢弃</b>，
+     * 注解没有机会起作用。用例当场红：请求里带着 {@code username} 却返回 200。</p>
+     * <p><b>第二版</b>：改成 {@code @JsonIgnoreProperties(value = {...})} 显式点名 —— <b>同样无效</b>。
+     * 那个属性的语义是"<b>忽略</b>这些字段"，而我们恰恰要禁止"忽略"；
+     * 它不会产生"拒绝"。用例又红了一次。</p>
+     * <p><b>正解</b>：先拿到<b>原始 JSON 树</b>在绑定前显式检查。
+     * 这也是方法参数用 {@code JsonNode} 的原因 —— <b>参数声明成 DTO 的那一刻，
+     * 多余的 key 就已经被丢掉了</b>，之后无论怎么检查都查不到。</p>
+     *
+     * <h2>为什么不改成全局开启 {@code FAIL_ON_UNKNOWN_PROPERTIES}</h2>
+     * <p>那会让<b>所有</b>接口对"多传一个键"（哪怕是前端内部的 {@code _dirty}）都返回 400，
+     * 代价落到别人头上；而且 {@code application.yml} 是 L1 独占。
+     * 本方案把代价限制在这一个端点的入参形状上。</p>
+     */
+    private ProfileUpdateRequest bindRejectingForbiddenFields(
+            com.fasterxml.jackson.databind.JsonNode body) {
+        if (body == null || !body.isObject()) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "请求体必须是 JSON 对象");
+        }
+        for (String field : FORBIDDEN_FIELDS) {
+            if (body.has(field)) {
+                throw new BizException(ErrorCode.BAD_REQUEST,
+                        "字段 `" + field + "` 不可通过本接口修改（本接口只接受 nickname / avatarUrl / "
+                                + "bio / gender）。拒绝而不是忽略：静默忽略会让你以为改动生效了。");
+            }
+        }
+        // 到这一步才能安全绑定：多余字段已按上面的规则处理完
+        ProfileUpdateRequest request = objectMapper.convertValue(body, ProfileUpdateRequest.class);
+        // Bean Validation 原本在参数绑定阶段触发；参数改成 JsonNode 之后那一层没了，
+        // 因此这里显式校验一次 —— 否则"昵称为空/超长"会漏到库里，
+        // 变成 SQL 报错（500）而不是本该的 400
+        var violations = validator.validate(request);
+        if (!violations.isEmpty()) {
+            throw new BizException(ErrorCode.BAD_REQUEST, violations.iterator().next().getMessage());
+        }
+        return request;
     }
 
     /**
