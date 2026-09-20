@@ -23,8 +23,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * OSS 那边回调失败、我们这边什么都没发生，两边都"正常"。
  * 这类静默失败是所有故障里最难查的一种，所以这里把它变成<b>一条明确的 WARN</b>。</p>
  *
- * <p>⚠️ 刻意<b>不</b>做成"启动即失败"：那会带崩测试与 CI（它们本来就用环回地址起应用）。
- * 要的是<b>可见</b>，不是拦死 —— 这是 §12.5 的明确要求。</p>
+ * <p>⚠️ <b>2026-09-20 升级：从"启动提醒一次"改为"不设就启动失败"</b>
+ * （需求方裁决；M5 任务书 §9）。原设计刻意不拦死，理由是"会带崩测试与 CI"——
+ * 那个顾虑是真的，所以改用<b>显式降级开关</b>解决，而不是继续容忍静默失败：
+ * 不设 {@code OSS_CALLBACK_URL} 且未开降级 → <b>启动即失败</b>；
+ * {@code hy.oss.upload.allow-loopback-callback=true} → 允许环回（测试/CI 走这条）。
+ * 理由与取舍写在 {@link #assertCallbackUrlUsableOrFailFast()}。</p>
  *
  * <h2>解析优先级</h2>
  * <ol>
@@ -55,6 +59,14 @@ public class OssCallbackUrlResolver {
      */
     private final String callbackUrlFromEnv;
 
+    /**
+     * 是否<b>显式允许</b>环回回调地址（{@code hy.oss.upload.allow-loopback-callback}，默认 {@code false}）。
+     *
+     * <p>见 {@link #assertCallbackUrlUsableOrFailFast()} 的说明：这是"显式降级"的开关，
+     * 用于测试与 CI（它们本来就用环回地址起应用，没有公网入口）。</p>
+     */
+    private final boolean allowLoopbackCallback;
+
     /** 请求级 WARN 只打一次（否则每个签名请求一行，等于没有信号）。 */
     private final AtomicBoolean loopbackWarned = new AtomicBoolean(false);
 
@@ -62,9 +74,67 @@ public class OssCallbackUrlResolver {
     private final AtomicLong loopbackWarningCount = new AtomicLong();
 
     public OssCallbackUrlResolver(OssUploadProperties uploadProperties,
-                                  @Value("${OSS_CALLBACK_URL:}") String callbackUrlFromEnv) {
+                                  @Value("${OSS_CALLBACK_URL:}") String callbackUrlFromEnv,
+                                  @Value("${hy.oss.upload.allow-loopback-callback:false}")
+                                  boolean allowLoopbackCallback) {
         this.uploadProperties = uploadProperties;
         this.callbackUrlFromEnv = callbackUrlFromEnv;
+        this.allowLoopbackCallback = allowLoopbackCallback;
+        // ★ fail-fast 在**构造期**执行（见方法注释里为什么不是 @PostConstruct）
+        assertCallbackUrlUsableOrFailFast();
+    }
+
+
+    /**
+     * 回调地址不可用 → <b>启动即失败</b>（需求方 2026-09-20 裁决；M5 任务书 §9）。
+     *
+     * <h2>为什么从"一条 WARN"升级成"启动失败"</h2>
+     * <p>L1 亲身踩过：起后端时漏设 {@code OSS_CALLBACK_URL} → 回调地址按请求推导出<b>环回地址</b> →
+     * <b>OSS 在公网永远够不到</b> → 现象是「<b>上传成功、界面正常、但图永远不出现</b>」，
+     * 而当时只有<b>一条 WARN</b>。**没人会去看 WARN** —— 于是这个配置错误一直活到用户发现图不见了。
+     * 因此改成与凭据（{@code @NotBlank}）同一口径：<b>不设就起不来</b>。</p>
+     *
+     * <h2>为什么可以"显式降级"</h2>
+     * <p>测试与 CI <b>没有公网入口</b>，它们本来就用环回地址起应用。
+     * 若一刀切地拦死，会把测试与 CI 一起带崩 —— 那不是"更安全"，是"把闸门焊死"。
+     * 因此保留一条<b>必须显式声明</b>的降级路径：
+     * {@code hy.oss.upload.allow-loopback-callback=true}。
+     * <b>默认 false</b>：默认路径安全，降级要写出来（写出来的东西才会被评审看见）。</p>
+     *
+     * <h2>为什么在构造器里做、而不是 {@code @PostConstruct}</h2>
+     * <p>失败要发生在<b>依赖注入阶段</b>：这样应用上下文直接构建失败、进程退出，
+     * 而不是"Bean 建好了、启动到一半才炸"。用 {@link IllegalStateException} 而不是
+     * {@code BizException}：这不是一次"可预期的业务失败"，而是<b>配置错误</b>，
+     * 它不该被全局异常处理器翻译成一个 HTTP 响应体（那时根本没有请求）。</p>
+     *
+     * <p>错误信息里必须写清<b>怎么修</b>：只说"配置缺失"会让人去翻文档，
+     * 而把两个变量名与"本机开发可以开降级开关"写进去，读日志的人当场就能改。</p>
+     */
+    private void assertCallbackUrlUsableOrFailFast() {
+        String explicit = firstNonBlank(uploadProperties.callbackUrl(), callbackUrlFromEnv);
+        if (explicit == null) {
+            if (allowLoopbackCallback) {
+                // 显式降级：测试/CI 走这条。仍然留一条 INFO，便于事后确认"这次是降级跑的"
+                log.info("未配置 OSS 回调地址，但已显式允许环回回调"
+                        + "（hy.oss.upload.allow-loopback-callback=true）—— 仅适用于测试/CI，"
+                        + "生产环境必须设置 OSS_CALLBACK_URL，否则 OSS 无法回调（现象：上传成功但图不出现）");
+                return;
+            }
+            throw new IllegalStateException(
+                    "未配置 OSS 回调地址，拒绝启动。"
+                            + "原因：回调地址会按请求推导，本机/容器里通常推出环回地址（如 127.0.0.1），"
+                            + "而 OSS 在公网够不到它 —— 现象是【上传成功、界面正常、但图永远不出现】，"
+                            + "且日志里没有错误。请设置环境变量 OSS_CALLBACK_URL（公网可访问的地址）；"
+                            + "本机开发/测试若不需要真实回调，可显式设置 "
+                            + "hy.oss.upload.allow-loopback-callback=true 来降级。");
+        }
+        if (isLoopback(explicit) && !allowLoopbackCallback) {
+            throw new IllegalStateException(
+                    "配置的 OSS 回调地址是环回地址 [" + explicit + "]，拒绝启动。"
+                            + "OSS 在公网访问不到环回地址 —— 现象是【上传成功、界面正常、但图永远不出现】。"
+                            + "请改为公网入口；本机开发/测试若不需要真实回调，可显式设置 "
+                            + "hy.oss.upload.allow-loopback-callback=true 来降级。");
+        }
     }
 
     /**

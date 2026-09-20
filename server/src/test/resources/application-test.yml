@@ -98,6 +98,36 @@ hy:
     # 自己把这个配额打满；其余用例每次 @BeforeEach 会清掉限流键，
     # 因此不会出现"上限太低导致无关用例随机变红"。
     ip-per-minute: 50
+  # -----------------------------------------------------------
+  # OSS 回调地址的**显式降级**（M5 任务书 §9；需求方 2026-09-20 裁决）
+  #
+  # 背景：`OssCallbackUrlResolver` 已升级为 **fail-fast** —— 不设 OSS_CALLBACK_URL
+  # 且未开降级时，**应用启动即失败**（原因：推导出的环回地址 OSS 够不到，
+  # 现象是"上传成功但图永远不出现"，而以前只有一条没人看的 WARN）。
+  #
+  # 测试与 CI **没有公网入口**（它们就在本机/容器里起应用），所以必须二选一：
+  #   ① 给 OSS_CALLBACK_URL 一个公网测试值；或
+  #   ② 显式声明"允许环回" ← **本文件选了这个**
+  #
+  # 为什么选 ②（而不是塞一个假公网域名）：
+  #   `M3OssSignatureTest` 有一组断言依赖"回调地址**按请求推导**"的行为
+  #   （它用 X-Forwarded-Host/X-Forwarded-Proto 模拟经反代，断言推导出的是那个公网域名）。
+  #   若在这里配一个固定 URL，`resolveQuietly` 会在第一步就返回它、**不再按请求推导** ——
+  #   那组断言会失去意义。而"允许环回"只关掉 fail-fast 这道闸、**不改推导行为**，两者可共存。
+  #
+  # ⚠️ 生产/主配置（application.yml，L1 独占）**不设**这个键 → 默认 false → 默认路径安全。
+  #    降级只发生在测试 profile，且是显式写出来的。
+  #
+  # ⚠️⚠️ 这个键**必须写在上面的 `hy:` 块里**（缩进两级），不能另起一个 `hy:` ——
+  #     我第一版就是另起了一段，YAML 出现重复键 → snakeyaml 报
+  #     `DuplicateKeyException: while constructing a mapping`，
+  #     于是 **95 个用例的上下文全部起不来**（`Failed to load ApplicationContext`）。
+  #     现象看起来像"fail-fast 把整个测试套件带崩了"，根因只是**一个重复的 YAML 键**。
+  #     教训：改 profile 配置后**必须跑一次全量**，否则只会看到"自己那条新用例绿了"。
+  # -----------------------------------------------------------
+  oss:
+    upload:
+      allow-loopback-callback: true
 
 # -------------------------------------------------------------
 # OSS 测试占位值（⚠️ 下面两个**不是真实密钥**，只是为了让 `media` 的凭据绑定
@@ -118,7 +148,6 @@ aliyun:
   oss:
     access-key-id: TEST-KEYID-1234567890
     access-key-secret: not-a-real-secret-abcdefghij
-
 sa-token:
   token-name: Authorization
   timeout: 604800
