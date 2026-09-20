@@ -40,18 +40,24 @@ import static org.assertj.core.api.Assertions.assertThat;
  * （M3 的基类注释里也记了这一条）。</p>
  */
 @TestPropertySource(properties = {
-        // ★★ M4 独占测试库：**必须在这里显式写 url**，不能依赖 $env:TEST_DB ★★
-        //    根因（实测，2026-09-17）：ResourceBundle 式占位符在**构建期**就被 Maven 的
-        //    资源过滤解析掉了 —— target/test-classes/application-test.yml 里那行已经变成
-        //    `jdbc:mysql://.../hy_forum_test?...`（默认值），不再是 `${TEST_DB:hy_forum_test}`。
-        //    于是运行期设 $env:TEST_DB 或 -DTEST_DB 都**不会**生效，测试静默连上共享库。
-        //    症状极具误导性：我的并发用例显示"20 个线程全部插入成功"（因为另一个 agent
-        //    正好在同一个库上跑测试、数据被互相清/写），看起来像幂等实现坏了。
-        //    这正是任务书 §4 说的"共享库会互相清表、造假红"——现在有了确切的机制解释。
-        //    此处用 @TestPropertySource 以最高优先级覆盖 dataSource.url，恒定指向本任务独占库。
-        "spring.datasource.url=jdbc:mysql://127.0.0.1:3306/hy_forum_test_m4"
-                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
-                + "&useSSL=false&allowPublicKeyRetrieval=true",
+        // ★ 数据源：**只在显式指定 `hy.test.db` 时才覆盖，且 url 由那个库名推导**。
+        //
+        // 曾经的写法与事故（CI #64 实测，28 个 CannotGetJdbcConnection）：
+        //   第一版在这里写死了 `spring.datasource.url=...hy_forum_test_m4`，
+        //   理由是当时的隔离机制（`TEST_DB` 环境变量）不生效 —— 那个判断是对的（CR-M4-2）。
+        //   但绕开方式造成了更糟的后果：**`@TestPropertySource` 的优先级高于 CI 注入的
+        //   `SPRING_DATASOURCE_URL`**，于是 CI 里 M4 的测试**恒定去连一个 CI 中不存在的库**
+        //   `hy_forum_test_m4`，而 M1/M3 一条都没红（它们走正常配置）—— 那组数字就是指纹。
+        //
+        // 现在的规则一句话：**`hy.test.db` 说是哪个库，就连哪个库**（唯一事实来源）：
+        //   · 不传 `hy.test.db` → 本属性是**空串，等于不覆盖** → 完全交给配置
+        //     （`application-test.yml` 的字面 `hy_forum_test`，或 CI 注入的 SPRING_DATASOURCE_URL）；
+        //   · 传了 → 覆盖成**同一个库**的 url，于是"两条流水线各一库"这条路可用。
+        //
+        // 为什么 url 要推导、而不是让命令行传 JDBC URL：在本机 PowerShell 5.1 下，
+        // URL 里的 `&` 会被交给 cmd.exe 当命令分隔符，**实测两次让 mvn 收不到 `test` 目标**
+        // （`No goals have been specified`）。推导出来之后命令行只需要
+        // `-Dhy.test.db=hy_forum_test_m4` 这一个无特殊字符的参数。
         // 与 M3 测试保持一致：主配置里 OSS 有本机默认值，这里显式写死，
         // 断言才有意义（改了 yml 默认值也要让相关用例立刻红）
         "aliyun.oss.endpoint=oss-cn-beijing.aliyuncs.com",
@@ -73,12 +79,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
 
     /**
-     * 本任务独占的测试库名。
+     * 本次运行<b>期望</b>连的测试库名 —— 在 {@code @BeforeEach} 里从**当前生效的
+     * {@code spring.datasource.url}** 解析出来，因此它<b>永远等于真正连上的那个库名</b>。
      *
-     * <p>它与 {@code TestTableCleaner.isAcceptableTestDatabase()} 的"以 hy_forum_test 开头"
-     * 规则相容，而那一条规则的作用（拒绝开发库 {@code hy_forum}）没有被削弱。</p>
+     * <p><b>为什么不再写死 {@code hy_forum_test_m4}</b>（这是 CI 变绿的关键）：
+     * 写死的那一版让 CI 里 M4 的测试恒定去连一个 CI 中不存在的库 →
+     * 28 个 {@code CannotGetJdbcConnection}，而 M1/M3 全绿（它们走正常配置）。
+     * 详见类上 {@code @TestPropertySource} 的注释。</p>
+     *
+     * <p><b>为什么从 url 解析而不是读 {@code hy.test.db}</b>：这样"期望值"与"实际连接的库"
+     * 只有一个来源，**结构上不可能不一致**。若改成读系统属性，就会在
+     * "只传了 {@code -Dhy.test.db} 但没传 url" 时出现"url 指着 A 库、清表工具去清 B 库"
+     * 那种最坏组合（独占库的残留永远清不掉，而共享库被别人清空）。
+     * 非 {@code m4} 后缀的库名（CI 的 {@code hy_forum_test}）同样被 {@code TestTableCleaner}
+     * 的"以 hy_forum_test 开头"规则接受，因此这条路对 CI 是通的。</p>
      */
-    protected static final String M4_TEST_DATABASE = "hy_forum_test_m4";
+    protected String expectedTestDatabase;
+
+    /**
+     * 解析 {@code spring.datasource.url} 里的库名（只取到 {@code ?} 之前）。
+     *
+     * <p>取不到就返回 {@code null}，由调用方给出明确的失败信息而不是猜一个。</p>
+     */
+    private static String databaseNameOf(String jdbcUrl) {
+        if (jdbcUrl == null || jdbcUrl.isBlank()) {
+            return null;
+        }
+        int query = jdbcUrl.indexOf('?');
+        String head = query >= 0 ? jdbcUrl.substring(0, query) : jdbcUrl;
+        int slash = head.lastIndexOf('/');
+        if (slash < 0 || slash == head.length() - 1) {
+            return null;
+        }
+        return head.substring(slash + 1);
+    }
 
     /** 测试口令：满足契约的"8–32 位且含字母与数字"。 */
     protected static final String TEST_PASSWORD = "Passw0rd123";
@@ -104,7 +138,7 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         //   实测症状：用户名唯一键没被清 → 残留用户与新建用户混在一起 → 登录返回 1002，
         //   看起来像"密码校验坏了"。这类"看着像业务 bug 的基础设施 bug"必须靠
         //   单一事实来源（本常量）堵掉，而不是靠记得多传一个 -D 参数。
-        tableCleaner = new com.hyforum.support.TestTableCleaner(jdbcTemplate, M4_TEST_DATABASE);
+        tableCleaner = new com.hyforum.support.TestTableCleaner(jdbcTemplate, EXPECTED_TEST_DATABASE);
         assertConnectedToM4Database();
 
         // ─────────────────────────────────────────────────────────────
@@ -184,7 +218,7 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
     }
 
     /**
-     * 防线：本次运行必须真的连在 {@value #M4_TEST_DATABASE} 上。
+     * 防线：本次运行必须真的连在 {@value #EXPECTED_TEST_DATABASE} 上。
      *
      * <p><b>为什么这条断言不可省</b>（它是这一轮最有价值的产出）：
      * {@code application-test.yml} 里的 {@code ${TEST_DB:hy_forum_test}} 在<b>构建期</b>
@@ -194,15 +228,46 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
      * 实际是别人写进来的行。**假红比慢更危险**（任务书 §4 的原话），
      * 所以这里必须有一条会当场喊出来的断言，而不是继续依赖"我记得设了环境变量"。</p>
      */
+    /**
+     * 只在**显式指定** {@code -Dhy.test.db=<库名>} 时才覆盖数据源。
+     *
+     * <p>未指定 → **不注册任何属性** → 完全交给配置
+     * （{@code application-test.yml} 的字面 {@code hy_forum_test}，或 CI 注入的
+     * {@code SPRING_DATASOURCE_URL}）—— 这正是 CI 能跑通的前提。</p>
+     *
+     * <p><b>为什么不能用 {@code @TestPropertySource} 做这件事</b>：注解里的值必须是
+     * <b>编译期常量</b>，而"库名从系统属性推导"是运行期的。第一版正是用注解 + **硬编码库名**，
+     * 于是 {@code @TestPropertySource} 的优先级压过了 CI 的 {@code SPRING_DATASOURCE_URL}，
+     * CI 里恒定去连一个**不存在的库**（28 个 {@code CannotGetJdbcConnection}）。</p>
+     */
+    @org.springframework.test.context.DynamicPropertySource
+    static void datasourceOverrideForParallelRun(
+            org.springframework.test.context.DynamicPropertyRegistry registry) {
+        String db = System.getProperty("hy.test.db");
+        if (db != null && !db.isBlank()) {
+            registry.add("spring.datasource.url", () -> "jdbc:mysql://127.0.0.1:3306/" + db
+                    + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+                    + "&useSSL=false&allowPublicKeyRetrieval=true");
+        }
+    }
+
+    /**
+     * 本次运行**期望**的库名 —— 唯一事实来源。
+     *
+     * <p>显式指定 {@code hy.test.db} 则用它，否则用默认测试库。**它必须与数据源来自同一处**，
+     * 否则会出现最坏组合："url 指着 A 库、清表工具却去清 B 库"。</p>
+     */
+    protected static final String EXPECTED_TEST_DATABASE =
+            System.getProperty("hy.test.db", "hy_forum_test");
+
     private void assertConnectedToM4Database() {
         String current = tableCleaner.currentDatabase();
         assertThat(current)
-                .as("M4 的用例只允许跑在独占库 %s 上，当前连的是 [%s]。"
-                        + "若这里是 hy_forum_test，说明 spring.datasource.url 被 application-test.yml"
-                        + "的 ${TEST_DB:...} 默认值覆盖了 —— 而那个占位符在构建期就被资源过滤解析掉了，"
-                        + "运行期设 TEST_DB 无效。修法：在本类（M4ApiTestSupport）的 @TestPropertySource 里"
-                        + "显式写 spring.datasource.url（已写），不要靠环境变量。", M4_TEST_DATABASE, current)
-                .isEqualTo(M4_TEST_DATABASE);
+                .as("本次运行期望连库 [%s]，实际连的是 [%s]。"
+                        + "两者不一致说明数据源被别处覆盖了 —— 库名只有一个事实来源："
+                        + "系统属性 hy.test.db（不传则默认 hy_forum_test），见本类的 @DynamicPropertySource。",
+                        EXPECTED_TEST_DATABASE, current)
+                .isEqualTo(EXPECTED_TEST_DATABASE);
     }
 
     /**

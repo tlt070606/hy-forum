@@ -64,16 +64,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @PropertyDefaults(tries = 20)
 @TestPropertySource(properties = {
-        // ★ 独占测试库：必须显式写 url，理由与 M4ApiTestSupport 完全相同 ——
-        //   application-test.yml 里的 ${TEST_DB:hy_forum_test} 在**构建期**就被
-        //   Maven 资源过滤解析成了默认值，运行期设 TEST_DB 无效。
-        //   不写这一行，本类自己起的容器会连到共享库 hy_forum_test（实测报错原文：
-        //   "拒绝执行：当前连接的是库 [hy_forum_test]，而测试只允许连 [hy_forum_test_m4]" ——
-        //   那是 TestTableCleaner 的防线在拦，拦得对）。
-        "spring.datasource.url=jdbc:mysql://127.0.0.1:3306/hy_forum_test_m4"
-                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
-                + "&useSSL=false&allowPublicKeyRetrieval=true",
-        // 浏览量回写周期压到 1 秒（本类不测浏览量，但与其它 M4 用例保持同一份配置）
+        // ⚠️ 这里**刻意不覆盖 `spring.datasource.url`**（曾经覆盖过，导致 CI 恒连不存在的库，
+        //    28 个 CannotGetJdbcConnection）。理由与 M4ApiTestSupport 的类注释完全相同：
+        //    让配置决定连哪个库，测试代码不碰数据源；要独占库就用命令行
+        //    `-Dhy.test.db=<库> -Dspring.datasource.url=...<库>...` 显式指定。
+        //
+        // 浏览量回写周期压到 1 秒（与其它 M4 用例同一份配置；本类不测浏览量）
         "hy.post.view-flush-interval-ms=1000",
         "aliyun.oss.endpoint=oss-cn-beijing.aliyuncs.com",
         "aliyun.oss.bucket-name=hy-forum-2026",
@@ -102,7 +98,19 @@ class M4InteractionPropertyTest extends IntegrationTestBase {
      * 两者是并列的两个基类形态。库名写在两处是**有代价**的（第二份事实来源），
      * 但比"属性测试悄悄跑在共享库上"要小得多 —— 已登记为可收敛项。</p>
      */
-    private static final String M4_DATABASE = "hy_forum_test_m4";
+    /**
+     * 本次运行期望连的测试库名 —— 唯一来源是系统属性 {@code hy.test.db}
+     * （与 {@code TestTableCleaner} 相同的解析规则），缺省 {@code hy_forum_test}。
+     *
+     * <p><b>不再写死库名</b>：写死那版让 CI 恒连一个不存在的库（见类上
+     * {@code @TestPropertySource} 的注释）。</p>
+     */
+    private static final String M4_DATABASE = resolveExpectedDatabase();
+
+    private static String resolveExpectedDatabase() {
+        String configured = System.getProperty("hy.test.db");
+        return (configured == null || configured.isBlank()) ? "hy_forum_test" : configured;
+    }
 
     private static final String[] M4_TABLES = {"comment_like", "comment", "post_like", "post_collect",
             "follow", "post_image", "post", "board", "user"};
@@ -150,14 +158,12 @@ class M4InteractionPropertyTest extends IntegrationTestBase {
     @net.jqwik.api.lifecycle.BeforeContainer
     static void bootSpringContextOnce() {
         // 用同一个 profile 起容器，保证库地址/Redis/占位配置与其它 M4 用例一致
-        // ⚠️ 用 **System.setProperty** 而不是 SpringApplicationBuilder.properties(...)：
-        //    实测前者才真正压得住 application-test.yml 里那行（已被 Maven 资源过滤成
-        //    "写死的 hy_forum_test"）—— 后者在这个场景下依然连到了共享库。
-        //    系统属性在 Spring 的 PropertySource 优先级里高于配置文件，属于最强的一档。
-        final String jdbcUrl = "jdbc:mysql://127.0.0.1:3306/" + M4_DATABASE
-                + "?useUnicode=true&characterEncoding=utf8"
-                + "&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true";
-        System.setProperty("spring.datasource.url", jdbcUrl);
+        // ⚠️ 这里**不再** System.setProperty("spring.datasource.url", ...) 覆盖数据源：
+        //    那会让本类恒连写死的库（CI 里不存在 → 28 个 CannotGetJdbcConnection）。
+        //    现在容器完全按配置连库，与其它测试类一致；
+        //    要独占库就由命令行 -Dhy.test.db / -Dspring.datasource.url 决定。
+        //    （`@TestPropertySource` 对本类无效 —— 容器是手动 build 的，
+        //      所以上面那段注解不会覆盖任何东西，只作为与其它 M4 用例共享的配置声明。）
         org.springframework.context.ApplicationContext ctx =
                 new org.springframework.boot.builder.SpringApplicationBuilder(
                         com.hyforum.HyForumApplication.class)
