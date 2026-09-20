@@ -297,6 +297,19 @@ class M4LikeCollectIdempotencyTest extends M4ApiTestSupport {
         TestUser second = createUser("访客二");
         List<TestUser> users = List.of(visitor, second);
 
+        // ★ 先用**确定性**的操作建立至少一组关系行（点赞 + 关注），再跑随机序列。
+        //
+        //   为什么必须这样（这是本用例自己的一处缺陷，实测红过一次）：
+        //   随机序列是**无种子**的（ThreadLocalRandom），6 种操作里恰好有 3 种是"取消/取关"，
+        //   两条帖子 × 两个用户 × 8 轮下来，整段序列把**所有**关系行净消掉是正常概率事件
+        //   （约 1/6）。而本用例末尾有一条"反向自证"断言 —— 要求整轮确实落下过关系行，
+        //   否则"计数 == 行数"在**全为 0** 时也成立、用例等于什么都没测。
+        //   两者一叠加：**约 1/6 的概率让这条用例无辜变红**。
+        //   这正是我在本任务里反复强调的那类问题 —— 一条靠运气才能绿的用例不是证据。
+        //   建立确定性基线之后：随机部分仍然照跑（覆盖交错），而"测到了东西"变成必然。
+        assertOk(likePost(visitor.token(), postId));
+        assertOk(followUser(visitor.token(), author.id()));
+
         // 每个用户对每条帖子随机做 8 轮操作（点赞/取消/收藏/取消 + 关注/取关）
         for (int round = 0; round < 8; round++) {
             for (long pid : List.of(postId)) {
