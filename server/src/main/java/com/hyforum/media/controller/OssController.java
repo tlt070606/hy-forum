@@ -3,6 +3,8 @@ package com.hyforum.media.controller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyforum.common.api.ApiResponse;
+import org.springframework.web.bind.annotation.RequestParam;
+import com.hyforum.common.security.CurrentUser;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.exception.BizException;
 import com.hyforum.common.security.AllowAnonymous;
@@ -77,12 +79,45 @@ public class OssController {
      *
      * <p>刻意不加 {@code @AllowAnonymous}：签名的滥用面是"匿名刷签名 + 刷 OSS 流量"，
      * 而它本身只对已登录用户有意义（发帖需要登录）。</p>
+     *
+     * <p><b>{@code target=avatar}（§14）</b>：签出来的 {@code dir} 是
+     * {@code avatar/{当前用户 id}/} —— <b>用户 id 取自登录态，不接受请求参数</b>。
+     * 若让调用方传 {@code userId}，用户 A 就能拿到"往 B 的目录里写"的签名，
+     * 于是"你只能用自己目录下的对象"这条校验的前提（目录归属）当场失效。
+     * 前端不需要传 userId：它照填响应里的 {@code dir} 即可（§14.2 ① 说的"对前端零成本"）。</p>
      */
     @GetMapping("/signature")
     @Operation(summary = "获取 OSS 直传签名",
-            description = "返回 {host, policy, signature, dir, expire, callback}；需登录；policy 限定目录 post/、单图 ≤5MB、仅 image/*")
-    public ApiResponse<OssSignatureVO> signature(HttpServletRequest request) {
-        return ApiResponse.ok(signatureService.issueSignature(request));
+            description = "返回 {host, policy, signature, dir, expire, callback}；需登录。"
+                    + "target=post（默认）→ dir=post/；target=avatar → dir=avatar/{当前用户id}/"
+                    + "（用户 id 取自登录态，不接受参数）。policy 限定目录、单图 ≤5MB、仅 image/*")
+    public ApiResponse<OssSignatureVO> signature(HttpServletRequest request,
+                                                 @RequestParam(required = false, defaultValue = "post")
+                                                 String target) {
+        OssSignatureService.SignatureTarget signatureTarget = parseTarget(target);
+        // 头像是"往自己的目录写"，因此必须带当前登录用户 id —— 这是唯一的 userId 来源
+        Long userId = signatureTarget == OssSignatureService.SignatureTarget.AVATAR
+                ? CurrentUser.requireId()
+                : null;
+        return ApiResponse.ok(signatureService.issueSignature(request, signatureTarget, userId));
+    }
+
+    /**
+     * 解析 {@code target} 取值：只认 {@code post} 与 {@code avatar}。
+     *
+     * <p>非法取值 → 400，<b>不静默回落到 post</b>：回落会让"前端拼错参数"表现为
+     * "头像传到了帖子目录"，而两种目录的校验口径不同 —— 那样传上去的对象
+     * <b>永远无法通过头像归属校验</b>，表现为"上传成功但头像设不上"，且日志无错。</p>
+     */
+    private static OssSignatureService.SignatureTarget parseTarget(String target) {
+        if (target == null || target.isBlank() || "post".equalsIgnoreCase(target.trim())) {
+            return OssSignatureService.SignatureTarget.POST_IMAGE;
+        }
+        if ("avatar".equalsIgnoreCase(target.trim())) {
+            return OssSignatureService.SignatureTarget.AVATAR;
+        }
+        throw new BizException(ErrorCode.BAD_REQUEST,
+                "target 只支持 post / avatar，收到：" + target);
     }
 
     /**

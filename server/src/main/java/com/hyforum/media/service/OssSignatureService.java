@@ -77,12 +77,30 @@ public class OssSignatureService {
     }
 
     /**
-     * 签发一次直传签名。
+     * 签发一次直传签名（<b>帖子图片</b>，即历史上的默认行为）。
      *
      * @param request 当前 HTTP 请求（仅用于在未显式配置回调地址时推导公网回调地址）
      * @throws IllegalStateException OSS 未配置（前缀为空）—— fail-closed，不给出一份"看起来能用"的签名
      */
     public OssSignatureVO issueSignature(HttpServletRequest request) {
+        return issueSignature(request, SignatureTarget.POST_IMAGE, null);
+    }
+
+    /**
+     * 签发一次直传签名（§6.8 + §14 头像）。
+     *
+     * <p><b>{@code dir} 全部从 {@link OssProperties} 取，本方法里没有任何目录字面量</b>：
+     * 帖子图走 {@code imageUrlPrefix()}、头像走 {@code userAvatarUrlPrefix(userId)}，
+     * 两者都是"公网前缀 + 目录"的同一形状，因此 {@code dir = 前缀去头} 这一步可以共用。
+     * 这正是 §14.2 ② 要的"同一事实一处映射"：签名下发的 {@code dir}
+     * 与后端校验用的前缀**在构造上不可能不一致**。</p>
+     *
+     * @param target 签名用途（决定目录）
+     * @param userId 头像签名时的用户 id；帖子图为 {@code null}
+     */
+    public OssSignatureVO issueSignature(HttpServletRequest request,
+                                         SignatureTarget target,
+                                         Long userId) {
         String publicPrefix = ossProperties.publicUrlPrefix();
         if (publicPrefix.isEmpty()) {
             // 与 post 侧的 fail-closed 同一口径：配置不全时不发签名，
@@ -91,9 +109,17 @@ public class OssSignatureService {
                     "OSS 未配置（endpoint / bucket 为空），无法签发直传签名；请检查 OSS_ENDPOINT 与 OSS_BUCKET");
         }
         String host = stripTrailingSlash(publicPrefix);
-        // dir 由 imageUrlPrefix 反推，**不重复实现一遍归一化**：
-        // 这样"签名的目录"与"post 侧校验的前缀"在构造上就不可能不一致（裁决 ① 的用意）
-        String dir = ossProperties.imageUrlPrefix().substring(publicPrefix.length());
+        // dir 由"允许前缀"反推，**不重复实现一遍归一化**：
+        // 这样"签名的目录"与"后端校验的前缀"在构造上就不可能不一致（裁决 ① 的用意）
+        String allowedPrefix = target == SignatureTarget.AVATAR
+                ? ossProperties.userAvatarUrlPrefix(requireUserId(target, userId))
+                : ossProperties.imageUrlPrefix();
+        if (allowedPrefix.isEmpty() || !allowedPrefix.startsWith(publicPrefix)) {
+            // 前缀异常（理论上不会发生：两个方法都从同一个 publicUrlPrefix 拼）——
+            // 宁可拒绝发签名，也不要发一份目录与校验前缀不一致的签名
+            throw new IllegalStateException("OSS 允许前缀异常，拒绝签发签名：" + allowedPrefix);
+        }
+        String dir = allowedPrefix.substring(publicPrefix.length());
 
         Instant expiration = Instant.now().plus(uploadProperties.signatureTtl());
         String policy = encodeBase64(policyJson(expiration, dir));
@@ -111,6 +137,30 @@ public class OssSignatureService {
                 // 这里刻意不写任何兜底/默认值：缺失时应用根本起不来（fail-fast），
                 // 而不是发一份"看起来能用、传上去必失败"的签名。
                 credentials.accessKeyId());
+    }
+
+    /**
+     * 签名用途：决定目录（§14.2 ② 的"一处映射"）。
+     *
+     * <p>用枚举而不是裸字符串：{@code type=avatar} 这种字符串会在两个地方各拼一次
+     * （controller 判一次、service 再判一次），而枚举把取值收在一处。</p>
+     */
+    public enum SignatureTarget {
+
+        /** 帖子图片：目录 {@code post/}（{@code OssProperties.imageDir()}）。 */
+        POST_IMAGE,
+
+        /** 用户头像：目录 {@code avatar/{userId}/}（§14.2 ①）。 */
+        AVATAR
+    }
+
+    private static long requireUserId(SignatureTarget target, Long userId) {
+        if (target == SignatureTarget.AVATAR && (userId == null || userId <= 0)) {
+            // 头像是**按用户分目录**的，没有 userId 就不知道签哪个目录 ——
+            // 退化成扁平 avatar/ 会让"你只能用自己目录下的对象"这条校验失去依据
+            throw new IllegalStateException("签头像目录必须知道用户 id，收到：" + userId);
+        }
+        return userId == null ? 0L : userId;
     }
 
     /** policy JSON：有效期 + 三条约束（见类注释）。 */

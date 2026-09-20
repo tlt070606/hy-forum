@@ -10,6 +10,11 @@ import com.hyforum.interaction.service.InteractionService;
 import com.hyforum.interaction.vo.CollectionItemVO;
 import com.hyforum.interaction.vo.FeedItemVO;
 import com.hyforum.user.service.UserService;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PutMapping;
+import jakarta.validation.Valid;
+import com.hyforum.user.service.ProfileService;
+import com.hyforum.user.dto.ProfileUpdateRequest;
 import com.hyforum.user.vo.UserCommentVO;
 import com.hyforum.user.vo.UserProfileVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -68,16 +73,48 @@ public class UserProfileController {
 
     private final UserService userService;
     private final InteractionService interactionService;
+    private final ProfileService profileService;
 
     /** CR-K / CR-L：个人主页的帖子卡片也要有 liked/collected/imageThumbs（与首页、版块列表同一口径）。 */
     private final CardViewerStateEnricher enricher;
 
     public UserProfileController(UserService userService,
                                  InteractionService interactionService,
-                                 CardViewerStateEnricher enricher) {
+                                 CardViewerStateEnricher enricher,
+                                 ProfileService profileService) {
         this.userService = userService;
         this.interactionService = interactionService;
         this.enricher = enricher;
+        this.profileService = profileService;
+    }
+
+    /**
+     * 修改自己的资料（任务书 §14：昵称 / 头像 / 简介 / 性别）。
+     *
+     * <p><b>PUT = 覆盖，省略即清空</b>：{@code avatarUrl}/{@code bio} 不传就是清空。
+     * 这是 PUT 的标准语义，也让"清空头像"不需要额外的 DELETE 端点。</p>
+     *
+     * <p><b>只能改自己，而且请求体里没有 userId</b>：改的是
+     * {@code CurrentUser.requireId()} 指向的那个人，不接收任何"改谁"的参数 ——
+     * 没有这个参数，就不存在"忘了校验越权"这种失误。
+     * 想改别人需要的是另一个端点（后台），不是给这个端点加参数。</p>
+     *
+     * <p><b>请求体里出现 {@code username}/{@code password}/{@code role}/{@code id} 等 → 400</b>，
+     * <b>不是静默忽略</b>（§14.3）：静默忽略会让客户端以为"用户名/密码改成功了"，
+     * 而那正是本项目反复吃过的"界面在说谎"。实现方式是把
+     * {@code ProfileUpdateRequest} 声明成"未知字段即拒绝"
+     * （白名单比逐个黑名单可靠 —— {@code user} 表有 20 列，穷举会漏）。</p>
+     *
+     * <p>不加 {@code @AllowAnonymous}/{@code @OptionalLogin}：本端点语义上必须登录
+     * （未登录没有"自己的资料"可改），走拦截器 → {@code requireId()} 是唯一正确的形态。</p>
+     */
+    @PutMapping("/api/user/profile")
+    @Operation(summary = "修改自己的资料",
+            description = "PUT=覆盖（省略即清空）；只接受 nickname/avatarUrl/bio/gender，"
+                    + "出现 username/password/role/id 等字段返回 400（不是静默忽略）；"
+                    + "avatarUrl 必须在本项目 OSS 的 avatar/{自己id}/ 目录下")
+    public ApiResponse<UserProfileVO> updateProfile(@Valid @RequestBody ProfileUpdateRequest request) {
+        return ApiResponse.ok(profileService.updateProfile(CurrentUser.requireId(), request));
     }
 
     /**
