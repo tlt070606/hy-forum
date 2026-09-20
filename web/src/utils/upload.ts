@@ -232,14 +232,41 @@ function parseUploadBody(raw: unknown, statusCode: number): UploadedImage {
    */
   const privateCallbackRejected = /Private address is forbidden to callback/i.test(bodyText)
 
+  /*
+   * ⚠️ 第二种必须单独认出来的情况：**OSS 因为目录级权限拒绝**（本机真实撞到）。
+   *
+   * 现象：403 `AccessDenied`，且响应体里带
+   *   `<NoPermissionType>ImplicitDeny</NoPermissionType>`
+   *   `<AuthAction>oss:PutObject</AuthAction>`
+   *   `<AuthPrincipalType>SubUser</AuthPrincipalType>`
+   * 含义：**服务端那个 OSS 账号（RAM 子账号）的授权里没有这个目录前缀的 PutObject 权限**。
+   * 实测就是 `post/*` 能传、`avatar/*` 被拒 —— 权限是按前缀授予的。
+   *
+   * ⚠️ 为什么必须单独一档：这一档**跟签名、跟文件类型、跟前端全都无关**。
+   *    我第一版把它笼统写成"可能是签名已过期或文件类型不符"，
+   *    而需求方截回来的弹窗正好是这句 —— 它会把排查方向带偏到前端/用户身上，
+   *    真相在后端的 OSS 授权配置里。**错误文案的价值在于指向真原因，不在于措辞客气。**
+   */
+  const permissionDenied = /ImplicitDeny|bucket acl|oss:PutObject/i.test(bodyText)
+  /** OSS 的错误描述（取出来只用于判断，不整段展示给用户） */
+  const ossMessage = /<Message>([^<]+)<\/Message>/.exec(bodyText)?.[1] ?? ''
+
   let message = '上传失败，请稍后重试'
   if (privateCallbackRejected) {
     message =
       '上传失败：后端未配置公网回调地址，OSS 拒绝回调到 127.0.0.1。' +
       '这是服务端配置问题（后端需带 OSS_CALLBACK_URL 启动，指向公网入口），请联系管理员'
+  } else if (permissionDenied) {
+    message =
+      '上传被 OSS 拒绝：这个目录没有写权限（服务端的 OSS 账号缺少该目录的 PutObject 权限），请联系管理员'
   } else if (statusCode === 403 || ossCode === 'AccessDenied' || ossCode === 'SignatureDoesNotMatch') {
-    // 403 常见于：policy/signature 不一致、key 前缀不符合 policy、Content-Type 不满足条件、签名过期
-    message = '上传被 OSS 拒绝（可能是签名已过期或文件类型不符），请刷新后重试'
+    /*
+     * 剩下的 403：policy/signature 不一致、key 前缀超出 policy 允许范围、Content-Type 不满足条件、签名过期。
+     * **把错误码带出去**（`AccessDenied` / `SignatureDoesNotMatch`），
+     * 因为这两者对排查是不同方向的信息；但**不整段贴 OSS 原文**（可能很长）。原文留在控制台。
+     */
+    message = `上传被 OSS 拒绝（${ossCode || String(statusCode)}）：可能是签名过期、文件类型不符，或 key 前缀超出 policy 允许范围`
+    if (ossMessage) console.warn('[upload] OSS Message =', ossMessage)
   } else if (ossCode === 'EntityTooLarge') {
     message = `图片不能超过 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB`
   } else if (ossCode) {
