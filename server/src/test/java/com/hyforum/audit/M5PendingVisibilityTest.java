@@ -40,6 +40,16 @@ class M5PendingVisibilityTest extends M4ApiTestSupport {
     /** 只在本测试类里注入的词 —— 与真实词库无关（见类注释）。 */
     private static final String SENSITIVE_WORD = "M5测试敏感词";
 
+    /**
+     * 本项目 OSS 图片前缀（与 M3 测试基类里的同名常量一致）。
+     *
+     * <p>图片 URL 必须落在项目自己的 OSS 目录下 —— 详情接口对 {url,thumbUrl} 做读时签名，
+     * 而"是不是本站资源"由前缀决定。这里直接写死成与 {@code @TestPropertySource} 里
+     * {@code aliyun.oss.endpoint/bucket-name/image-dir} 拼出来的一致值。</p>
+     */
+    private static final String OSS_IMAGE_PREFIX =
+            "https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/post/";
+
     @Autowired
     private InMemorySensitiveTextChecker sensitiveTextChecker;
 
@@ -231,5 +241,103 @@ class M5PendingVisibilityTest extends M4ApiTestSupport {
         assertOk(response);
         List<Integer> ids = response.jsonPath().getList("data.list.id");
         return ids == null ? List.of() : ids;
+    }
+
+    // ==================================================================
+    // §6 第 12 条：图片的 audit_status 语义 + CR-006 回归守卫
+    // ==================================================================
+
+    /**
+     * ★ <b>这条用例的真正目的不是"验 0 被写对"，而是"防有人把可见性规则改成必须为 1"。</b>
+     *
+     * <p>为什么它必须独立存在（L1 的裁决，2026-09-20）：那种"修法"会让
+     * <b>所有带图帖对用户不可见</b>，而这正是 CR-006 当年被提出来要防的缺陷
+     * （它会让 M3 的验收——"带图资源帖在详情页能正确展示"——无法达成）。
+     * 因此"<b>{@code 0} 仍可见</b>"这条断言的价值是：
+     * <b>那一天有人来改这条规则时，红灯先亮。</b></p>
+     *
+     * <p>三条断言（按 L1 给的要点）：① 落库后 {@code audit_status = 0}
+     * （0 = <b>尚未被人工判定</b>，不是"待审不可见"）；
+     * ② <b>{@code =0} 的图必须仍然可见</b>（回归守卫）；③ 反证：置 {@code =2} 后必须消失。</p>
+     */
+    @Test
+    @DisplayName("M5_image_audit_pending_on_upload：新图 audit_status=0 且**仍然可见**（CR-006 回归守卫）；置 2 后消失")
+    void M5_image_audit_pending_on_upload() {
+        long postId = createNormalPost(boardId, author.id(), "图片审核语义用例帖");
+        String url = OSS_IMAGE_PREFIX + "m5-audit-guard.jpg";
+
+        // ① 落库形态：新插入的图片行是 audit_status=0（默认值 = 尚未被人工判定）
+        jdbcTemplate.update(
+                "INSERT INTO post_image (post_id, url, thumb_url, sort, audit_status) VALUES (?, ?, ?, 0, 0)",
+                postId, url, url);
+        assertThat(imageAuditStatus(postId, url))
+                .as("新图必须是 audit_status=0（CR-006：0 = 尚未被人工判定，是默认值）").isZero();
+
+        // ② ★ 回归守卫：=0 的图**必须仍然可见** —— 有人把规则改成"必须 =1 才显示"，这里立刻红
+        assertThat(visibleImageUrls(postId))
+                .as("**audit_status=0 的图片必须仍然对前台可见** —— "
+                        + "'默认 0'不等于'必须人工放行才可见'（CR-006）。"
+                        + "把 0 也隐藏会让**所有带图帖对用户不可见**，"
+                        + "而那正是 CR-006 提出来要防的缺陷。"
+                        + "这条断言的作用是「哪天有人改这条规则时，红灯先亮」")
+                .contains(bareUrl(url));
+
+        // ③ 反证："隐藏 2"必须真的生效 —— 否则上面的"可见"可能只是因为接口根本没做任何过滤
+        jdbcTemplate.update("UPDATE post_image SET audit_status = 2 WHERE post_id = ? AND url = ?",
+                postId, url);
+        assertThat(visibleImageUrls(postId))
+                .as("audit_status=2 的图片**必须**从详情里消失（CR-006：隐藏 2）—— "
+                        + "这条是反证：证明过滤真的存在，而不是'什么都没过滤'")
+                .doesNotContain(bareUrl(url));
+
+        // ④ 再反证一层：置回 1（已人工确认通过）也必须可见
+        jdbcTemplate.update("UPDATE post_image SET audit_status = 1 WHERE post_id = ? AND url = ?",
+                postId, url);
+        assertThat(visibleImageUrls(postId))
+                .as("审核通过(1)的图片必须可见").contains(bareUrl(url));
+    }
+
+    private int imageAuditStatus(long postId, String url) {
+        Integer status = jdbcTemplate.queryForObject(
+                "SELECT audit_status FROM post_image WHERE post_id = ? AND url = ?",
+                Integer.class, postId, url);
+        return status == null ? -1 : status;
+    }
+
+    /**
+     * 详情接口返回的图片 URL 的 <b>base（对象地址）</b> 列表（**走前台接口**，不是直接查库）。
+     *
+     * <p>必须走接口：本用例要证明的正是"<b>前台看不到</b>"这件事，
+     * 直接查库只能证明"库里有什么"，证明不了可见性规则。</p>
+     *
+     * <p><b>为什么要把 URL 归一到 base 再比</b>（这是我第一版写错、被自己的用例抓住的地方）：
+     * 库里存的是<b>裸 URL</b>，而对外返回的图片 URL 是**读时签名**过的（技术方案 §12）——
+     * 带 {@code Expires}/{@code Signature} 之类的 query。
+     * 拿"库里的裸 URL"直接 {@code contains} 一定不匹配，用例会红，
+     * 而红的原因与被测行为（可见性规则）**毫无关系** —— 那是最容易误判成"真 bug"的一类假红。
+     * 这正是 §12.3 登记的"坑 2"，M3 那条同口径断言也是先转 base 再比。</p>
+     */
+    private List<String> visibleImageUrls(long postId) {
+        Response detail = getPostDetail(null, postId);
+        assertOk(detail);
+        List<String> urls = detail.jsonPath().getList("data.images.url");
+        if (urls == null) {
+            return List.of();
+        }
+        return urls.stream().map(M5PendingVisibilityTest::bareUrl).toList();
+    }
+
+    /**
+     * 去掉 URL 的 query 部分，得到对象地址（base）。
+     *
+     * <p>缩略图参数 {@code x-oss-process=...} 也在 query 里，因此一并去掉：
+     * 本用例关心"哪个对象可见"，不是"以什么参数取"。</p>
+     */
+    private static String bareUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        int query = url.indexOf(63);   // 63 = 问号字符，避免字面量在工具链里被转义
+        return query >= 0 ? url.substring(0, query) : url;
     }
 }
