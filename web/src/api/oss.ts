@@ -21,9 +21,18 @@ import type { OssSignatureVO } from './types'
  *
  * 返回值里 `accessKeyId` 是**请求时临时收到的标识**，不是配置项 ——
  * **不要把它写进 `.env` 或任何常量**（任务书 §3.2）。
+ *
+ * @param target 上传场景。契约（`GET /api/oss/signature?target=`）：
+ *   - `'post'`（默认）→ `dir = post/`
+ *   - `'avatar'` → `dir = avatar/{当前用户id}/`
+ *
+ *   ⚠️ **头像必须走 `'avatar'`**：`PUT /api/user/profile` 明确要求
+ *   「`avatarUrl` 必须在本项目 OSS 的 `avatar/{自己id}/` 目录下」，
+ *   用 `post/` 传上去的头像地址会被后端拒掉（400）。
+ *   用户 id 由**后端从登录态取**，不接受参数 —— 前端也**不该**自己拼这个目录。
  */
-export async function fetchSignature(): Promise<OssSignatureVO> {
-  const data = await get<unknown>(ENDPOINTS.ossSignature.path, undefined, {
+export async function fetchSignature(target: 'post' | 'avatar' = 'post'): Promise<OssSignatureVO> {
+  const data = await get<unknown>(ENDPOINTS.ossSignature.path, { target }, {
     withAuth: true,
     // 401 说明确实没登录/登录态失效 → 清本地态并让页面跳登录
     clearAuthOn401: true,

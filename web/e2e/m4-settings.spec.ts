@@ -124,9 +124,19 @@ test('个人资料页：统计另起一行（粉丝/获赞/收藏），改不了
    */
   await expect(page.getByTestId('me-stat-collect')).toContainText('0', { timeout: 15_000 })
 
-  // 「不能改」必须写出来，而不是放个点了不生效的按钮
-  await expect(page.getByTestId('me-avatar-hint')).toContainText('待后端接口')
-  await expect(page.getByTestId('me-bio-note')).toContainText('契约里目前没有')
+  /*
+   * ⚠️ 这一段是**改了功能之后同步过来的**：
+   * 2026-09-20 L1 交付 `PUT /api/user/profile` 后，头像与简介**都能改了** ——
+   * 原来那三条"待后端接口"的断言随之过期：
+   * - 头像从"待后端接口"变成**可点**（`me-avatar-hint` 现在是引导语）；
+   * - 简介从"只读 + 提示"变成**可编辑**（`me-bio-note` 这个 testid 已不存在）。
+   * 改不了的东西只剩"改密码"（契约的 PUT 只接受 nickname/avatarUrl/bio/gender）。
+   * 功能自己的断言在 `m5-profile-edit.spec.ts` 里（改简介能不能真的存下去）。
+   */
+  await expect(page.getByTestId('me-avatar')).toBeVisible()
+  await expect(page.getByTestId('me-bio-input')).toBeVisible()
+  await expect(page.getByTestId('me-bio-save')).toBeVisible()
+  // 改密码仍然没有接口 → 必须写明，而不是放个假表单
   await expect(page.getByTestId('me-password-note')).toContainText('待交付')
 })
 

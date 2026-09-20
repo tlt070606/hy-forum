@@ -171,6 +171,8 @@ export const ENDPOINTS = {
   userFollows: { methods: ['GET'], path: '/api/users/{id}/follows', status: 'ready' },
   /** 某人的粉丝 */
   userFans: { methods: ['GET'], path: '/api/users/{id}/fans', status: 'ready' },
+  /** 修改自己的资料（**覆盖语义：省略即清空**；只接受 nickname/avatarUrl/bio/gender；需登录） */
+  userProfileUpdate: { methods: ['PUT'], path: '/api/user/profile', status: 'ready' },
   /** 我的收藏（**需登录**） */
   collections: { methods: ['GET'], path: '/api/user/collections', status: 'ready' },
   /** 首页信息流：`type=follow|all`（§8.5 的"双流"） */

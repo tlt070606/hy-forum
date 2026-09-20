@@ -13,7 +13,6 @@
             <text class="btn__text btn__text--ghost">注册</text>
           </view>
         </view>
-        <!-- 注册模式取不到时明确说明，不静默降级（否则用户会以为"注册坏了"） -->
         <text v-if="registerModeError" class="guest__warn" data-testid="me-register-mode-error">
           注册状态获取失败（{{ registerModeError }}），仍可尝试登录
         </text>
@@ -25,15 +24,19 @@
         <view class="card profile" data-testid="me-profile">
           <view class="profile__top">
             <!--
-              ⚠️ **点击更换头像点不动**：契约里**没有任何写接口**
-              （`profile` / `avatar` / `nickname` 全查过：35 个路径里没有任何 PUT/PATCH 到 /api/user/**）。所以这里：
-              - 视觉上与参考图一致（大头像 + 下面一行小字）；
-              - 但那行小字写的是「待后端接口」而**不是**「点击更换」——
-                **不给一个点了不生效的按钮**（需求方 2026-09-18 选定）。
+              **头像可换**（M5 已交付 `PUT /api/user/profile`）。
+              点击 → 选图 → 走 `target=avatar` 的签名（`dir = avatar/{自己id}/`）直传 OSS
+              → 拿到回调返回的 url → PUT 提交。
+              ⚠️ 头像**必须**走 avatar 目录：契约要求 `avatarUrl` 在自己目录下，用 post/ 会被 400。
             -->
-            <view class="profile__avatar">
+            <view class="profile__avatar" data-testid="me-avatar" @click="changeAvatar">
               <Avatar :url="auth.user?.avatarUrl || ''" :nickname="auth.displayName" :size="88" />
-              <text class="profile__avatar-hint" data-testid="me-avatar-hint">头像编辑待后端接口</text>
+              <view v-if="avatarUploading" class="profile__avatar-mask" data-testid="me-avatar-uploading">
+                <text class="profile__avatar-mask-text">上传中</text>
+              </view>
+              <text class="profile__avatar-hint" data-testid="me-avatar-hint">
+                {{ avatarUploading ? '正在上传…' : '点击更换头像' }}
+              </text>
             </view>
 
             <view class="profile__main">
@@ -58,10 +61,9 @@
           <!--
             统计**另起一行**（需求方 2026-09-18 指定：粉丝、点赞、收藏）。
             数据来源逐条写清楚：
-            - 粉丝 / 获赞 → `GET /api/user/me`（`UserVO.fansCount` / `likeReceivedCount`，**已有，不用额外请求**）
-            - 收藏 → 契约里**没有"收藏数"字段**（`UserVO` / `UserProfileVO` 都没有），
-              只能从 `GET /api/user/collections` 的 `total` 拿 → **多一次请求**（只取 size=1，只要 total）
-            "点赞"按**获赞**理解（他收到的赞），这也正是契约里唯一有的那个数。
+            - 粉丝 / 获赞 / 帖子数 → `GET /api/user/me`（**已有，不用额外请求**）
+            - 收藏 → 契约里**没有"收藏数"字段**，只能从 `GET /api/user/collections` 的 `total` 拿
+              → **多一次请求**（只取 size=1，只要 total）
           -->
           <view class="stats">
             <view class="stat" data-testid="me-stat-fans">
@@ -83,20 +85,32 @@
           </view>
         </view>
 
-        <!-- ---------- 个人简介（只读） ---------- -->
+        <!-- ---------- 个人简介（可编辑，M5） ---------- -->
         <view class="card section" data-testid="me-bio-card">
           <text class="section__title">个人简介</text>
           <view class="bio">
-            <text v-if="auth.user?.bio" class="bio__text" data-testid="me-bio">{{ auth.user.bio }}</text>
-            <text v-else class="bio__empty" data-testid="me-bio-empty">还没有填写简介</text>
+            <textarea
+              v-model="bioDraft"
+              class="bio__input"
+              :maxlength="200"
+              placeholder="介绍一下自己吧…"
+              placeholder-class="bio__placeholder"
+              data-testid="me-bio-input"
+            />
           </view>
-          <!--
-            明确标注"不能改"，而不是放一个按下去没反应的保存按钮。
-            依据：契约里没有改资料的接口（`profile` / `nickname` 都没有）。
-          -->
-          <text class="section__note" data-testid="me-bio-note">
-            编辑简介与头像需要后端接口，**契约里目前没有**（已提 CR：PUT /api/user/profile，字段 avatarUrl + bio）→ 接口到位即可用
-          </text>
+          <view class="bio__foot">
+            <text class="bio__counter" data-testid="me-bio-counter">{{ bioDraft.length }}/200</text>
+            <view
+              class="bio__save"
+              :class="{ 'bio__save--disabled': !bioDirty || savingBio }"
+              :data-disabled="!bioDirty || savingBio ? '1' : '0'"
+              data-testid="me-bio-save"
+              @click="saveBio"
+            >
+              <text class="bio__save-text">{{ savingBio ? '保存中…' : '保存' }}</text>
+            </view>
+          </view>
+          <text v-if="bioError" class="bio__error" data-testid="me-bio-error">{{ bioError }}</text>
         </view>
 
         <!-- ---------- 账号安全 ---------- -->
@@ -118,9 +132,9 @@
             <text class="kv__k">注册时间</text>
             <text class="kv__v">{{ formatDate(auth.user?.createdAt) }}</text>
           </view>
-          <!-- 改密码同样没有接口，明确说出来（不做假表单） -->
+          <!-- 改密码：契约的 PUT /api/user/profile 只接受 nickname/avatarUrl/bio/gender，没有密码字段 -->
           <text class="section__note" data-testid="me-password-note">
-            修改密码需要后端接口，**契约里目前没有** → 待交付
+            修改密码需要单独的接口，契约里目前没有 → 待交付
           </text>
         </view>
 
@@ -140,29 +154,30 @@
 /**
  * 个人资料（原「我的」页）。
  *
- * 需求方 2026-09-18：把这一页改成参考图那个样子（头像 + 已登录 + ID + 注册时间 +
- * 个人简介 + 账号安全），并在**资料卡下方另起一行**加粉丝 / 获赞 / 收藏。
+ * 需求方 2026-09-18：改成参考图那个样子 + 资料卡下方另起一行加粉丝/获赞/收藏。
+ * 需求方 2026-09-19：「**我的头像和个人介绍弄上去**」—— 这两项现在**真的能改**了
+ * （L1 已交付 `PUT /api/user/profile`）。
  *
  * ==========================================================================
- * 这一页最重要的一件事：**哪些能改、哪些不能改，必须一眼看出来**
+ * ⚠️⚠️ 这个接口是覆盖语义，本页有一处**必须**照做的地方
  * ==========================================================================
- * 参考图里有「点击更换头像」「个人简介 + 保存」「修改密码」，
- * 但我核对过**契约里没有任何写接口**（`profile` / `avatar` / `nickname` / `password` 全没有）。
- * 所以我**不做假的保存按钮**，而是把这三处明确标注为"待后端接口"（M5 已交付，但契约里仍没有这些写接口 —— 别写成"待 M5"，那已经过期了）。
- * 界面结构与参考图一致，但不会让人以为"改完就生效了"。
+ * 契约原文：「**PUT = 覆盖（省略即清空）**」。
+ * 也就是说只想改简介而只传 `{bio}`，**会把昵称和头像一起清空**（数据损失）。
+ * 所以本页每次都从 `auth.user` 取**当前值**，只覆盖用户真正改的那一项，
+ * 四件套（nickname / avatarUrl / bio / gender）**全量提交**（`api/profile.ts` 的类型也把它们设为必填）。
  *
- * ⚠️ 数据来源：
- * - 昵称 / 用户名 / ID / 注册时间 / 简介 / 粉丝 / 获赞 / 帖子数 → `GET /api/user/me`（**已有**）
- * - **收藏数契约里没有**（`UserVO` 与 `UserProfileVO` 都没有这个字段），
- *   只能取 `GET /api/user/collections` 的 `total`（`size=1`，只要那个数）→ 多一次请求。
- *   取不到时显示 `—` 而**不是 0**：0 会被读成"我一条都没收藏"。
+ * 头像另有硬约束：`avatarUrl` 必须在自己目录下 → 上传走 `fetchSignature('avatar')`
+ * （后端给 `dir = avatar/{自己id}/`，用户 id 取自登录态、前端不拼这个目录）。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import AppShell from '@/components/shell/AppShell.vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import { fetchMyCollections } from '@/api/users'
+import { updateProfile } from '@/api/profile'
+import { fetchSignature } from '@/api/oss'
 import { fetchRegisterMode } from '@/api/auth'
+import { precheckImage, uploadImage, type LocalImage } from '@/utils/upload'
 import { ApiError } from '@/utils/request'
 import { compactCount } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
@@ -173,6 +188,16 @@ const auth = useAuthStore()
 const collectTotal = ref<number | null>(null)
 const registerModeError = ref('')
 
+/** 简介草稿（可编辑）。进入页面与保存成功后都与服务端值同步 */
+const bioDraft = ref('')
+const savingBio = ref(false)
+const bioError = ref('')
+/** 头像上传中（上传期间点第二次要挡住，否则会并发传两张） */
+const avatarUploading = ref(false)
+
+/** 简介是否被改过（决定"保存"按钮是否可点） */
+const bioDirty = computed(() => bioDraft.value.trim() !== (auth.user?.bio ?? '').trim())
+
 /** 时间戳 → `2026/09/15`（与参考图一致的紧凑格式） */
 function formatDate(value: string | undefined | null): string {
   if (!value) return '—'
@@ -182,10 +207,28 @@ function formatDate(value: string | undefined | null): string {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`
 }
 
-/** 登录后补一次资料（刷新时 `auth.user` 可能只有本地缓存那份），再拉收藏数 */
+/**
+ * 组装**全量**资料（覆盖语义的必需动作）。
+ * 任何一项都不要省略 —— 省略即清空。
+ */
+function buildPayload(overrides: { avatarUrl?: string; bio?: string } = {}) {
+  return {
+    nickname: auth.user?.nickname ?? '',
+    avatarUrl: overrides.avatarUrl ?? auth.user?.avatarUrl ?? '',
+    bio: overrides.bio ?? auth.user?.bio ?? '',
+    gender: auth.user?.gender ?? 0,
+  }
+}
+
+/** 提交后刷新本地资料（顶栏的头像/昵称也会跟着变） */
+async function refreshProfile(): Promise<void> {
+  await auth.ensureProfile(true)
+  // 简介草稿跟着服务端的值走，避免"保存成功但框里还是旧的"
+  bioDraft.value = auth.user?.bio ?? ''
+}
+
 onMounted(async () => {
   if (!auth.isLoggedIn) {
-    // 未登录时探一次注册模式：关闭注册的话，引导页要能说清楚
     try {
       await fetchRegisterMode()
     } catch (e) {
@@ -199,9 +242,10 @@ onMounted(async () => {
   } catch {
     // 资料刷新失败不阻断页面：本地缓存那份照常显示
   }
+  bioDraft.value = auth.user?.bio ?? ''
 
   /*
-   * 收藏数：`size=1` 只为拿 `total`（契约里没有"收藏数"字段，见文件头）。
+   * 收藏数：`size=1` 只为拿 `total`（契约里没有"收藏数"字段）。
    * 失败静默 —— 少一个数字不该让整页报错，界面显示 `—`。
    */
   try {
@@ -211,6 +255,103 @@ onMounted(async () => {
     collectTotal.value = null
   }
 })
+
+/* ---------------------------------------------------------------------------
+ * 头像：选图 → 直传 OSS（avatar 目录）→ PUT 提交
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 换头像。
+ *
+ * 全流程与发帖带图**同一套**（`utils/upload.ts`），只有两处不同：
+ * 1. 签名用 `target='avatar'`（目录必须是 `avatar/{自己id}/`，否则后端 400）；
+ * 2. 拿到 url 后调的是 `PUT /api/user/profile`，而不是发帖。
+ */
+function changeAvatar(): void {
+  if (avatarUploading.value) return
+
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed', 'original'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      const rawPaths = res.tempFilePaths
+      const paths: string[] = Array.isArray(rawPaths) ? rawPaths : rawPaths ? [rawPaths] : []
+      const files = (res.tempFiles ?? []) as Array<{
+        path?: string
+        size?: number
+        type?: string
+        name?: string
+      }>
+      const p = paths[0]
+      if (!p) return
+      const f = files.find((x) => x.path === p)
+      const img: LocalImage = {
+        path: p,
+        size: f?.size,
+        // ⚠️ 类型判定优先用 File.type：H5 的 blob URL 没有扩展名（见 utils/upload.ts 文件头）
+        mime: f?.type,
+        name: f?.name || 'avatar',
+      }
+      void uploadAvatar(img)
+    },
+    fail: (err) => {
+      const msg = String(err?.errMsg ?? '')
+      if (!msg.includes('cancel')) uni.showToast({ title: '选择图片失败', icon: 'none' })
+    },
+  })
+}
+
+async function uploadAvatar(img: LocalImage): Promise<void> {
+  // 先做本地预检（类型/大小），再取签名 —— 顺序与发帖页一致：不让服务端为注定被拒的图白签一次
+  const invalid = precheckImage(img)
+  if (invalid) {
+    uni.showToast({ title: invalid, icon: 'none', duration: 2400 })
+    return
+  }
+
+  avatarUploading.value = true
+  try {
+    const sign = await fetchSignature('avatar')
+    const done = await uploadImage(img, sign)
+    /*
+     * ⚠️ 提交时**带上其余字段的当前值**（覆盖语义），只把 avatarUrl 换成新的。
+     * 少了这一步，用户改头像会把简介清空。
+     */
+    await updateProfile(buildPayload({ avatarUrl: done.url }))
+    await refreshProfile()
+    uni.showToast({ title: '头像已更新', icon: 'none' })
+  } catch (e) {
+    uni.showToast({
+      title: e instanceof ApiError ? e.message : '头像更新失败，请稍后重试',
+      icon: 'none',
+      duration: 2600,
+    })
+  } finally {
+    avatarUploading.value = false
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 简介：保存
+ * ------------------------------------------------------------------------- */
+
+async function saveBio(): Promise<void> {
+  bioError.value = ''
+  if (!bioDirty.value) return
+  savingBio.value = true
+  try {
+    // 同样：只覆盖 bio，其余三项带当前值（覆盖语义）
+    await updateProfile(buildPayload({ bio: bioDraft.value.trim() }))
+    await refreshProfile()
+    uni.showToast({ title: '简介已保存', icon: 'none' })
+  } catch (e) {
+    // 失败**不清空输入**，让用户可以直接重试
+    bioError.value = e instanceof ApiError ? e.message : '保存失败，请稍后重试'
+  } finally {
+    savingBio.value = false
+  }
+}
 
 function goLogin(): void {
   uni.navigateTo({ url: '/pages/auth/index?mode=login' })
@@ -227,9 +368,7 @@ async function onLogout(): Promise<void> {
     await auth.logout()
     /*
      * 退出后**回登录页**（用 reLaunch 清掉页面栈）。
-     * ⚠️ 这一步我重写本页时漏过一次，被 `golden-path.spec.ts` 的退出用例抓到 ——
-     *    它断言退出后能看到登录表单。不清栈的话用户按返回键还能回到"我的"页（已是未登录态），
-     *    看起来像"退了个寂寞"。
+     * ⚠️ 这一步我重写本页时漏过一次，被 `golden-path.spec.ts` 的退出用例抓到。
      */
     uni.reLaunch({ url: '/pages/auth/index?mode=login' })
   } catch (e) {
@@ -286,7 +425,6 @@ async function onLogout(): Promise<void> {
     background-color: $hy-color-primary;
   }
 
-  /* 次要按钮用描边：与主按钮拉开层次，避免两个实心块抢注意力 */
   &--ghost {
     margin-left: 12px;
     border: 1px solid $hy-color-primary;
@@ -310,10 +448,30 @@ async function onLogout(): Promise<void> {
   }
 
   &__avatar {
+    position: relative;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    flex-shrink: 0;
+  }
+
+  /* 上传中的遮罩：盖在头像上，明确"正在传"，而不是让用户以为点了没反应 */
+  &__avatar-mask {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 88px;
+    height: 88px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(29, 33, 41, 0.45);
+    border-radius: 50%;
+  }
+
+  &__avatar-mask-text {
+    font-size: $hy-font-xs;
+    color: #ffffff;
   }
 
   &__avatar-hint {
@@ -321,7 +479,7 @@ async function onLogout(): Promise<void> {
     max-width: 96px;
     font-size: 10px;
     line-height: 1.4;
-    color: $hy-text-placeholder;
+    color: $hy-color-primary;
     text-align: center;
   }
 
@@ -418,22 +576,58 @@ async function onLogout(): Promise<void> {
 
 .bio {
   margin-top: 12px;
-  min-height: 72px;
-  padding: 14px;
+  padding: 12px 14px;
   background-color: $hy-bg-page;
   border-radius: $hy-radius-sm;
 
-  &__text {
+  &__input {
+    width: 100%;
+    height: 72px;
     font-size: $hy-font-md;
     line-height: 1.7;
-    color: $hy-text-regular;
-    white-space: pre-wrap;
-    word-break: break-word;
+    color: $hy-text-primary;
   }
 
-  &__empty {
-    font-size: $hy-font-md;
+  &__placeholder {
     color: $hy-text-placeholder;
+  }
+
+  &__foot {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+  }
+
+  &__counter {
+    font-size: $hy-font-xs;
+    color: $hy-text-placeholder;
+  }
+
+  &__save {
+    margin-left: auto;
+    height: 34px;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    background-color: $hy-color-primary;
+    border-radius: $hy-radius-pill;
+
+    /* 没改动或正在保存 → 压暗（不是"点了才报错"） */
+    &--disabled {
+      opacity: 0.45;
+    }
+  }
+
+  &__save-text {
+    font-size: $hy-font-md;
+    color: $hy-text-inverse;
+  }
+
+  &__error {
+    display: block;
+    margin-top: 8px;
+    font-size: $hy-font-sm;
+    color: $hy-color-danger;
   }
 }
 

@@ -1900,3 +1900,72 @@ npx playwright test                     → 31 passed (56.4s)
    单独重跑通过（`post=147`、真实 OSS 直链、6.4s）。**没有找到根因**，暂按 flake 记下并继续观察 ——
    不写成"偶发忽略"，也不假装没发生。最可疑的方向是它也依赖外网 OSS 与 3 秒人为延迟，
    但**我没有证据**，所以只登记现象。
+
+---
+
+# AA. 头像与简介（L1 已交付 `PUT /api/user/profile`）
+
+## AA.1 结论先说
+
+| 项 | 状态 |
+|---|---|
+**改简介** | ✅ **能用**（已 E2E 验证：保存成功、刷新后仍在、覆盖语义没清掉别的字段） |
+**换头像** | ❌ **前端已就绪，但 OSS 侧授权不足** —— 见 AA.3 的 CR-P |
+
+## AA.2 做了什么
+
+- `api/profile.ts`（新）：`updateProfile(payload)`
+  **四个字段（nickname / avatarUrl / bio / gender）在类型上就是必填** —— 因为契约写着
+  「**PUT = 覆盖（省略即清空）**」：只想改简介而只传 `{bio}` 会把昵称和头像一起清掉。
+  用类型把"漏传"挡在编译期，比写一句注释提醒可靠。
+- `api/oss.ts`：`fetchSignature(target)` 支持 `'post' | 'avatar'`
+  （契约：`target=avatar` → `dir = avatar/{当前用户id}/`，用户 id 由**后端取登录态**，前端不拼）。
+- `pages/me/index.vue`（重写资料部分）：
+  头像**可点**（选图 → 直传 → PUT）、简介**可编辑**（textarea + 保存，未改动时按钮压暗）、
+  上传中有遮罩（不让用户以为点了没反应）。每次提交都从 `auth.user` 取当前值**全量提交**。
+- E2E `m5-profile-edit.spec.ts`：改简介（含**读请求体**验证覆盖语义 + 刷新后仍在）、
+  换头像（走 avatar 目录、地址必须含 `/avatar/{自己id}/`、且与旧值不同）。
+
+## AA.3 🔴 CR-P（**阻塞头像，属基础设施/后端配置**）：RAM 子账号没有 `avatar/` 前缀的 PutObject 权限
+
+**现象**：换头像时 OSS 直传返回 **403**。用探针（`.tmp/avatar-upload-probe.mjs`）直接打 OSS，
+拿到**完整**错误：
+
+```xml
+<Code>AccessDenied</Code>
+<Message>You have no right to access this object because of bucket acl.</Message>
+<NoPermissionType>ImplicitDeny</NoPermissionType>
+<AuthAction>oss:PutObject</AuthAction>
+<AuthPrincipalType>SubUser</AuthPrincipalType>
+```
+
+**先排除了前端与契约**（都验过）：
+- 签名**是对的**：`dir = avatar/589/`，
+  policy = `{"conditions":[["starts-with","$key","avatar/589/"],["content-length-range",0,5242880],
+  ["starts-with","$Content-Type","image/"],{"bucket":"hy-forum-2026"}]}` —— 前缀、大小、类型全对；
+- 表单字段与顺序与 `post/` 上传**完全一致**（那套已在 §6.1 闭环里跑通过）。
+
+**所以是权限范围问题**：`post/*` 能传、`avatar/*` 被拒 → **RAM 策略是按前缀授予的**。
+
+**要 L1/运维做的**：给这个 AccessKey 的 RAM 策略加上
+`acs:oss:*:*:hy-forum-2026/avatar/*` 的 `oss:PutObject`（与 `post/*` 并列即可）。
+
+**处置**：`m5-profile-edit.spec.ts` 里那条头像用例标成 **`test.fixme`** 并写明原因与
+"策略修好后请把 `fixme` 改回 `test`"。**没有删除、也没有改弱断言** ——
+保留完整断言只是暂时不执行，策略一修就能直接验，不用重写。
+
+## AA.4 顺手同步的过期断言
+
+`m4-settings.spec.ts` 里那段"头像/简介都写明待交付"的断言**已经过期**（功能现在能用了）：
+头像从"待后端接口"变成可点、简介从只读变成可编辑（`me-bio-note` 这个 testid 已不存在）。
+已改成断言"这两处可用"，只保留"改密码待交付"（契约的 PUT 只接受 nickname/avatarUrl/bio/gender）。
+
+> 同一类问题这个项目已经出现过多次：**功能一变，旧断言就变成假话**。
+> 断言要贴着"当前该有什么"写，并且改动功能时**必须回头看有没有断言引用了它**。
+
+## AA.5 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npx playwright test                     → 34 passed / 1 skipped（头像那条 fixme）
+```
