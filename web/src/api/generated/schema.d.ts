@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * 帖子详情
-         * @description 可选鉴权：作者可以看到自己的待审帖；浏览量 +1 走 Redis
+         * @description 可选鉴权：作者可以看到自己的待审帖；浏览量 +1 走 Redis；liked/collected 反映请求者自己的状态（未登录恒为 false 且仍返回 200）
          */
         get: operations["getPost"];
         /**
@@ -41,7 +41,7 @@ export interface paths {
         };
         /**
          * 帖子列表
-         * @description 可按版块筛选；sort 支持 latest/hot/essence；每页上限 20，只返回摘要（不含正文）
+         * @description 可按版块筛选；sort 支持 latest/hot/essence；每页上限 20，只返回摘要（不含正文）。可选鉴权：登录后 liked/collected 反映请求者自己的状态，未登录恒为 false 且仍返回 200
          */
         get: operations["listPosts_1"];
         put?: never;
@@ -321,7 +321,7 @@ export interface paths {
         };
         /**
          * 某用户的帖子
-         * @description 只返回 status=1（正常）的帖子，时间倒序分页
+         * @description 只返回 status=1（正常）的帖子，时间倒序分页；可选鉴权：liked/collected 反映请求者状态（未登录恒 false，仍 200）
          */
         get: operations["listPosts"];
         put?: never;
@@ -668,6 +668,10 @@ export interface components {
             commentCount?: number;
             /** Format: int32 */
             collectCount?: number;
+            /** @description 当前请求者是否点过赞（相对于请求者，未登录恒为 false；未登录不会因此报 401） */
+            liked?: boolean;
+            /** @description 当前请求者是否收藏过（相对于请求者，未登录恒为 false） */
+            collected?: boolean;
             /**
              * Format: int32
              * @description 0 待审核 / 1 正常 / 2 已屏蔽
@@ -814,7 +818,10 @@ export interface components {
             nickname?: string;
             avatarUrl?: string;
             bio?: string;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 性别：0 = 未知 / 1 = 男 / 2 = 女。取值语义与 docs/db/schema.sql 的 user.gender 列注释一致（CR-M）
+             */
             gender?: number;
             /** Format: int32 */
             postCount?: number;
@@ -824,7 +831,10 @@ export interface components {
             fansCount?: number;
             /** Format: int32 */
             likeReceivedCount?: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 【reserved 预留字段】当前无任何写入口径：注册时被固定写成 1（见 AuthService.register），schema 默认值也是 1 —— 即**恒为 1、不随任何行为变化**。含义待定，**前端不得展示为'等级'**（把恒为 1 的数字渲染成'等级 1'属于界面在说谎）。本注解由 M4（CR-M）补：该字段此前在契约里没有任何取值语义说明。
+             */
             level?: number;
             /** Format: date-time */
             createdAt?: string;
@@ -873,7 +883,10 @@ export interface components {
             nickname?: string;
             avatarUrl?: string;
             bio?: string;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 性别：0 = 未知 / 1 = 男 / 2 = 女。取值语义与 docs/db/schema.sql 的 user.gender 列注释一致（CR-M）
+             */
             gender?: number;
             /** Format: int32 */
             postCount?: number;
@@ -883,7 +896,10 @@ export interface components {
             fansCount?: number;
             /** Format: int32 */
             likeReceivedCount?: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description 【reserved 预留字段】当前无任何写入口径：注册时被固定写成 1（见 AuthService.register），schema 默认值也是 1 —— 即**恒为 1、不随任何行为变化**。含义待定，**前端不得展示为'等级'**（把恒为 1 的数字渲染成'等级 1'属于界面在说谎，与 CR-M 要消灭的'等级 0'是同一类问题）。需要等级体系时先定义写入口径。
+             */
             level?: number;
             isFollowing?: boolean;
             isFollowedBy?: boolean;
@@ -896,7 +912,7 @@ export interface components {
             message?: string;
             data?: components["schemas"]["PageResultFeedItemVO"];
         };
-        /** @description 首页流条目（不含正文） */
+        /** @description 首页流 / 个人主页的帖子卡片（不含正文） */
         FeedItemVO: {
             /** Format: int64 */
             id?: number;
@@ -907,8 +923,19 @@ export interface components {
             coverUrl?: string;
             /** Format: int32 */
             imageCount?: number;
-            isTop?: boolean;
-            isEssence?: boolean;
+            /** @description 前最多 3 张缩略图（读时签名）；无图时为空数组 */
+            imageThumbs?: string[];
+            /**
+             * Format: int32
+             * @description 网盘类型 1 百度 / 2 阿里 / 3 夸克 / 4 天翼 / 5 迅雷 / 6 其他；非资源帖为 null
+             */
+            diskType?: number;
+            /** @description 是否带网盘资源（前端据此渲染资源标记；列表刻意不发 diskUrl） */
+            hasDiskResource?: boolean;
+            /** @description 当前请求者是否点过赞（相对于请求者，未登录恒为 false；未登录不会因此报 401） */
+            liked?: boolean;
+            /** @description 当前请求者是否收藏过（相对于请求者，未登录恒为 false） */
+            collected?: boolean;
             /** Format: int32 */
             viewCount?: number;
             /** Format: int32 */
@@ -920,6 +947,8 @@ export interface components {
             author?: components["schemas"]["InteractionUserBriefVO"];
             /** Format: date-time */
             createdAt?: string;
+            isTop?: boolean;
+            isEssence?: boolean;
         };
         PageResultFeedItemVO: {
             list?: components["schemas"]["FeedItemVO"][];
@@ -1049,6 +1078,19 @@ export interface components {
             coverUrl?: string;
             /** Format: int32 */
             imageCount?: number;
+            /** @description 前最多 3 张缩略图（读时签名）；无图时为空数组 */
+            imageThumbs?: string[];
+            /**
+             * Format: int32
+             * @description 网盘类型 1 百度 / 2 阿里 / 3 夸克 / 4 天翼 / 5 迅雷 / 6 其他；非资源帖为 null
+             */
+            diskType?: number;
+            /** @description 是否带网盘资源（前端据此渲染资源标记；链接本身只在详情页给，列表刻意不发 diskUrl） */
+            hasDiskResource?: boolean;
+            /** @description 当前请求者是否点过赞（相对于请求者，未登录恒为 false；未登录不会因此报 401） */
+            liked?: boolean;
+            /** @description 当前请求者是否收藏过（相对于请求者，未登录恒为 false） */
+            collected?: boolean;
             /** Format: int32 */
             viewCount?: number;
             /** Format: int32 */
