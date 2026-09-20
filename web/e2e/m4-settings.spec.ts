@@ -125,9 +125,9 @@ test('个人资料页：统计另起一行（粉丝/获赞/收藏），改不了
   await expect(page.getByTestId('me-stat-collect')).toContainText('0', { timeout: 15_000 })
 
   // 「不能改」必须写出来，而不是放个点了不生效的按钮
-  await expect(page.getByTestId('me-avatar-hint')).toContainText('待 M5 交付')
-  await expect(page.getByTestId('me-bio-note')).toContainText('待 M5 交付')
-  await expect(page.getByTestId('me-password-note')).toContainText('待 M5 交付')
+  await expect(page.getByTestId('me-avatar-hint')).toContainText('待后端接口')
+  await expect(page.getByTestId('me-bio-note')).toContainText('契约里目前没有')
+  await expect(page.getByTestId('me-password-note')).toContainText('待交付')
 })
 
 /* ==========================================================================
@@ -159,7 +159,7 @@ test('设置页：通知开关存本机并明写不生效；外观主题不做�
 
   // ③ 账号安全是只读的：ID 与登录方式都在，改密码明写未交付
   await expect(page.getByTestId('settings-account-id')).toBeVisible()
-  await expect(page.getByTestId('settings-password-note')).toContainText('待 M5 交付')
+  await expect(page.getByTestId('settings-password-note')).toContainText('待交付')
 
   // ④ 外观主题按需求方要求不做 —— 只留一行说明，且**没有**对应的开关
   await expect(page.getByTestId('settings-theme-note')).toContainText('暂不实现')

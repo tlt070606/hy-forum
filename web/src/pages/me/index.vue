@@ -26,14 +26,14 @@
           <view class="profile__top">
             <!--
               ⚠️ **点击更换头像点不动**：契约里**没有任何写接口**
-              （`profile` / `avatar` / `nickname` 全查过，没有）。所以这里：
+              （`profile` / `avatar` / `nickname` 全查过：35 个路径里没有任何 PUT/PATCH 到 /api/user/**）。所以这里：
               - 视觉上与参考图一致（大头像 + 下面一行小字）；
-              - 但那行小字写的是「待 M5 交付」而**不是**「点击更换」——
+              - 但那行小字写的是「待后端接口」而**不是**「点击更换」——
                 **不给一个点了不生效的按钮**（需求方 2026-09-18 选定）。
             -->
             <view class="profile__avatar">
               <Avatar :url="auth.user?.avatarUrl || ''" :nickname="auth.displayName" :size="88" />
-              <text class="profile__avatar-hint" data-testid="me-avatar-hint">头像编辑待 M5 交付</text>
+              <text class="profile__avatar-hint" data-testid="me-avatar-hint">头像编辑待后端接口</text>
             </view>
 
             <view class="profile__main">
@@ -95,7 +95,7 @@
             依据：契约里没有改资料的接口（`profile` / `nickname` 都没有）。
           -->
           <text class="section__note" data-testid="me-bio-note">
-            编辑简介与头像需要后端接口，契约里还没有 → 待 M5 交付
+            编辑简介与头像需要后端接口，**契约里目前没有**（已提 CR：PUT /api/user/profile，字段 avatarUrl + bio）→ 接口到位即可用
           </text>
         </view>
 
@@ -120,7 +120,7 @@
           </view>
           <!-- 改密码同样没有接口，明确说出来（不做假表单） -->
           <text class="section__note" data-testid="me-password-note">
-            修改密码需要后端接口，契约里还没有 → 待 M5 交付
+            修改密码需要后端接口，**契约里目前没有** → 待交付
           </text>
         </view>
 
@@ -148,7 +148,7 @@
  * ==========================================================================
  * 参考图里有「点击更换头像」「个人简介 + 保存」「修改密码」，
  * 但我核对过**契约里没有任何写接口**（`profile` / `avatar` / `nickname` / `password` 全没有）。
- * 所以我**不做假的保存按钮**，而是把这三处明确标注为"待 M5 交付"。
+ * 所以我**不做假的保存按钮**，而是把这三处明确标注为"待后端接口"（M5 已交付，但契约里仍没有这些写接口 —— 别写成"待 M5"，那已经过期了）。
  * 界面结构与参考图一致，但不会让人以为"改完就生效了"。
  *
  * ⚠️ 数据来源：

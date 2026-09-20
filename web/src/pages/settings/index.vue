@@ -92,7 +92,7 @@
           </view>
           <!-- 改密码没有接口：明说，而不是放一个假表单 -->
           <text class="section__note" data-testid="settings-password-note">
-            修改密码需要后端接口，契约里还没有 → 待 M5 交付
+            修改密码需要后端接口，**契约里目前没有** → 待交付
           </text>
         </view>
 
