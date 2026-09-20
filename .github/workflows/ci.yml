@@ -228,6 +228,12 @@ jobs:
           # **显式允许环回**（默认 false —— 降级必须写明，这正是 §9 的设计）。
           # ⚠️ 与 `scripts/export_openapi.ps1` §0.7 是同一处副作用的两面：
           #    fail-fast 新增一项，所有"只想让应用启动"的调用方都要跟着处理。
+          # ⚠️ 凭据 fail-fast（CR-011）的**调用方**问题：`application-test.yml` 在
+          #   `src/test/resources`，**不会被打进 jar** —— 所以第 2 步（mvn test）走测试类路径
+          #   有占位值、能过；而本步骤是**起打好的 jar**，只看得见 `application.yml`（空值）
+          #   → 直接 fail-fast 拒绝启动。这里给 CI 用的自曝身份占位值（不是真实凭据）。
+          OSS_ACCESS_KEY_ID: ci-placeholder-not-a-real-key
+          OSS_ACCESS_KEY_SECRET: ci-placeholder-not-a-real-secret
           OSS_CALLBACK_URL: http://127.0.0.1:18080/api/oss/callback
           HY_OSS_UPLOAD_ALLOW_LOOPBACK_CALLBACK: 'true'
         run: |
