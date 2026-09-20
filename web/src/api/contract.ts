@@ -53,13 +53,13 @@
  *    它与快照不符会直接报漂移。改快照就必须改这里，反之亦然。
  */
 export const OPENAPI_SNAPSHOT_SHA256 =
-  '5e623d3d8fb22fab2a5f1d8597dbf6401c770ef6c1ffad6e5ac4480e9654c749'
+  '66d43a2cdd20d82e7dfcdb9e9d9a68bc7ae1c5178046ae2cb9d3da3385565a52'
 
 /** 快照对应的后端版本，便于人肉核对这场快照是什么时候的。 */
 export const OPENAPI_SNAPSHOT_VERSION = '0.0.1'
 
 /** 快照导出时后端暴露的路径数量（用于冒烟核对，防止残缺快照）。同样由 check:contract 校验。 */
-export const OPENAPI_SNAPSHOT_PATH_COUNT = 29
+export const OPENAPI_SNAPSHOT_PATH_COUNT = 35
 
 /**
  * 本前端工程实际使用的全部端点。

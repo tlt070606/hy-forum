@@ -32,6 +32,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 标记已读
+         * @description 传 ids 列表，或 all=true 全部已读（两者都支持）；只能标记自己的通知，两者都不传返回 400
+         */
+        put: operations["markRead"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/comments/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 评论审核（放行/屏蔽）
+         * @description status=1 放行 / 2 屏蔽；屏蔽必须给 reason。业务改动与留痕在同一事务内：留痕失败则状态改动一并回滚（§6.11 留痕红线）
+         */
+        put: operations["reviewComment"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交举报
+         * @description targetType：1 帖子 / 2 评论 / 3 用户；reasonType：1 违法违规 / 2 色情低俗 / 3 广告垃圾 / 4 侵权 / 5 其他。超每日上限时返回 **HTTP 200 + 业务码**（业务动作维度）
+         */
+        post: operations["report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/posts": {
         parameters: {
             query?: never;
@@ -492,6 +552,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 我的消息列表
+         * @description 时间倒序分页（上限 20）；type 可选。目标内容即使已被删除也照常返回，由前端在点开时依据目标接口的 404 显示"内容已删除"
+         */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 未读条数
+         * @description 当前登录用户的未读通知数，供前端显示红点
+         */
+        get: operations["unreadCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/feed": {
         parameters: {
             query?: never;
@@ -584,6 +684,26 @@ export interface paths {
          * @description 返回 uuid 与 Base64 图片；答案存 Redis hy:captcha:{uuid}，TTL 300s
          */
         get: operations["captcha"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 评论列表（后台）
+         * @description 可按 status 筛选：0 待审 / 1 正常 / 2 已屏蔽；不传=全部。时间升序（先处理早的）
+         */
+        get: operations["listComments_1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -705,6 +825,47 @@ export interface components {
             id?: number;
             nickname?: string;
             avatarUrl?: string;
+        };
+        /** @description 标记已读请求 */
+        MarkReadRequest: {
+            ids?: number[];
+            all?: boolean;
+        };
+        ApiResponseInteger: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            /** Format: int32 */
+            data?: number;
+        };
+        /** @description 评论审核请求 */
+        AdminCommentReviewRequest: {
+            /** Format: int32 */
+            status?: number;
+            reason?: string;
+        };
+        ApiResponseLong: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            /** Format: int64 */
+            data?: number;
+        };
+        /** @description 举报请求 */
+        ReportCreateRequest: {
+            /**
+             * Format: int32
+             * @description 1 帖子 / 2 评论 / 3 用户
+             */
+            targetType: number;
+            /** Format: int64 */
+            targetId: number;
+            /**
+             * Format: int32
+             * @description 1 违法违规 / 2 色情低俗 / 3 广告垃圾 / 4 侵权 / 5 其他
+             */
+            reasonType: number;
+            reasonDetail?: string;
         };
         /** @description 发帖请求体 */
         PostCreateRequest: {
@@ -1162,6 +1323,46 @@ export interface components {
             /** @description **直传表单必需的 OSSAccessKeyId**：AccessKey 的标识，不是密钥；Secret 只在服务端使用，绝不会出现在本响应里 */
             accessKeyId?: string;
         };
+        ApiResponsePageResultNotificationVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultNotificationVO"];
+        };
+        /** @description 消息通知条目 */
+        NotificationVO: {
+            /** Format: int64 */
+            id?: number;
+            /**
+             * Format: int32
+             * @description 1 点赞 / 2 评论 / 3 回复 / 4 关注 / 5 系统
+             */
+            type?: number;
+            /** Format: int64 */
+            fromUserId?: number;
+            fromNickname?: string;
+            fromAvatarUrl?: string;
+            /**
+             * Format: int32
+             * @description 1 帖子 / 2 评论；无具体目标时为 null
+             */
+            targetType?: number;
+            /** Format: int64 */
+            targetId?: number;
+            content?: string;
+            isRead?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        PageResultNotificationVO: {
+            list?: components["schemas"]["NotificationVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+        };
         ApiResponsePageResultCommentReplyVO: {
             /** Format: int32 */
             code?: number;
@@ -1225,6 +1426,42 @@ export interface components {
             base64Image?: string;
             /** Format: int32 */
             expireSeconds?: number;
+        };
+        /** @description 后台评论列表项（含审核状态与正文） */
+        AdminCommentVO: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            postId?: number;
+            postTitle?: string;
+            /** Format: int64 */
+            userId?: number;
+            authorNickname?: string;
+            /** Format: int64 */
+            parentId?: number;
+            content?: string;
+            /**
+             * Format: int32
+             * @description 0 待审核 / 1 正常 / 2 已屏蔽
+             */
+            status?: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ApiResponsePageResultAdminCommentVO: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: components["schemas"]["PageResultAdminCommentVO"];
+        };
+        PageResultAdminCommentVO: {
+            list?: components["schemas"]["AdminCommentVO"][];
+            /** Format: int64 */
+            total?: number;
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
         };
     };
     responses: never;
@@ -1301,6 +1538,80 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponseVoid"];
+                };
+            };
+        };
+    };
+    markRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkReadRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseInteger"];
+                };
+            };
+        };
+    };
+    reviewComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminCommentReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseLong"];
+                };
+            };
+        };
+    };
+    report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseLong"];
                 };
             };
         };
@@ -1924,6 +2235,50 @@ export interface operations {
             };
         };
     };
+    list: {
+        parameters: {
+            query?: {
+                type?: number;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultNotificationVO"];
+                };
+            };
+        };
+    };
+    unreadCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponseLong"];
+                };
+            };
+        };
+    };
     feed: {
         parameters: {
             query?: {
@@ -2030,6 +2385,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApiResponseCaptchaVO"];
+                };
+            };
+        };
+    };
+    listComments_1: {
+        parameters: {
+            query?: {
+                status?: number;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApiResponsePageResultAdminCommentVO"];
                 };
             };
         };
