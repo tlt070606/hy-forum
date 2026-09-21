@@ -124,6 +124,16 @@ public class V1OssReadUrlSigner implements OssReadUrlSigner, com.hyforum.common.
             return url;
         }
         String publicPrefix = ossProperties.publicUrlPrefix();
+        if (url.length() < publicPrefix.length()) {
+            // ★ 防御：**不变量**是"通过了前缀检查的 URL 一定以 publicUrlPrefix 开头、因此一定更长"，
+            //   但这条不变量只是**隐含**的，没有任何东西保证它成立（例如配置在运行期被改、
+            //   或前缀与 publicPrefix 将来出现分歧）。一旦不成立，
+            //   下一行的 substring 会抛 StringIndexOutOfBoundsException，
+            //   而它发生在**读接口里** —— 表现是"**整页 500**"，
+            //   而不是"这张图没签名"。宁可原样返回（最坏是这张图 403），也不要 500 整页。
+            //   （实测撞到过：GET /api/posts/{id} 直接 500，栈顶就在下面这行。）
+            return url;
+        }
         // 对象 key = URL 去掉 "https://{bucket}.{endpoint}/" 前缀，并在 '?' 处截断
         String objectAndParams = url.substring(publicPrefix.length());
         int queryIndex = objectAndParams.indexOf('?');
