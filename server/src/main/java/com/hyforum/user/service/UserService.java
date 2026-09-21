@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
@@ -64,16 +65,21 @@ public class UserService {
     private final BoardMapper boardMapper;
     private final FollowService followService;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）：对外头像必须经过它才能带上读时签名。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public UserService(UserMapper userMapper,
                        PostMapper postMapper,
                        CommentMapper commentMapper,
                        BoardMapper boardMapper,
-                       FollowService followService) {
+                                 FollowService followService,
+                                 AvatarUrlResolver avatarResolver) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.boardMapper = boardMapper;
         this.followService = followService;
+        this.avatarResolver = avatarResolver;
     }
 
     /**
@@ -106,7 +112,7 @@ public class UserService {
         return new UserProfileVO(
                 user.getId(),
                 user.getNickname(),
-                user.getAvatarUrl(),
+                avatarResolver.resolve(user),
                 user.getBio(),
                 user.getGender(),
                 nullToZero(user.getPostCount()),
@@ -220,7 +226,7 @@ public class UserService {
         Map<Long, UserBriefVO> authors = new HashMap<>();
         for (User user : userMapper.selectBatchIds(
                 posts.stream().map(Post::getUserId).distinct().toList())) {
-            authors.put(user.getId(), UserBriefVO.from(user));
+            authors.put(user.getId(), UserBriefVO.from(user, avatarResolver));
         }
 
         List<FeedItemVO> items = new ArrayList<>(posts.size());

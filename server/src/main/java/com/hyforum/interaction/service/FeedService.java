@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
@@ -74,14 +75,19 @@ public class FeedService {
     private final UserMapper userMapper;
     private final FollowService followService;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public FeedService(PostMapper postMapper,
                        BoardMapper boardMapper,
                        UserMapper userMapper,
-                       FollowService followService) {
+                       FollowService followService,
+                                AvatarUrlResolver avatarResolver) {
         this.postMapper = postMapper;
         this.boardMapper = boardMapper;
         this.userMapper = userMapper;
         this.followService = followService;
+        this.avatarResolver = avatarResolver;
     }
 
     /**
@@ -171,7 +177,7 @@ public class FeedService {
         }
         Map<Long, UserBriefVO> authors = new HashMap<>();
         for (User user : userMapper.selectBatchIds(userIds)) {
-            authors.put(user.getId(), UserBriefVO.from(user));
+            authors.put(user.getId(), UserBriefVO.from(user, avatarResolver));
         }
 
         List<FeedItemVO> items = new ArrayList<>(posts.size());

@@ -54,7 +54,7 @@ import java.util.TreeSet;
  * </ul>
  */
 @Component
-public class V1OssReadUrlSigner implements OssReadUrlSigner {
+public class V1OssReadUrlSigner implements OssReadUrlSigner, com.hyforum.common.oss.AvatarUrlSigner {
 
     /**
      * OSS 的"签名参数"集合（只有这里面的查询参数才进 CanonicalizedResource）。
@@ -91,10 +91,34 @@ public class V1OssReadUrlSigner implements OssReadUrlSigner {
 
     @Override
     public String sign(String url) {
+        return signWithin(ossProperties.imageUrlPrefix(), url);
+    }
+
+    /**
+     * 头像的读时签名（CR-Q）：允许前缀换成 {@code avatar/{userId}/}。
+     *
+     * <p><b>为什么复用同一个私有方法，而不是抄一份签名算法</b>：
+     * 签名串的构造（canonical resource、子资源排序、HMAC、参数拼接）是本项目已知的
+     * 高坑区（§12.3 记了三个坑：{@code x-oss-process} 子资源、裸 URL vs 已签 URL、外部 URL）。
+     * 抄一份等于把这三个坑复制一遍 —— 而踩中任何一个的表现都是
+     * "URL 看起来带签名、但 GET 回 403"，**极难定位**（L1 自己的探针就误判过一次）。
+     * 因此两个入口<b>只允许共享同一段实现</b>，差别仅在"允许前缀"。</p>
+     */
+    @Override
+    public String sign(long userId, String url) {
+        return signWithin(ossProperties.userAvatarUrlPrefix(userId), url);
+    }
+
+    /**
+     * 在给定"允许前缀"内签名 —— <b>全项目读时签名的唯一实现</b>。
+     *
+     * @param allowedPrefix 只签落在这个前缀内的 URL；空串（OSS 未配置）时一律原样返回
+     * @param url           裸对象 URL
+     */
+    private String signWithin(String allowedPrefix, String url) {
         if (url == null || url.isBlank() || isAlreadySigned(url)) {
             return url;
         }
-        String allowedPrefix = ossProperties.imageUrlPrefix();
         if (allowedPrefix.isEmpty() || !url.startsWith(allowedPrefix)) {
             // 见类注释纪律 1：外部 URL（或 OSS 未配置）原样返回
             return url;

@@ -9,6 +9,7 @@ import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.audit.SensitiveTextChecker;
 import com.hyforum.common.exception.BizException;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.oss.OssProperties;
 import com.hyforum.common.oss.OssReadUrlSigner;
 import com.hyforum.common.oss.OssThumbnailUrls;
@@ -104,6 +105,9 @@ public class PostService {
      */
     private final OssReadUrlSigner readUrlSigner;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）：帖子/列表里的作者头像必须带读时签名。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public PostService(PostMapper postMapper,
                        PostImageMapper postImageMapper,
                        BoardMapper boardMapper,
@@ -113,7 +117,8 @@ public class PostService {
                        PostRateLimiter rateLimiter,
                        PostProperties postProperties,
                        OssProperties ossProperties,
-                       OssReadUrlSigner readUrlSigner) {
+        OssReadUrlSigner readUrlSigner,
+        AvatarUrlResolver avatarResolver) {
         this.postMapper = postMapper;
         this.postImageMapper = postImageMapper;
         this.boardMapper = boardMapper;
@@ -124,6 +129,7 @@ public class PostService {
         this.postProperties = postProperties;
         this.ossProperties = ossProperties;
         this.readUrlSigner = readUrlSigner;
+        this.avatarResolver = avatarResolver;
     }
 
     // ==================================================================
@@ -766,7 +772,7 @@ public class PostService {
                 post.getIsTop() != null && post.getIsTop() == 1,
                 post.getIsEssence() != null && post.getIsEssence() == 1,
                 nullToZero(post.getStatus()),
-                UserBriefVO.from(author),
+                UserBriefVO.from(author, avatarResolver),
                 post.getCreatedAt(),
                 post.getUpdatedAt());
     }
@@ -839,7 +845,7 @@ public class PostService {
                     nullToZero(post.getLikeCount()),
                     nullToZero(post.getCommentCount()),
                     nullToZero(post.getCollectCount()),
-                    UserBriefVO.from(authors.get(post.getUserId())),
+                    UserBriefVO.from(authors.get(post.getUserId()), avatarResolver),
                     post.getCreatedAt()));
         }
         return result;

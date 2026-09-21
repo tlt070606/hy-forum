@@ -1,6 +1,7 @@
 package com.hyforum.auth.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.auth.captcha.CaptchaService;
 import com.hyforum.auth.dto.LoginRequest;
 import com.hyforum.auth.dto.RegisterRequest;
@@ -76,13 +77,17 @@ public class AuthService implements AccountStatusChecker {
     private final RegisterModeService registerModeService;
     private final SensitiveTextChecker sensitiveTextChecker;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public AuthService(UserMapper userMapper,
                        AdminMapper adminMapper,
                        InviteCodeMapper inviteCodeMapper,
                        PasswordEncoder passwordEncoder,
                        CaptchaService captchaService,
                        RegisterModeService registerModeService,
-                       SensitiveTextChecker sensitiveTextChecker) {
+                          SensitiveTextChecker sensitiveTextChecker,
+                          AvatarUrlResolver avatarResolver) {
         this.userMapper = userMapper;
         this.adminMapper = adminMapper;
         this.inviteCodeMapper = inviteCodeMapper;
@@ -90,6 +95,7 @@ public class AuthService implements AccountStatusChecker {
         this.captchaService = captchaService;
         this.registerModeService = registerModeService;
         this.sensitiveTextChecker = sensitiveTextChecker;
+        this.avatarResolver = avatarResolver;
     }
 
     // ==================================================================
@@ -158,7 +164,7 @@ public class AuthService implements AccountStatusChecker {
         }
 
         log.info("用户注册成功 id={} username={} mode={}", user.getId(), user.getUsername(), mode.value());
-        return UserVO.from(user);
+        return UserVO.from(user, avatarResolver);
     }
 
     /**
@@ -228,7 +234,7 @@ public class AuthService implements AccountStatusChecker {
             log.warn("更新 last_login_at 失败 userId={}：{}", user.getId(), ex.getMessage());
         }
 
-        return new LoginVO(token, UserVO.from(user));
+        return new LoginVO(token, UserVO.from(user, avatarResolver));
     }
 
     /** 注销当前 token（技术方案 §6.2：{@code POST /api/auth/logout}，需要登录）。 */
@@ -249,7 +255,7 @@ public class AuthService implements AccountStatusChecker {
         if (user == null) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
-        return UserVO.from(user);
+        return UserVO.from(user, avatarResolver);
     }
 
     // ==================================================================

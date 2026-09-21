@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.notify.NotificationPublisher;
 import com.hyforum.common.notify.NotificationType;
@@ -55,9 +56,14 @@ public class NotificationService implements NotificationPublisher {
     private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
 
-    public NotificationService(NotificationMapper notificationMapper, UserMapper userMapper) {
+    /** 头像 URL 的唯一装配入口（CR-Q）：通知发送者的头像也必须带读时签名。 */
+    private final AvatarUrlResolver avatarResolver;
+
+    public NotificationService(NotificationMapper notificationMapper, UserMapper userMapper,
+                               AvatarUrlResolver avatarResolver) {
         this.notificationMapper = notificationMapper;
         this.userMapper = userMapper;
+        this.avatarResolver = avatarResolver;
     }
 
     // ==================================================================
@@ -166,7 +172,7 @@ public class NotificationService implements NotificationPublisher {
         Map<Long, User> senders = loadSenders(rows);
         List<NotificationVO> items = new ArrayList<>(rows.size());
         for (Notification row : rows) {
-            items.add(NotificationVO.from(row, senders.get(row.getFromUserId())));
+            items.add(NotificationVO.from(row, senders.get(row.getFromUserId()), avatarResolver));
         }
         return PageResult.of(items, result.getTotal(), pageNo, pageSize);
     }

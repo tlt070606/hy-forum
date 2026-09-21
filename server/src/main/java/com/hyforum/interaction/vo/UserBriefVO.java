@@ -1,5 +1,6 @@
 package com.hyforum.interaction.vo;
 
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.domain.user.entity.User;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -28,10 +29,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record UserBriefVO(Long id, String nickname, String avatarUrl) {
 
     /** 实体 → 摘要；{@code null} 时给占位而不是抛异常（帖子/评论仍应能打开）。 */
-    public static UserBriefVO from(User user) {
+    public static UserBriefVO from(User user, com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
         if (user == null) {
             return new UserBriefVO(null, "已注销用户", null);
         }
-        return new UserBriefVO(user.getId(), user.getNickname(), user.getAvatarUrl());
+        return new UserBriefVO(user.getId(), user.getNickname(), avatarResolver.resolve(user));
     }
 }

@@ -3,6 +3,7 @@ package com.hyforum.interaction.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
@@ -60,11 +61,16 @@ public class FollowService {
      */
     private final NotificationPublisher notificationPublisher;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public FollowService(FollowMapper followMapper, UserMapper userMapper,
-                         NotificationPublisher notificationPublisher) {
+                         NotificationPublisher notificationPublisher,
+                         AvatarUrlResolver avatarResolver) {
         this.followMapper = followMapper;
         this.userMapper = userMapper;
         this.notificationPublisher = notificationPublisher;
+        this.avatarResolver = avatarResolver;
     }
 
     /**
@@ -225,7 +231,7 @@ public class FollowService {
             if (user == null) {
                 continue;   // 用户已被逻辑删除（selectBatchIds 会过滤）→ 跳过
             }
-            items.add(new FollowUserVO(user.getId(), user.getNickname(), user.getAvatarUrl(),
+            items.add(new FollowUserVO(user.getId(), user.getNickname(), avatarResolver.resolve(user),
                     user.getBio(), row.getCreatedAt()));
         }
         return items;

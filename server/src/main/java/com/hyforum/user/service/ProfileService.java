@@ -1,5 +1,6 @@
 package com.hyforum.user.service;
 
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.exception.BizException;
 import com.hyforum.common.oss.OssProperties;
@@ -43,9 +44,14 @@ public class ProfileService {
     private final UserMapper userMapper;
     private final OssProperties ossProperties;
 
-    public ProfileService(UserMapper userMapper, OssProperties ossProperties) {
+    /** 头像 URL 的唯一装配入口（CR-Q）：PUT 的响应里也必须给签名后的头像。 */
+    private final AvatarUrlResolver avatarResolver;
+
+    public ProfileService(UserMapper userMapper, OssProperties ossProperties,
+                           AvatarUrlResolver avatarResolver) {
         this.userMapper = userMapper;
         this.ossProperties = ossProperties;
+        this.avatarResolver = avatarResolver;
     }
 
     /**

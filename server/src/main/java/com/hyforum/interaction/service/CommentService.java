@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.audit.SensitiveTextChecker;
@@ -95,18 +96,23 @@ public class CommentService {
      */
     private final SensitiveTextChecker sensitiveTextChecker;
 
+    /** 头像 URL 的唯一装配入口（CR-Q）。 */
+    private final AvatarUrlResolver avatarResolver;
+
     public CommentService(CommentMapper commentMapper,
                           CommentLikeMapper commentLikeMapper,
                           PostMapper postMapper,
                           UserMapper userMapper,
                           NotificationPublisher notificationPublisher,
-                          SensitiveTextChecker sensitiveTextChecker) {
+                          SensitiveTextChecker sensitiveTextChecker,
+                          AvatarUrlResolver avatarResolver) {
         this.commentMapper = commentMapper;
         this.commentLikeMapper = commentLikeMapper;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.notificationPublisher = notificationPublisher;
         this.sensitiveTextChecker = sensitiveTextChecker;
+        this.avatarResolver = avatarResolver;
     }
 
     // ==================================================================
@@ -262,7 +268,7 @@ public class CommentService {
         }
 
         // 作者摘要用返回值（本次会话里的用户对象），省一次查询
-        return toReplyVO(comment, UserBriefVO.from(userMapper.selectById(userId)), null);
+        return toReplyVO(comment, UserBriefVO.from(userMapper.selectById(userId), avatarResolver), null);
     }
 
     /** 该评论是否是主楼（{@code parent_id = 0}，由 {@code chk_comment_two_levels} 与 {@code root_id} 联动）。 */
@@ -594,7 +600,7 @@ public class CommentService {
             return result;
         }
         for (User user : userMapper.selectBatchIds(distinct)) {
-            result.put(user.getId(), UserBriefVO.from(user));
+            result.put(user.getId(), UserBriefVO.from(user, avatarResolver));
         }
         return result;
     }

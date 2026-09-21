@@ -1,5 +1,6 @@
 package com.hyforum.post.vo;
 
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.domain.user.entity.User;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -23,12 +24,12 @@ import io.swagger.v3.oas.annotations.media.Schema;
 @Schema(name = "UserBriefVO", description = "作者信息摘要")
 public record UserBriefVO(Long id, String nickname, String avatarUrl) {
 
-    public static UserBriefVO from(User user) {
+    public static UserBriefVO from(User user, com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
         if (user == null) {
             // 用户可能已被物理删除（本项目用逻辑删除，理论上不会），
             // 此时给一个占位而不是抛异常：帖子本身仍然应该能打开
             return new UserBriefVO(null, "已注销用户", null);
         }
-        return new UserBriefVO(user.getId(), user.getNickname(), user.getAvatarUrl());
+        return new UserBriefVO(user.getId(), user.getNickname(), avatarResolver.resolve(user));
     }
 }

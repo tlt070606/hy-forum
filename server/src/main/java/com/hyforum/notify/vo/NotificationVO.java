@@ -1,5 +1,6 @@
 package com.hyforum.notify.vo;
 
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.domain.notify.entity.Notification;
 import com.hyforum.domain.user.entity.User;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -62,7 +63,7 @@ public record NotificationVO(
      *
      * @param sender 发起人；可能为 {@code null}（已注销，或系统通知）
      */
-    public static NotificationVO from(Notification notification, User sender) {
+    public static NotificationVO from(Notification notification, User sender, com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
         if (notification == null) {
             return null;
         }
@@ -71,7 +72,7 @@ public record NotificationVO(
                 notification.getType(),
                 notification.getFromUserId(),
                 sender == null ? DELETED_SENDER : sender.getNickname(),
-                sender == null ? null : sender.getAvatarUrl(),
+                sender == null ? null : avatarResolver.resolve(sender),
                 notification.getTargetType(),
                 notification.getTargetId(),
                 notification.getContent(),

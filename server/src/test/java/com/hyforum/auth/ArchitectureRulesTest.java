@@ -4,12 +4,14 @@ import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
+import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.Architectures;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -133,6 +135,49 @@ class ArchitectureRulesTest {
      */
     private static String[] accessibleByLayers(int index) {
         return new String[]{layerName(index)};
+    }
+
+    /**
+     * <b>头像 URL 必须经过 {@code AvatarUrlResolver}</b>（CR-Q，2026-09-20 L1 裁决）。
+     *
+     * <h2>这条规则为什么必须存在（它是"第四次"的唯一防线）</h2>
+     * <p>"头像"这件事有三个消费者，而它们被<b>逐个发现、每次漏一个</b>：</p>
+     * <ol>
+     *   <li>签名下发（{@code target=avatar}）—— §14 做了；</li>
+     *   <li>写入校验（{@code PUT /api/user/profile} 的归属校验）—— §14 做了；</li>
+     *   <li><b>读取时签名</b> —— §14 <b>漏了</b> → 桶私有 → 头像裸 URL 必然 403
+     *       → <b>帖子图能看、头像不能</b>（CR-Q 报的现象）。</li>
+     * </ol>
+     * <p>而头像出现在<b>帖子作者、评论作者、通知发送者、关注/粉丝列表、侧栏最新发帖的人</b>……
+     * 只要有一个装配点漏调解析器，就是第四次。L1 明确不接受"在几个 VO 里各补一行"——
+     * 所以要有一条<b>机器守着</b>的规则。</p>
+     *
+     * <h2>规则内容</h2>
+     * <p>{@code domain} 与 {@code common.oss} 之外的类，<b>不得调用
+     * {@code User.getAvatarUrl()}</b>。取值只有两条合法路径：</p>
+     * <ul>
+     *   <li>调 {@code AvatarUrlResolver.resolve(...)}（推荐，也是唯一"拿到签名 URL"的方式）；或</li>
+     *   <li>把已由它解析好的 URL 往下传。</li>
+     * </ul>
+     * <p>新增装配点若直接读 {@code user.getAvatarUrl()}，<b>代码能编译、接口也能跑</b>，
+     * 但这条规则会红 —— 「编译能过但架构门会红」正是我们要的形态。</p>
+     *
+     * <p>豁免的两个包都有明确理由：{@code domain} 是实体自身（getter 的定义处），
+     * {@code common.oss} 是解析器的家（它<b>就是要</b>读这个字段）。</p>
+     */
+    @Test
+    void ARCH_avatar_url_must_go_through_resolver() {
+        JavaClasses classes = importMainClasses();
+
+        ArchRule rule = noClasses()
+                .that().resideOutsideOfPackage("com.hyforum.domain..")
+                .and().resideOutsideOfPackage("com.hyforum.common.oss..")
+                .should().callMethod(com.hyforum.domain.user.entity.User.class, "getAvatarUrl")
+                .because("头像必须经 AvatarUrlResolver.resolve() 装配才能带上读时签名；"
+                        + "直接读裸字段会让前端拿到一个必然 403 的 URL（CR-Q：帖子图能看、头像不能）。"
+                        + "若新增了头像装配点，请调用 AvatarUrlResolver 而不是 getAvatarUrl()");
+
+        rule.check(classes);
     }
 
     @Test

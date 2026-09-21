@@ -1,5 +1,6 @@
 package com.hyforum.domain.user.vo;
 
+import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.domain.user.entity.User;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -56,7 +57,7 @@ public record UserVO(
      * {@code domain.vo → domain.entity}，实体保持零依赖。若反过来，实体就得知道
      * 表现层的形状，后续每加一个视图都要改实体。</p>
      */
-    public static UserVO from(User user) {
+    public static UserVO from(User user, com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
         if (user == null) {
             return null;
         }
@@ -64,7 +65,7 @@ public record UserVO(
                 user.getId(),
                 user.getUsername(),
                 user.getNickname(),
-                user.getAvatarUrl(),
+                avatarResolver.resolve(user),
                 user.getBio(),
                 user.getGender(),
                 user.getPostCount(),
