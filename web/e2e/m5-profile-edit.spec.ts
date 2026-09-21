@@ -258,7 +258,15 @@ test('换头像：直传 avatar 目录并提交，avatarUrl 变成本项目 OSS 
   const after = await (
     await fetch(`${API_BASE}/api/user/me`, { headers: { Authorization: me.token } })
   ).json()
-  expect(String(after.data.avatarUrl), '刷新后接口仍应返回新头像地址').toBe(avatarUrl)
+  /*
+   * ⚠️ 比较时**只看路径部分**（`split('?')[0]`），不能逐字比 ——
+   *    后端对头像地址做了**读时签名**（这正是 CR-Q 的修复），所以返回值和提交值多出一段查询串。
+   *    本机第一版写的就是逐字相等，于是 L1 修好签名之后这条**反而失败了**（假失败）。
+   */
+  const afterUrl = String(after.data.avatarUrl)
+  expect(afterUrl.split('?')[0], '刷新后接口仍应返回同一个头像对象').toBe(avatarUrl)
+  // 顺带把 CR-Q 的修复钉住：私有桶下**必须**带签名，否则又变成"传上去也看不见"
+  expect(afterUrl, '头像地址应带读时签名（否则私有桶下 403，图显示不出来）').toContain('Signature=')
 
   /*
    * ⚠️ 到这里就**不再断言"界面上出现了那张图"**了 —— 不是偷懒，是它现在**不可能成立**：

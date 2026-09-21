@@ -151,6 +151,15 @@ import { useInteractionStore } from '@/stores/interaction'
  * （需求方一眼看出来："首页的发帖列表里面都没有个人头像还有时间"）。
  * 注释不是默认值 —— 只有 `withDefaults` 才是。
  */
+/**
+ * 收藏状态变化（**成功之后**才 emit）。
+ * 收藏列表用它做一件事：用户点书签取消收藏 → 那一行应当**从列表里消失**
+ * （收藏页不再单独放"取消收藏"按钮 —— 需求方 2026-09-20：「不要这个取消收藏」）。
+ */
+const emit = defineEmits<{
+  collectChange: [collected: boolean]
+}>()
+
 const props = withDefaults(
   defineProps<{
     /** 已归一化的卡片数据（可选字段已在 `utils/postView.ts` 收敛） */
@@ -220,6 +229,8 @@ async function toggleCollect(): Promise<void> {
   collectCount.value = Math.max(0, before + (on ? 1 : -1))
   try {
     await collectPost(props.post.id, on)
+    // 成功后才通知外界（失败会回滚，那种情况下"状态变了"是假消息）
+    emit('collectChange', on)
   } catch (e) {
     interaction.markPostCollected(props.post.id, !on)
     collectCount.value = before

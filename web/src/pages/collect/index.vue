@@ -54,6 +54,7 @@
           :post="c.card"
           :show-author="false"
           :data-testid="'collect-card'"
+          @collect-change="(on: boolean) => onCollectChange(c, on)"
         >
           <!--
             「收藏于 X」放在**卡片最顶部那一行**（= 首页卡片里作者行的位置）。
@@ -68,11 +69,7 @@
             </view>
           </template>
 
-          <template #extra>
-            <view class="collect-remove" data-testid="collect-card-remove" @click.stop="uncollect(c)">
-              <text class="collect-remove__text">取消收藏</text>
-            </view>
-          </template>
+
         </PostCard>
 
         <view v-if="items.length && hasMore" class="more">
@@ -107,7 +104,6 @@ import HyIcon from '@/components/HyIcon.vue'
 import ListState from '@/components/ListState.vue'
 import PostCard from '@/components/PostCard.vue'
 import { fetchMyCollections } from '@/api/users'
-import { collectPost } from '@/api/interaction'
 import { ApiError, PAGE_SIZE_MAX } from '@/utils/request'
 import { compactCount, toCollectionView, type CollectionView, type PostCardView } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
@@ -220,28 +216,21 @@ function loadMore(): void {
 if (auth.isLoggedIn) reload()
 
 /**
- * 取消收藏。
- * 幂等端点（§8.1），所以即使本地状态记错了、重复调用也不会造成数据错误。
+ * 收藏状态变化 —— **取消收藏不再有单独的按钮**（需求方 2026-09-20：「不要这个取消收藏」）。
+ * 取消的统一入口是卡片上那个**书签图标**（就是首页卡片上那个，行为完全一致）。
+ *
+ * 所以这里只负责一件事：**取消成功之后，把这一行从列表里移除**。
+ * - 不在这里发请求：请求由 `PostCard` 内的收藏按钮发出（它负责乐观更新与回滚）；
+ *   本页只在"它确认成功"之后调整列表 —— 这就是 `collectChange` 这个事件存在的原因。
+ * - 重新收藏（`on === true`）时什么都不做：那一行本来就在列表里。
  */
-async function uncollect(c: CollectRow): Promise<void> {
+function onCollectChange(c: CollectRow, collected: boolean): void {
+  if (collected) return
   const idx = items.value.findIndex((x) => x.postId === c.postId)
   if (idx < 0) return
-  // 先移除（用户就是要它消失），失败再插回**原位** —— 插回原位而不是"重拉列表"，
-  // 这样即使中间翻了好几页也不会把用户的位置弄丢
-  const backup = items.value[idx]
   items.value = items.value.filter((x) => x.postId !== c.postId)
   total.value = Math.max(0, total.value - 1)
-  try {
-    await collectPost(c.postId, false)
-    // 成功后才改会话态：失败的话上面的回滚已经把卡片放回来了
-    interaction.markPostCollected(c.postId, false)
-  } catch (e) {
-    const next = items.value.slice()
-    next.splice(idx, 0, backup)
-    items.value = next
-    total.value += 1
-    uni.showToast({ title: e instanceof ApiError ? e.message : '取消失败，请稍后重试', icon: 'none' })
-  }
+  uni.showToast({ title: '已取消收藏', icon: 'none' })
 }
 
 function goLogin(): void {
@@ -338,21 +327,7 @@ function goBack(): void {
   }
 }
 
-/*
- * 「取消收藏」在底栏右侧。
- * ⚠️ `flex-shrink: 0` + `nowrap`：底栏是 flex 行，左边还有三项互动指标；
- *    不给这两条的话，窄屏上这四个字会被**压成一列单字**（本机真实出现过，需求方截图指出）。
- */
-.collect-remove {
-  margin-left: auto;
-  flex-shrink: 0;
-
-  &__text {
-    font-size: $hy-font-sm;
-    color: $hy-text-secondary;
-    white-space: nowrap;
-  }
-}
+/* 「取消收藏」按钮已按需求方要求移除：取消收藏统一走卡片上的书签图标（与首页一致） */
 
 /* ---------- 分页 ---------- */
 .more {

@@ -234,13 +234,18 @@ test('我的收藏：未登录给登录引导且不发请求；登录后可取�
   ).json()
   const beforeCount = Number(before.data.collectCount)
 
+  /*
+   * ⚠️ 取消收藏**不再有单独的按钮**了（需求方 2026-09-20：「不要这个取消收藏」）——
+   *    统一走卡片上那个**书签图标**（与首页卡片完全一致）。
+   *    所以这里点的是 `post-card-collect`，而不是原来的 `collect-card-remove`。
+   */
   const removeResponse = page.waitForResponse(
     (r) =>
       r.url().endsWith('/collect') &&
       r.url().includes(`/api/posts/${postId}/`) &&
       r.request().method() === 'DELETE'
   )
-  await card.locator('[data-testid="collect-card-remove"]').click()
+  await card.locator('[data-testid="post-card-collect"]').click()
   expect((await (await removeResponse).json()).code, '取消失败').toBe(0)
   await expect(page.locator('[data-testid="collect-card"]')).toHaveCount(0, { timeout: 15_000 })
 
