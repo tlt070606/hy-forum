@@ -12,6 +12,14 @@
        它是真实存在的分类维度，且点击能进版块页，不是拿假标签充数。
   -->
   <view class="post-card" data-testid="post-card" @click="openDetail">
+    <!--
+      调用方可以在卡片**最顶部**插一行（收藏页用来放「收藏于 X」）。
+      ⚠️ 为什么单开一个插槽而不是塞进底栏：需求方 2026-09-18 明确要求
+      「**收藏的时间就放在头像旁边**」—— 也就是**作者行那一行的位置**。
+      现在收藏项契约里还没有作者字段（见 CR-R），所以那一行只有时间；
+      等契约补上 `author`，它会和时间并排出现在同一行。
+    -->
+    <slot name="header" />
     <view v-if="showAuthor" class="post-card__head">
       <Avatar :url="post.authorAvatarUrl" :nickname="post.authorName" :size="40" />
       <view class="post-card__author">

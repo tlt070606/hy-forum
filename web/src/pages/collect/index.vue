@@ -55,10 +55,20 @@
           :show-author="false"
           :data-testid="'collect-card'"
         >
+          <!--
+            「收藏于 X」放在**卡片最顶部那一行**（= 首页卡片里作者行的位置）。
+            需求方 2026-09-18：「收藏的时间就放在头像旁边」——
+            头像那一行现在只能放时间，因为 `CollectionItemVO` 里**没有作者字段**（见 CR-R）。
+          -->
+          <template #header>
+            <view class="collect-head">
+              <text class="collect-head__at" data-testid="collect-card-at">
+                收藏于 {{ c.collectedText }}
+              </text>
+            </view>
+          </template>
+
           <template #extra>
-            <text class="collected-at" data-testid="collect-card-at">
-              收藏于 {{ c.collectedText }}
-            </text>
             <view class="collect-remove" data-testid="collect-card-remove" @click.stop="uncollect(c)">
               <text class="collect-remove__text">取消收藏</text>
             </view>
@@ -310,18 +320,37 @@ function goBack(): void {
   }
 }
 
-/* ---------- 底栏插槽里的两样东西（收藏页特有） ---------- */
-.collected-at {
-  font-size: $hy-font-xs;
-  color: $hy-text-secondary;
+/* ---------- 收藏页特有的两处（插槽内容） ---------- */
+/*
+ * 「收藏于 X」：占据卡片顶部那一行（首页卡片里是作者行）。
+ * ⚠️ `white-space: nowrap` 是必须的 —— 窄屏上这一行的可用宽度很小，
+ *    不加就会被逐字换行，渲染成「收/藏/于/2/天/前」这种竖排单字（本机真实出现过）。
+ */
+.collect-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+
+  &__at {
+    font-size: $hy-font-xs;
+    color: $hy-text-secondary;
+    white-space: nowrap;
+  }
 }
 
+/*
+ * 「取消收藏」在底栏右侧。
+ * ⚠️ `flex-shrink: 0` + `nowrap`：底栏是 flex 行，左边还有三项互动指标；
+ *    不给这两条的话，窄屏上这四个字会被**压成一列单字**（本机真实出现过，需求方截图指出）。
+ */
 .collect-remove {
   margin-left: auto;
+  flex-shrink: 0;
 
   &__text {
     font-size: $hy-font-sm;
     color: $hy-text-secondary;
+    white-space: nowrap;
   }
 }
 

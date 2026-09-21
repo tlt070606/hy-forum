@@ -2042,3 +2042,67 @@ npx playwright test                     → 35 passed (1.0m)
 ⚠️ 差一条断言没写：**"界面上出现那张图"**。它现在**不可能成立**（BB.2 的 403），
 所以用例止步于"地址正确落库并在接口里返回"，并在测试里写明原因与"CR-Q 修好后可以升级成什么"。
 **不是删断言，是把做不到的那条写清楚为什么做不到** —— 与"标 fixme 但保留完整断言"同一原则。
+
+---
+
+# CC. 我的收藏页（需求方 2026-09-20 反馈）：排版 bug 是我的；"有头像/能看图"卡在契约
+
+需求方原话：「这个收藏能不能弄得跟首页的一样，有头像，也能把这个图片给加载出来呀 /
+收藏的时间就放在头像旁边」，并附了窄屏截图。
+
+## CC.1 ✅ 排版 bug：**是我的问题，已修**
+
+截图里「收藏于 2 天前」与「取消收藏」被渲染成**竖排单字**（`收/藏/于/2/天/前`）。
+根因：我把它们塞进了 `PostCard` 底栏的那个 flex 行里，而**没给 `white-space: nowrap` 与 `flex-shrink: 0`** ——
+窄屏下那一行左边还有三项互动指标，可用宽度极小，于是被逐字换行。
+这是典型的"只在窄屏暴露"的 CSS 缺陷：**宽屏看不出来，用户一用手机就露。**
+
+修法（两处都补上 `nowrap` + `shrink-0`），并把「收藏于 X」**挪到卡片顶部那一行**
+（= 首页卡片里作者行的位置）——需求方要的"放在头像旁边"就是这个位置。
+
+## CC.2 🔴 CR-R：收藏项拿不到作者、也拿不到可用的图片地址
+
+**两条契约事实（都实测过）**：
+
+```
+CollectionItemVO 的字段 = postId, boardId, title, coverUrl, imageCount,
+                          likeCount, commentCount, collectCount, createdAt
+   → 作者类字段: （一个都没有）           ← 所以收藏卡片**没法显示头像**
+   → coverUrl 带 Signature= ? false     ← 私有桶下 GET 它必然 403 → 图加载不出来
+   → 而且它**连 imageThumbs 都没有**     ← 前端**无从兜底**（连"挑一个能用的地址"都做不到）
+```
+
+**顺带查出一件更要紧的事：读时签名在各接口之间不一致**（同一个概念，行为不同）：
+
+| 接口 | `coverUrl` 是否签名 | 有 `imageThumbs` 吗 |
+|---|---|---|
+`GET /api/posts`（首页全部流） | ✅ **是** | ✅ 有（也是签名的） |
+`GET /api/feed`（**关注流**） | ❌ **裸地址** | ✅ 有（签名的）→ **前端已兜住** |
+`GET /api/user/collections`（我的收藏） | ❌ **裸地址** | ❌ **没有** → 前端兜不住 |
+`avatarUrl`（`UserVO`/`UserProfileVO`/`UserBriefVO`） | ❌ 裸地址（**CR-Q**） | — |
+
+**给 L1 的一句话（合并 CR-R 与 CR-Q）**：
+
+> 请把"读时签名"补齐到**所有对外返回 OSS 地址的地方**：
+> `CollectionItemVO.coverUrl`（并补 `imageThumbs`）、`FeedItemVO.coverUrl`、
+> `UserVO/UserProfileVO/UserBriefVO.avatarUrl`；
+> 另外 `CollectionItemVO` 请补 **`author`（`UserBriefVO`）** —— 收藏卡片要显示作者头像，
+> 而它现在一个作者字段都没有。
+> 参考：`GET /api/posts` 的 `coverUrl` 已经是签名的，可以照着做。
+
+## CC.3 我在前端做的兜底（**不越界**）
+
+关注流的封面：`coverUrl` 裸地址、但同响应里 `imageThumbs[]` **是签名的** →
+在 `toPostCard` 里加了一条规则：**`coverUrl` 没签名而 `imageThumbs` 里有签名的，就用它**。
+这不违反"前端不自己拼图片地址"（铁律 5/8、口径 7）：**两个值都是接口给的**，只是挑了一个能用的。
+⚠️ 根因仍在后端；等 CR-R 修好，这段兜底会自然退化成"永远走 coverUrl"，届时可以删。
+
+**收藏页兜不住**（`CollectionItemVO` 没有 `imageThumbs`）→ 那一页的封面**在后端补签名之前必然显示不出来**。
+我没有用任何假图或占位图去糊它 —— 显示的就是卡片自己的空封面框 + 「N 张」角标。
+
+## CC.4 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npx playwright test                     → 35 passed (1.0m)
+```

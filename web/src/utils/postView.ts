@@ -270,12 +270,35 @@ export function toPostCard(post: PostSummaryVO | FeedItemVO): PostCardView {
   const boardId = num(post.boardId)
   const name = authorName(post.author)
 
+  /*
+   * ==========================================================================
+   * 封面：**优先用带签名的那个地址**
+   * ==========================================================================
+   * 实测（2026-09-20）：**同一个概念的字段在不同接口里签名行为不一致** ——
+   * - `GET /api/posts`（首页全部流）的 `coverUrl` **带签名** ✓ 能显示；
+   * - `GET /api/feed`（关注流）的 `coverUrl` **是裸地址** ✗ 私有桶下必然 403 → 图显示不出来；
+   *   但同一个响应里 `imageThumbs[]` **是带签名的** ✓。
+   *
+   * 所以在**前端这一层**做兜底：`coverUrl` 没签名、而 `imageThumbs` 里有带签名的，
+   * 就用 `imageThumbs[0]`。这不违反"前端不自己拼图片地址"（铁律 5/8、口径 7）——
+   * 两个值**都是接口给的**，我们只是挑了一个能用的。
+   * ⚠️ 根因仍在后端（读时签名没覆盖 `/api/feed`），已作为 CR-R 登记：
+   *    等后端补上，这段兜底会自然退化成"永远走 coverUrl"，可以删。
+   */
+  const rawCover = text(post.coverUrl)
+  const thumbs = (post as { imageThumbs?: unknown }).imageThumbs
+  const signedThumb =
+    Array.isArray(thumbs)
+      ? (thumbs.find((t) => typeof t === 'string' && t.includes('Signature=')) as string | undefined)
+      : undefined
+  const coverUrl = rawCover.includes('Signature=') ? rawCover : signedThumb || rawCover
+
   return {
     id,
     boardId,
     boardName: text(post.boardName),
     title: text(post.title),
-    coverUrl: text(post.coverUrl),
+    coverUrl,
     imageCount: num(post.imageCount),
     viewCount: num(post.viewCount),
     likeCount: num(post.likeCount),
