@@ -40,10 +40,25 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * @param signature Base64 的签名
  * @param dir       对象 key 目录前缀（带尾斜杠）
  * @param expire    policy 到期时刻（epoch 秒）
- * @param callback  Base64 的回调配置 JSON
+ * @param callback  Base64 的回调配置 JSON；<b>头像签名（target=avatar）时为 {@code null} 且不出现在响应里</b>
+ *                  （见类注释末尾"callback 何时为 null"）
  * @param accessKeyId 直传表单的 {@code OSSAccessKeyId} 字段值（**CR-F**，2026-09-16 批准加入）
+ *
+ * <h2>callback 何时为 null（L1 裁决，2026-09-20）</h2>
+ * <p><b>只有帖子图签名带 callback；头像签名不带。</b>
+ * 理由：回调的唯一目的是给帖子图写 {@code post_image} 行并按 URL 认领，
+ * 而头像的 URL 是通过 {@code PUT /api/user/profile} 提交的，**没有待认领的行**。
+ * 给头像发回调不是"多余"而是"主动有害" —— 实测后果是
+ * 「**对象已进桶，而前端显示上传失败**」（OSS 报 {@code CallbackFailed}）。</p>
+ * <p>因此这里加 {@code @JsonInclude(NON_NULL)}：契约要求头像签名里 <b>callback 缺失</b>，
+ * 而只把字段置 {@code null} 会序列化成 {@code "callback": null} —— 那不是一个"缺失的字段"，
+ * 前端可能仍会把它当表单字段传出去。加了这个注解之后：
+ * <b>帖子图完全不变</b>（它永远非 null）、头像则不出现该键。</p>
  */
 @Schema(name = "OssSignatureVO", description = "OSS 直传签名（PostObject 表单直传）")
+// 只对 null 生效 → 帖子图签名逐字不变；头像签名的 callback 不出现（见类注释末节）
+@com.fasterxml.jackson.annotation.JsonInclude(
+        com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
 public record OssSignatureVO(
         @Schema(description = "直传目标域名：https://{bucket}.{endpoint}（无尾斜杠）")
         String host,

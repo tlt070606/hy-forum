@@ -125,13 +125,32 @@ public class OssSignatureService {
         String policy = encodeBase64(policyJson(expiration, dir));
         String signature = encodeBase64(hmacSha1(credentials.accessKeySecret(), policy));
 
+        // ★ callback 只给帖子图（L1 裁决，2026-09-20）。
+        //
+        // 为什么头像**不能**带 callback —— 这不是"多余"，是"主动有害"：
+        // 回调存在的唯一目的是给帖子图写 post_image 行并按 URL 认领；
+        // 而头像的 URL 是通过 PUT /api/user/profile 提交的，**没有任何待认领的行**。
+        // 而 OssCallbackService 的目录校验只认 post/（放宽它是禁止的），
+        // 于是带 callback 的头像上传会走成：
+        //   对象已进桶 → OSS 发回调 → 回调服务判"不属于本站帖子图片目录" → 400
+        //   → OSS 报 CallbackFailed → 前端显示"上传失败"，**而对象其实已经传上去了**。
+        // 需求方实测撞到；日志里每次头像上传都留下一对 WARN。
+        //
+        // 这一处是我漏掉的"第三个消费者"：上一轮只把"目录"这个事实在
+        // 签名与 profile 校验两处对齐，**没把回调服务纳入思考**。
+        // 机械检查（"搜目录字面量"）抓不到它 —— 因为那一处用的是
+        // `imageUrlPrefix()` 这个**访问器**而不是字面量。只能靠端到端跑一次发现。
+        String callback = target == SignatureTarget.AVATAR
+                ? null
+                : encodeBase64(callbackConfigJson(request));
+
         return new OssSignatureVO(
                 host,
                 policy,
                 signature,
                 dir,
                 expiration.getEpochSecond(),
-                encodeBase64(callbackConfigJson(request)),
+                callback,
                 // CR-F：PostObject 表单必须有 OSSAccessKeyId，否则前端无法完成直传。
                 // 取值**只**来自配置（而配置只来自环境变量 OSS_ACCESS_KEY_ID）——
                 // 这里刻意不写任何兜底/默认值：缺失时应用根本起不来（fail-fast），

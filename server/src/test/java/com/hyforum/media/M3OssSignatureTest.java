@@ -2,6 +2,7 @@ package com.hyforum.media;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.restassured.RestAssured;
 import io.restassured.response.Response;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -216,6 +217,85 @@ class M3OssSignatureTest extends M3OssApiTestSupport {
         assertThat(callbackUrlResolver.loopbackWarningCount())
                 .as("非环回请求不得把告警计数加一")
                 .isZero();
+    }
+
+    // ==================================================================
+    // §14 头像签名：**不带 callback**（L1 裁决，2026-09-20）
+    // ==================================================================
+
+    /**
+     * 头像签名里 <b>不得</b>出现 {@code callback}；帖子图签名里 <b>必须</b>有。
+     *
+     * <h2>这条用例在防什么（需求方实测撞到的缺陷）</h2>
+     * <p>回调的唯一目的是给帖子图写 {@code post_image} 行并按 URL 认领；
+     * 头像的 URL 是通过 {@code PUT /api/user/profile} 提交的，**没有待认领的行**。
+     * 而 {@code OssCallbackService} 的目录校验只认 {@code post/}（放宽它是禁止的），
+     * 于是带 callback 的头像上传会走成：</p>
+     * <pre>
+     *   对象已进桶 → OSS 发回调 → 回调服务判"不属于本站帖子图片目录" → 400
+     *   → OSS 报 CallbackFailed → 前端显示【上传失败】，而对象其实已经传上去了
+     * </pre>
+     * <p>也就是「<b>上传成功、界面说失败</b>」。因此"给头像发 callback"不是多余，是<b>主动有害</b>。</p>
+     *
+     * <h2>为什么前半的"反证"不可省</h2>
+     * <p>只断言"头像没有 callback"的话，<b>一个"两处都不给 callback"的实现也能通过</b> ——
+     * 而那会把帖子图彻底打坏（没有回调就没有 {@code post_image} 行，
+     * 发帖时图片会全部认领失败）。所以必须同时断言"帖子图仍然有"。</p>
+     */
+    @Test
+    @DisplayName("M4_avatar_signature_has_no_callback：头像签名不带 callback；反证：帖子图签名必须有")
+    void M4_avatar_signature_has_no_callback() {
+        // 本类其它用例都是各自 createFreshUser（没有共享字段），这里沿用同一写法
+        TestUser user = createFreshUser();
+
+        // ---------- 头像签名：callback 必须缺失/为空 ----------
+        Response avatar = RestAssured.given()
+                .header("Authorization", user.token())
+                .get("/api/oss/signature?target=avatar");
+        assertThat(avatar.jsonPath().getInt("code"))
+                .as("取头像签名必须成功。响应：%s", avatar.asString())
+                .isZero();
+        assertThat((Object) avatar.jsonPath().get("data.callback"))
+                .as("**头像签名不得带 callback** —— 带了就会走成"
+                        + "「对象已进桶 → 回调被判不属于帖子目录 → 400 → OSS 报 CallbackFailed "
+                        + "→ 前端说上传失败，而对象其实已经传上去了」。"
+                        + "响应：%s", avatar.asString())
+                .isNull();
+        // dir 必须是 avatar/{自己的 id}/ —— 不依赖 TestUser 的访问器，
+        // 直接用接口返回的 dir 形状断言，并额外证明它**含自己的 id**
+        String avatarDir = avatar.jsonPath().getString("data.dir");
+        assertThat(avatarDir)
+                .as("头像签名下发的 dir 必须是 avatar/ 目录（§14.2 ①）。实际：%s", avatarDir)
+                .startsWith("avatar/")
+                .endsWith("/");
+        assertThat(avatarDir)
+                .as("dir 必须**按当前用户分目录**（§14.2 ①：扁平 avatar/ 下 A 能用 B 上传的对象）。"
+                        + "实际：%s", avatarDir)
+                .matches("avatar/\\d+/");
+
+        // ---------- ★ 反证：帖子图签名必须有 callback ----------
+        // 缺了它，"两处都不给 callback"的实现照样绿 —— 而那会打坏发帖的图片认领
+        Response post = getSignature(user.token());
+        assertThat(post.jsonPath().getInt("code")).isZero();
+        assertThat(post.jsonPath().getString("data.callback"))
+                .as("**帖子图签名必须仍然带 callback**（反证）—— 否则本用例前半的'缺失'"
+                        + "可能只是因为整个接口都不给 callback 了，而那样发帖的 post_image 行就没人写。"
+                        + "响应：%s", post.asString())
+                .isNotBlank();
+        assertThat(post.jsonPath().getString("data.dir"))
+                .as("帖子图签名下发的 dir 仍是 post/（本次改动不得影响它）")
+                .isEqualTo("post/");
+
+        // ---------- 非法 target → 400（不静默回落到 post）----------
+        Response invalid = RestAssured.given()
+                .header("Authorization", user.token())
+                .get("/api/oss/signature?target=banner");
+        assertThat(invalid.jsonPath().getInt("code"))
+                .as("非法 target 必须 400 而不是静默回落到 post —— "
+                        + "回落会让'前端拼错参数'表现为'头像传进了帖子目录'，"
+                        + "而那个对象永远过不了头像归属校验（上传成功但头像设不上、日志无错）。"
+                        + "响应：%s", invalid.asString())
+                .isEqualTo(400);
     }
 
     /** HMAC-SHA1 → Base64（OSS PostObject 的 policy 签名算法）。 */
