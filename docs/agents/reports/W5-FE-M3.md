@@ -1969,3 +1969,76 @@ npx playwright test                     → 31 passed (56.4s)
 npx vue-tsc --noEmit -p tsconfig.json   → exit 0
 npx playwright test                     → 34 passed / 1 skipped（头像那条 fixme）
 ```
+
+---
+
+# BB. 头像链路修正（L1 口径）与一个新发现的缺口 CR-Q（2026-09-20）
+
+## BB.1 CR-P 已解：头像**能传上去了**
+
+L1 的口径（浏览器 Network 面板给的证据）：
+
+> `POST https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/ → 204 No Content`
+
+原因：**`target=avatar` 的签名现在不带 `callback`**（头像没有待认领的库表行），
+而 `callback` 是 OSS"是否发回调"的**唯一开关** ——
+带了 → `200` + 回调回包；不带 → **`204` + 空响应体**（帖子图那支是前者）。
+
+**我的修正**（`utils/upload.ts` 重构）：
+
+| 项 | 改法 |
+|---|---|
+抽公共部分 | `postToOss()` 只负责"填表 + POST"，返回 `(statusCode, data, key)`，**成功判据交给业务** |
+帖子图 | `uploadImage()`：**200 + 回调回包**，解析统一响应体 → `{id, url, thumbUrl}` |
+头像 | `uploadAvatar()`：**2xx（含 204）即成功**，**不解析响应体**（空的），URL 用 **`host + key` 自己拼** |
+`callback` 字段 | **签名给了才带**（原样透传；没有就不带）—— 这正是 L1 要求的那条：**不要为了拿回包自己补它**（那会触发 CallbackFailed） |
+`success_action_status` | **没加**。它是客户端可选的做法，但这里不需要 —— URL 我们自己拼得出来，空体不影响判断（理由写在函数注释里，免得后来人以为漏了） |
+错误映射 | 抽成 `throwOssRejection()`（`never`），**两条链路共用一份文案**（避免"同一件事两处说法"） |
+
+**结果**：上传真的成功了。库里存着真实地址：
+
+```
+645  https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/avatar/645/1789965882912-nnmjch.png
+648  https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/avatar/648/1789965937331-87krdh.png
+```
+
+`avatarUrl` 也**通过了后端的目录校验**（落在 `/avatar/{自己id}/` 内，否则会 400）。
+
+> 关于孤儿对象（`avatar/34/...` 等"传成功但界面说失败"留下的）：
+> **我按 L1 的说法没去动它们**，由 L1 记进清理清单统一处理。
+> 它们的成因正是我这一版的 bug（把 204 当失败），现在不会再产生新的了。
+
+## BB.2 🔴 CR-Q（新发现，**后端**）：头像地址没有读时签名 → **头像谁都看不到**
+
+**证据链**（三步实测）：
+
+```
+① 库里存的： https://hy-forum-2026.oss-cn-beijing.aliyuncs.com/avatar/648/1789965937331-87krdh.png
+② 直接 GET 它 → HTTP 403          （桶是私有的）
+③ GET /api/user/me 的 avatarUrl 带 Signature 吗？ → False
+   对照：帖子图片地址（/api/posts/{id}.images[].url）**是带签名的**（读时签名，早在 §N.3 就验过）
+```
+
+**所以**：头像**传得上去、地址也存对了，但前端永远显示不出来** —— 拿到的是裸地址，
+对私有桶必然 403。这不是前端能修的：**帖子图片有读时签名，头像地址没有**。
+
+**要 L1 做的**：让 `UserVO.avatarUrl` / `UserProfileVO.avatarUrl`（以及 `UserBriefVO` /
+`InteractionUserBriefVO` 里的 avatarUrl）**与帖子图片一样做读时签名**。
+否则"改头像"这个功能**在界面上永远是空的** —— 用户会以为没成功，
+而库里其实已经存了（这正是"传成功却看不到"的另一面）。
+
+**前端这一侧的降级**（已做）：`Avatar.vue` 增加 `@error` → 加载失败就**回落成字母头像**
+（而不是留一个空白方块）。`url` 变化时会**重置**失败标记，避免"传完头像却被上一次的失败挡住"。
+等 CR-Q 修好，真图会自动显示出来，这段降级自然退居备用。
+
+## BB.3 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npx playwright test                     → 35 passed (1.0m)
+    含"换头像"那条 —— 它此前是 `test.fixme`（被 204 语义卡住），现在**解封并真通过**
+```
+
+⚠️ 差一条断言没写：**"界面上出现那张图"**。它现在**不可能成立**（BB.2 的 403），
+所以用例止步于"地址正确落库并在接口里返回"，并在测试里写明原因与"CR-Q 修好后可以升级成什么"。
+**不是删断言，是把做不到的那条写清楚为什么做不到** —— 与"标 fixme 但保留完整断言"同一原则。

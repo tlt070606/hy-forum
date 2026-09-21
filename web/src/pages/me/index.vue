@@ -177,7 +177,7 @@ import { fetchMyCollections } from '@/api/users'
 import { updateProfile } from '@/api/profile'
 import { fetchSignature } from '@/api/oss'
 import { fetchRegisterMode } from '@/api/auth'
-import { precheckImage, uploadImage, type LocalImage } from '@/utils/upload'
+import { precheckImage, uploadAvatar, type LocalImage } from '@/utils/upload'
 import { ApiError } from '@/utils/request'
 import { compactCount } from '@/utils/postView'
 import { useAuthStore } from '@/stores/auth'
@@ -293,7 +293,7 @@ function changeAvatar(): void {
         mime: f?.type,
         name: f?.name || 'avatar',
       }
-      void uploadAvatar(img)
+      void doUploadAvatar(img)
     },
     fail: (err) => {
       const msg = String(err?.errMsg ?? '')
@@ -302,7 +302,12 @@ function changeAvatar(): void {
   })
 }
 
-async function uploadAvatar(img: LocalImage): Promise<void> {
+/**
+ * 本页的「选完图之后」流程。
+ * ⚠️ 名字**不能**叫 `uploadAvatar` —— 会与 `utils/upload.ts` 导出的 `uploadAvatar` 同名冲突
+ *    （TS 会报 "Import declaration conflicts with local declaration"）。
+ */
+async function doUploadAvatar(img: LocalImage): Promise<void> {
   // 先做本地预检（类型/大小），再取签名 —— 顺序与发帖页一致：不让服务端为注定被拒的图白签一次
   const invalid = precheckImage(img)
   if (invalid) {
@@ -313,12 +318,17 @@ async function uploadAvatar(img: LocalImage): Promise<void> {
   avatarUploading.value = true
   try {
     const sign = await fetchSignature('avatar')
-    const done = await uploadImage(img, sign)
+    /*
+     * ⚠️ 头像这条链路与帖子图**不一样**（L1 2026-09-20 口径）：
+     * `target=avatar` 的签名不带 `callback` → OSS 成功响应是 **204 + 空体**，
+     * 所以 `uploadAvatar` **不解析响应体**，而是用 `host + key` **自己拼 URL** 返回给我们。
+     */
+    const avatarUrl = await uploadAvatar(img, sign)
     /*
      * ⚠️ 提交时**带上其余字段的当前值**（覆盖语义），只把 avatarUrl 换成新的。
      * 少了这一步，用户改头像会把简介清空。
      */
-    await updateProfile(buildPayload({ avatarUrl: done.url }))
+    await updateProfile(buildPayload({ avatarUrl }))
     await refreshProfile()
     uni.showToast({ title: '头像已更新', icon: 'none' })
   } catch (e) {

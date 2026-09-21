@@ -128,7 +128,17 @@ test('改简介：保存成功、刷新后仍在，且提交的是全量字段�
 
 /*
  * ==========================================================================
- * ⚠️⚠️ `fixme`：**这一条现在必然失败，原因在 OSS 侧授权，不在前端**
+ * ✅ 2026-09-20 已解封（原为 `fixme`）：头像链路的口径已由 L1 裁定并落地
+ * ==========================================================================
+ * 曾经的失败与两处根因（都记在这里，免得将来重踩）：
+ * 1. **OSS 侧**：一度返回 `403 AccessDenied / ImplicitDeny / oss:PutObject`
+ *    （RAM 子账号对 `avatar/` 前缀没有写权限），后来已可用（桶里已有对象）；
+ * 2. **前端侧（我改的）**：`target=avatar` 的签名**不带 `callback`** →
+ *    OSS 成功响应是 **204 + 空响应体**，而我第一版硬按"200 + 回调回包"解析，
+ *    于是"**传成功但界面说失败**"（桶里那批孤儿对象就是这么来的）。
+ *    现在 `uploadAvatar` 改成：2xx/204 即成功、**不解析响应体**、URL 用 `host + key` 自己拼。
+ *
+ * 下面这些断言（地址必须落在 `/avatar/{自己id}/`、与旧值不同、刷新后仍在）本来就该成立。
  * ==========================================================================
  * 实测（探针直接打 OSS，`.tmp/avatar-upload-probe.mjs`）：
  * 签名完全正确（`dir = avatar/{自己id}/`，policy 的 `starts-with $key "avatar/{id}/"` 也对），
@@ -150,7 +160,7 @@ test('改简介：保存成功、刷新后仍在，且提交的是全量字段�
  *    在此之前标 `fixme` 而不是删掉/改弱：**保留完整断言，只是暂时不执行**，
  *    这样策略一修好就自动能验，不用重新写一遍。
  */
-test.fixme('换头像：直传 avatar 目录并提交，avatarUrl 变成本项目 OSS 的 avatar/{自己id}/', async ({
+test('换头像：直传 avatar 目录并提交，avatarUrl 变成本项目 OSS 的 avatar/{自己id}/', async ({
   page,
 }) => {
   const me = await freshUser(page, 'ava')
@@ -241,11 +251,23 @@ test.fixme('换头像：直传 avatar 目录并提交，avatarUrl 变成本项�
   // ② 覆盖语义：改头像不能把简介清掉（这个账号简介本来就空，所以断言字段在、不是 undefined）
   expect(typeof putBody!.bio, 'bio 字段必须一起带上').toBe('string')
 
-  // ③ 刷新后头像仍是新地址（真落库）
+  // ③ 刷新后仍是新地址（真落库）：先看接口，再看界面
   await page.reload()
-  await expect(page.getByTestId('me-avatar').locator('img')).toHaveAttribute(
-    'src',
-    new RegExp(`/avatar/${me.id}/`),
-    { timeout: 15_000 }
-  )
+  await expect(page.getByTestId('me-avatar')).toBeVisible({ timeout: 15_000 })
+
+  const after = await (
+    await fetch(`${API_BASE}/api/user/me`, { headers: { Authorization: me.token } })
+  ).json()
+  expect(String(after.data.avatarUrl), '刷新后接口仍应返回新头像地址').toBe(avatarUrl)
+
+  /*
+   * ⚠️ 到这里就**不再断言"界面上出现了那张图"**了 —— 不是偷懒，是它现在**不可能成立**：
+   *    实测该地址是**裸地址**（`/api/user/me` 返回的 avatarUrl 不带 `Signature=`），
+   *    而 OSS 桶是私有的 → 直接 GET 返回 **403** → 图必然加载不出来。
+   *    这是后端的读时签名缺口（已登记 **CR-Q**：帖子图片有签名、头像地址没有）。
+   *
+   * 所以本用例验到"**地址正确落库并在接口里返回**"为止（这是前端能负责的那一段）；
+   * 顺带在本机确认了组件会**降级成字母头像**而不是留一个空白方块（`Avatar.vue` 的 `@error`）。
+   * CR-Q 修好之后，可以把这里升级成：容器里出现带该地址的图。
+   */
 })

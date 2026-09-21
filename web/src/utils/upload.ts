@@ -210,7 +210,19 @@ function parseUploadBody(raw: unknown, statusCode: number): UploadedImage {
     })
   }
 
-  // 情况二：OSS 的错误体（不是统一响应体）
+  // 情况二：OSS 的错误体（不是统一响应体）→ 交给**必定抛出**的映射函数
+  throwOssRejection(bodyText, statusCode)
+}
+
+/**
+ * 把 OSS 的拒绝体映射成可读文案并抛出（**必定抛出**，签名返回类型是 `never`）。
+ *
+ * 单独抽出来是为了让两条链路共用同一份文案：
+ * - 帖子图：`parseUploadBody` 在"不是统一响应体"时调它；
+ * - 头像：成功判据是 2xx/204，**非 2xx 一律**调它。
+ * 两处各写一份的话，文案迟早不一致（这个项目已经吃过多次"同一件事两处说法"的亏）。
+ */
+function throwOssRejection(bodyText: string, statusCode: number): never {
   const ossCode = /<Code>([^<]+)<\/Code>/.exec(bodyText)?.[1]
   console.warn('[upload] OSS 返回了非统一响应体', statusCode, bodyText.slice(0, 500))
 
@@ -277,14 +289,23 @@ function parseUploadBody(raw: unknown, statusCode: number): UploadedImage {
 }
 
 /**
- * 上传一张图片到 OSS（直传），返回后端落库后的 `{id, url, thumbUrl}`。
+ * 直传的**公共部分**：预检 → 签名为空自检 → 填表 → POST 到 OSS。
  *
- * @param img  选中的文件（`{path, size?, mime?, name?}`）
- * @param sign `GET /api/oss/signature` 的响应（**全部字段原样使用**）
+ * 只把 `(statusCode, data, key)` 交回给调用方 —— **"怎么算成功"由业务决定**，
+ * 因为两条链路的成功形态**不一样**（见 `uploadImage` / `uploadAvatar` 的说明）。
  *
- * @throws {ApiError} 预检失败 / 网络失败 / OSS 拒绝 / 回调未返回 URL
+ * 三条不可动摇的规则：
+ * 1. `policy` / `signature` / `OSSAccessKeyId` / `callback` **全部原样取自签名响应**，
+ *    一个字节都不自己编（任务书 §3.1）；
+ * 2. **签名给了 `callback` 才带这个字段**。它是 OSS"是否发回调"的**唯一开关**：
+ *    带了 → 成功响应是 `200` + 回调回包；不带 → 成功响应是 **`204` + 空响应体**。
+ *    所以"为了拿回包而自己补一个 callback"是错的（那正是刚修掉的 CallbackFailed 缺陷）；
+ * 3. `key` 用 `dir` + 自生成文件名（`dir` 里已经含 `avatar/{自己id}/` 这类前缀，**不要自己拼目录**）。
  */
-export function uploadImage(img: LocalImage, sign: OssSignatureVO): Promise<UploadedImage> {
+function postToOss(
+  img: LocalImage,
+  sign: OssSignatureVO
+): Promise<{ statusCode: number; data: unknown; key: string }> {
   const invalid = precheckImage(img)
   if (invalid) {
     return Promise.reject(new ApiError({ kind: 'business', code: -1, message: invalid }))
@@ -302,21 +323,27 @@ export function uploadImage(img: LocalImage, sign: OssSignatureVO): Promise<Uplo
     )
   }
 
+  const key = buildObjectKey(sign, img)
+
   const formData: Record<string, string> = {
     // ① 对象 key：dir + 文件名（唯一，不覆盖已有对象）
-    key: buildObjectKey(sign, img),
+    key,
     // ②③④ 服务端给的，一个字节都不改
     policy: String(sign.policy ?? ''),
     signature: String(sign.signature ?? ''),
     // 契约 description 原文：accessKeyId 就是表单里的 OSSAccessKeyId
     OSSAccessKeyId: String(sign.accessKeyId ?? ''),
-    // ⑤ 回调配置也是原样透传（不要自己拼 JSON）
-    callback: String(sign.callback ?? ''),
     // ⑥ policy 里有 `starts-with $Content-Type image/`，必须显式给这个表单字段
     'Content-Type': mime,
   }
+  /*
+   * ⑤ 回调配置：**签名给了才带**（见本函数头第 2 条）。
+   * `target=avatar` 的签名**刻意不带 callback**（头像没有待认领的库表行，
+   * 回调查不到东西 → 那正是之前 CallbackFailed 的来源）。
+   */
+  if (sign.callback) formData.callback = String(sign.callback)
 
-  return new Promise<UploadedImage>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     uni.uploadFile({
       // `host` 无尾斜杠（CR-009），直接作为 POST 目标
       url: String(sign.host ?? ''),
@@ -327,11 +354,7 @@ export function uploadImage(img: LocalImage, sign: OssSignatureVO): Promise<Uplo
       // 不设 header：让浏览器自己给 multipart/form-data 带 boundary
       // （手写 `Content-Type: multipart/form-data` 会因为缺 boundary 而解析失败）
       success: (res) => {
-        try {
-          resolve(parseUploadBody(res.data, res.statusCode ?? 0))
-        } catch (e) {
-          reject(e)
-        }
+        resolve({ statusCode: res.statusCode ?? 0, data: res.data, key })
       },
       fail: (err) => {
         const raw = String(err?.errMsg ?? '')
@@ -346,4 +369,61 @@ export function uploadImage(img: LocalImage, sign: OssSignatureVO): Promise<Uplo
       },
     })
   })
+}
+
+/**
+ * 上传一张**帖子图**到 OSS（直传），返回后端落库后的 `{id, url, thumbUrl}`。
+ *
+ * 成功形态：**`200` + 后端回调的返回值**（统一响应体）。
+ * 因为 `target=post` 的签名**带 `callback`**，OSS 存完对象会回调后端，
+ * 后端落库后把结果原样回给上传方。
+ *
+ * @throws {ApiError} 预检失败 / 网络失败 / OSS 拒绝 / 回调未返回 URL
+ */
+export async function uploadImage(img: LocalImage, sign: OssSignatureVO): Promise<UploadedImage> {
+  const { statusCode, data } = await postToOss(img, sign)
+  return parseUploadBody(data, statusCode)
+}
+
+/**
+ * 上传一张**头像**，返回可直接提交给 `PUT /api/user/profile` 的 `avatarUrl`。
+ *
+ * ==========================================================================
+ * ⚠️ 与帖子图**三处不同**，全都来自 L1 的口径裁定（2026-09-20）
+ * ==========================================================================
+ * 1. **成功判据是 2xx（含 `204`）**，**不是** 200：
+ *    `target=avatar` 的签名不带 `callback`，所以 OSS 的成功响应是
+ *    **`204 No Content` + 空响应体**（实测证据：浏览器 Network 面板里
+ *    `POST …aliyuncs.com/ → 204`）。帖子图那支才是 200 + 回调回包。
+ * 2. **不解析响应体**：204 的体是空的，`JSON.parse('')` 只会抛错 ——
+ *    第一版就是因为硬按"200 + 回调回包"处理，才出现"**传成功但界面说失败**"
+ *    （桶里那批 `avatar/34/...` 孤儿对象就是这么来的）。
+ * 3. **URL 由前端拼**：`host` + `key`（`key = dir + 文件名`，`dir` 来自签名响应、
+ *    已经是 `avatar/{自己id}/`，**不要自己拼目录**）。
+ *    后端会校验这个 URL 必须落在 `avatar/{你自己的id}/` 内，落在别处**故意**返回 400。
+ *
+ * ⚠️ **不要**为了让响应有内容而给表单补 `callback`（那会触发 CallbackFailed）。
+ *    若确实需要可解析的成功回包，标准做法是表单里加 `success_action_status: '200'` ——
+ *    那属于**客户端自己的选择**；这里不需要（URL 我们自己拼得出来）。
+ */
+export async function uploadAvatar(img: LocalImage, sign: OssSignatureVO): Promise<string> {
+  const { statusCode, data, key } = await postToOss(img, sign)
+
+  if (statusCode >= 200 && statusCode < 300) {
+    /*
+     * 拼 URL：`host` 契约上无尾斜杠（CR-009），但这里**仍然防一手**——
+     * 万一哪天服务端把 `host` 写成带斜杠的形态，直接相接会得到 `//avatar/...`，
+     * 那种 URL 后端校验不过、排查起来还很像"目录不对"。
+     */
+    const host = String(sign.host ?? '')
+    const base = host.endsWith('/') ? host.slice(0, -1) : host
+    return `${base}/${key}`
+  }
+
+  /*
+   * 非 2xx：复用**同一份** OSS 错误映射（它能分辨
+   * "回调到私有地址" / "目录无写权限" / 其余 403 并带上错误码），
+   * 不另写一份 —— 两份文案迟早不一致。它是 `never` 返回，所以这里不需要再 return。
+   */
+  throwOssRejection(typeof data === 'string' ? data : JSON.stringify(data ?? ''), statusCode)
 }

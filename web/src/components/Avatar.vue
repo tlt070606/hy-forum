@@ -24,13 +24,21 @@
     ⚠️ 底色由昵称**确定性**推导（见 `utils/postView.ts` 的 `avatarColor`），
        不能用随机数：同一个人刷新一次换一次颜色，看起来像 bug。
   -->
+  <!--
+    ⚠️ **加载失败要降级**（`@error` → `imageFailed`）：
+    本项目 OSS 桶是私有的，而 `avatarUrl` 目前是**裸地址**（后端没做读时签名，见 CR-Q），
+    所以有头像的用户**图会 403 加载不出来** —— 那种情况下如果不降级，
+    界面上就是一个空白方块（比没有头像更难看，而且看不出是"加载失败"）。
+    降级成字母头像后：**有图就显示图，没图也是一个体面的样子**。
+  -->
   <image
-    v-if="url"
+    v-if="url && !imageFailed"
     class="hy-avatar"
     :style="boxStyle"
     :src="url"
     mode="aspectFill"
     :data-testid="testid || undefined"
+    @error="onImageError"
   />
   <view
     v-else-if="nickname"
@@ -53,7 +61,7 @@
  *    + 内部绝对定位的 `<img>`，外壳没有确定尺寸时会被撑成 0 高。
  *    这条是 M2 踩过的坑。
  */
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import HyIcon, { type IconSize } from '@/components/HyIcon.vue'
 import { avatarColor, avatarInitial } from '@/utils/postView'
 
@@ -70,6 +78,30 @@ const props = withDefaults(
   }>(),
   { url: '', nickname: '', size: 40, testid: '' }
 )
+
+/**
+ * 真图是否**加载失败** → 失败后降级成字母头像。
+ *
+ * ⚠️ 为什么需要它：本项目 OSS 桶是私有的，而 `avatarUrl` 目前是**裸地址**
+ * （后端没对头像地址做读时签名，见报告 CR-Q）→ 有头像的用户图会 **403**。
+ * 不降级的话界面上是个空白方块 —— 比"没有头像"更难看，而且看不出是加载失败。
+ *
+ * ⚠️ `url` 变了要**重置**回 false：同一个组件实例换完头像后，
+ *    不能让"上一次的失败"把新图也挡住（那会变成"传了头像却不显示"的假象）。
+ */
+const imageFailed = ref(false)
+watch(
+  () => props.url,
+  () => {
+    imageFailed.value = false
+  }
+)
+
+/** 图片加载失败 → 记下来，模板据此降级；控制台留一条，便于和 CR-Q 对上 */
+function onImageError(): void {
+  imageFailed.value = true
+  console.warn('[avatar] 头像图加载失败（私有桶 + 未签名地址？见 CR-Q）：', props.url)
+}
 
 const boxStyle = computed(() => ({
   width: `${props.size}px`,
