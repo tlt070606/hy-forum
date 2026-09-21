@@ -1213,7 +1213,11 @@ export interface components {
             /** Format: int64 */
             boardId?: number;
             title?: string;
+            /** @description 封面地址，已做读时签名 */
             coverUrl?: string;
+            /** @description 前 3 张图缩略图，已做读时签名 */
+            imageThumbs?: string[];
+            author?: components["schemas"]["InteractionUserBriefVO"];
             /** Format: int32 */
             imageCount?: number;
             /** Format: int32 */

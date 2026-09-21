@@ -77,7 +77,7 @@
  *    它与快照不符会直接报漂移。改快照就必须改这里，反之亦然。
  */
 export const OPENAPI_SNAPSHOT_SHA256 =
-  'ebe57398c8846ad5d2600c7d295e6bfe8b8e7b0bd3593db7eca0762f8e7192b6'
+  '05a29753483143f0bd02c9a7506617104238abb76036b157d1348468fa177f2d'
 
 /** 快照对应的后端版本，便于人肉核对这场快照是什么时候的。 */
 export const OPENAPI_SNAPSHOT_VERSION = '0.0.1'
