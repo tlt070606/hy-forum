@@ -78,16 +78,21 @@ public class FeedService {
     /** 头像 URL 的唯一装配入口（CR-Q）。 */
     private final AvatarUrlResolver avatarResolver;
 
+    /** CR-Q 扩展：对外 OSS 地址的唯一签名入口（封面/缩略图/头像）。 */
+    private final com.hyforum.common.oss.OssUrls ossUrls;
+
     public FeedService(PostMapper postMapper,
                        BoardMapper boardMapper,
                        UserMapper userMapper,
                        FollowService followService,
-                                AvatarUrlResolver avatarResolver) {
+                                AvatarUrlResolver avatarResolver,
+                                com.hyforum.common.oss.OssUrls ossUrls) {
         this.postMapper = postMapper;
         this.boardMapper = boardMapper;
         this.userMapper = userMapper;
         this.followService = followService;
         this.avatarResolver = avatarResolver;
+        this.ossUrls = ossUrls;
     }
 
     /**
@@ -187,7 +192,7 @@ public class FeedService {
                     post.getBoardId(),
                     boardNames.get(post.getBoardId()),
                     post.getTitle(),
-                    post.getCoverUrl(),
+                    ossUrls.sign(post.getCoverUrl()),
                     nullToZero(post.getImageCount()),
                     // CR-L / CR-K 的四个字段：由 FeedController 用 CardViewerStateEnricher
                     // 在接入层补齐（本包不依赖 post 包，也不该知道"谁在看"）。

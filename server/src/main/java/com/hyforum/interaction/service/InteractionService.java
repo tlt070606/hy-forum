@@ -19,6 +19,8 @@ import com.hyforum.domain.interaction.mapper.PostCollectMapper;
 import com.hyforum.domain.interaction.mapper.PostLikeMapper;
 import com.hyforum.domain.notify.entity.Notification;
 import com.hyforum.domain.post.entity.Post;
+import com.hyforum.domain.post.entity.PostImage;
+import com.hyforum.domain.post.mapper.PostImageMapper;
 import com.hyforum.domain.post.mapper.PostMapper;
 import com.hyforum.interaction.vo.CollectionItemVO;
 import org.slf4j.Logger;
@@ -28,7 +30,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -74,18 +78,38 @@ public class InteractionService {
      */
     private final NotificationPublisher notificationPublisher;
 
+    /** CR-Q 扩展：对外 OSS 地址的唯一签名入口（封面/缩略图/头像）。 */
+    private final com.hyforum.common.oss.OssUrls ossUrls;
+
+    /** CR-Q 扩展：收藏卡片要显示作者头像，需要用户昵称与头像。 */
+    private final com.hyforum.domain.user.mapper.UserMapper userMapperForCard;
+
+    /** CR-Q 扩展：收藏卡片的 imageThumbs 要读该帖的图片（只读 url 列）。 */
+    private final PostImageMapper postImageMapper;
+
+    /** CR-Q：头像必须经解析器装配才带读时签名（见 AvatarUrlResolver 的类注释）。 */
+    private final com.hyforum.common.oss.AvatarUrlResolver avatarResolver;
+
     public InteractionService(PostLikeMapper postLikeMapper,
                               PostCollectMapper postCollectMapper,
                               CommentLikeMapper commentLikeMapper,
                               CommentMapper commentMapper,
                               PostMapper postMapper,
-                              NotificationPublisher notificationPublisher) {
+                              NotificationPublisher notificationPublisher,
+                              com.hyforum.common.oss.OssUrls ossUrls,
+                              com.hyforum.domain.user.mapper.UserMapper userMapperForCard,
+                              PostImageMapper postImageMapper,
+                              com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
         this.postLikeMapper = postLikeMapper;
         this.postCollectMapper = postCollectMapper;
         this.commentLikeMapper = commentLikeMapper;
         this.commentMapper = commentMapper;
         this.postMapper = postMapper;
         this.notificationPublisher = notificationPublisher;
+        this.ossUrls = ossUrls;
+        this.userMapperForCard = userMapperForCard;
+        this.postImageMapper = postImageMapper;
+        this.avatarResolver = avatarResolver;
     }
 
     // ==================================================================
@@ -228,13 +252,64 @@ public class InteractionService {
                 .filter(post -> post.getStatus() != null && post.getStatus() == Post.STATUS_NORMAL)
                 .toList();
 
+        // 作者摘要一次性批量查好（一页 20 条逐条查就是 20 次额外查询 —— N+1）
+        Map<Long, com.hyforum.interaction.vo.UserBriefVO> authorCache = new HashMap<>();
         List<CollectionItemVO> items = visible.stream()
                 .map(post -> new CollectionItemVO(post.getId(), post.getBoardId(), post.getTitle(),
-                        post.getCoverUrl(), nullToZero(post.getImageCount()),
+                        // ★ CR-Q 扩展：封面**必须读时签名**（桶私有，裸 URL 前端 403）。
+                        //   此前这里直接传 post.getCoverUrl() —— 前端是靠肉眼逐个撞出来的缺陷。
+                        ossUrls.sign(post.getCoverUrl()),
+                        // ★ CR-Q 扩展：缩略图与帖子列表卡片同一口径（前 3 张、逐个签名）
+                        ossUrls.thumbs(loadImageUrls(post.getId()),
+                                com.hyforum.common.oss.OssUrls.CARD_THUMB_LIMIT),
+                        // ★ CR-Q 扩展：收藏卡片要显示作者头像，此前本 VO **一个作者字段都没有**
+                        buildCardAuthor(post.getUserId(), authorCache),
+                        nullToZero(post.getImageCount()),
                         nullToZero(post.getLikeCount()), nullToZero(post.getCommentCount()),
                         nullToZero(post.getCollectCount()), post.getCreatedAt()))
                 .toList();
         return PageResult.of(items, result.getTotal(), pageNo, pageSize);
+    }
+
+    /**
+     * 批量取某帖的图片**原图裸地址**（供 {@code ossUrls.thumbs} 推导缩略图并签名）。
+     *
+     * <p>只取 {@code url} 一列：缩略图地址由 {@code OssThumbnailUrls.derive} 推导，
+     * 不需要把 {@code thumb_url} 也读出来 —— 少一列就少一处可能不一致的来源。</p>
+     *
+     * <p>按 {@code sort} 升序：卡片上"前 3 张"必须是<b>用户上传顺序</b>的前 3 张，
+     * 否则同一帖在不同接口里给出的缩略图顺序不同，看起来像随机。</p>
+     *
+     * <p>可见性口径与详情/列表一致：隐藏 {@code audit_status=2}（CR-006），<b>不隐藏 0</b>。</p>
+     */
+    private List<String> loadImageUrls(long postId) {
+        return postImageMapper.selectList(Wrappers.<PostImage>lambdaQuery()
+                        .eq(PostImage::getPostId, postId)
+                        .ne(PostImage::getAuditStatus, PostImage.AUDIT_REJECTED)
+                        .orderByAsc(PostImage::getSort))
+                .stream()
+                .map(PostImage::getUrl)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    /**
+     * 造卡片上的作者摘要（昵称 + <b>已签名的头像</b>）。
+     *
+     * <p>走 {@code UserBriefVO.from(user, avatarResolver)}，<b>不自己拼</b>昵称与头像字段 ——
+     * 头像的签名与归属判定只有一处实现（CR-Q 的教训：装配点漏一个就是同一个 bug 再来一次）。</p>
+     */
+    private com.hyforum.interaction.vo.UserBriefVO buildCardAuthor(
+            long userId, Map<Long, com.hyforum.interaction.vo.UserBriefVO> authorCache) {
+        com.hyforum.interaction.vo.UserBriefVO cached = authorCache.get(userId);
+        if (cached != null) {
+            return cached;
+        }
+        com.hyforum.interaction.vo.UserBriefVO built =
+                com.hyforum.interaction.vo.UserBriefVO.from(
+                        userMapperForCard.selectById(userId), avatarResolver);
+        authorCache.put(userId, built);
+        return built;
     }
 
     // ==================================================================

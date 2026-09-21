@@ -68,18 +68,23 @@ public class UserService {
     /** 头像 URL 的唯一装配入口（CR-Q）：对外头像必须经过它才能带上读时签名。 */
     private final AvatarUrlResolver avatarResolver;
 
+    /** CR-Q 扩展：对外 OSS 地址的唯一签名入口（封面/缩略图/头像）。 */
+    private final com.hyforum.common.oss.OssUrls ossUrls;
+
     public UserService(UserMapper userMapper,
                        PostMapper postMapper,
                        CommentMapper commentMapper,
                        BoardMapper boardMapper,
                                  FollowService followService,
-                                 AvatarUrlResolver avatarResolver) {
+                                 AvatarUrlResolver avatarResolver,
+                                 com.hyforum.common.oss.OssUrls ossUrls) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.boardMapper = boardMapper;
         this.followService = followService;
         this.avatarResolver = avatarResolver;
+        this.ossUrls = ossUrls;
     }
 
     /**
@@ -236,7 +241,11 @@ public class UserService {
                     post.getBoardId(),
                     boardNames.get(post.getBoardId()),
                     post.getTitle(),
-                    post.getCoverUrl(),
+                    // ★ CR-Q 扩展：封面**必须读时签名**（桶私有，裸 URL 前端 403）。
+                    //   注意本类与 FeedService **都在装配同一种卡片**（FeedItemVO）——
+                    //   这正是"同一个 VO 有多个装配点"的典型，也是护栏用例抓到本处的价值：
+                    //   只改 FeedService 会漏掉"个人主页的帖子列表"这条路径。
+                    ossUrls.sign(post.getCoverUrl()),
                     nullToZero(post.getImageCount()),
                     // CR-L / CR-K 的四个字段：由 FeedController 用 CardViewerStateEnricher
                     // 在接入层补齐（本包不依赖 post 包，也不该知道"谁在看"）。
