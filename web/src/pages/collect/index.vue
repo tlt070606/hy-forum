@@ -39,11 +39,11 @@
           收藏卡片**就是首页那张卡片**（需求方 2026-09-18：「收藏的UI和首页的UI
           做成一样啊」）—— 复用 `PostCard` 组件，而不是复制一份样式。
           ====================================================================
-          两处必须说的取舍：
-          1. `:show-author="false"` —— `CollectionItemVO` **没有作者字段**
-             （收藏记录本身不存作者），显示一个空作者行比不显示更糟；
-          2. 底栏用 `extra` 插槽补「收藏于 X」与「取消收藏」——
-             它们是**这个列表特有的**，不属于通用卡片。
+          两条说明：
+          1. **作者行照常显示** —— 契约 `CollectionItemVO.author` 现在有了（`UserBriefVO`），
+             所以收藏卡片与首页卡片**结构完全一致**；
+          2. 「收藏于 X」放在**作者行的位置**（需求方：「收藏的时间就放在头像旁边」），
+             也就是首页卡片里"发帖时间"那一格。
           ⚠️ 卡片里的点赞/收藏按钮**依然可点**（真接口）：收藏本就是已收藏态，
              所以进页面时会把这几条在会话态里标成已收藏（见 `load` 里的 mark），
              否则书签图标会显示成"没收藏"而列表又明明是我收藏的 —— 自相矛盾。
@@ -52,7 +52,6 @@
           v-for="c in items"
           :key="c.postId"
           :post="c.card"
-          :show-author="false"
           :data-testid="'collect-card'"
           @collect-change="(on: boolean) => onCollectChange(c, on)"
         >
@@ -61,13 +60,6 @@
             需求方 2026-09-18：「收藏的时间就放在头像旁边」——
             头像那一行现在只能放时间，因为 `CollectionItemVO` 里**没有作者字段**（见 CR-R）。
           -->
-          <template #header>
-            <view class="collect-head">
-              <text class="collect-head__at" data-testid="collect-card-at">
-                收藏于 {{ c.collectedText }}
-              </text>
-            </view>
-          </template>
 
 
         </PostCard>
@@ -93,7 +85,7 @@
  *
  * 三条口径（需求方 grill 后定）：
  * 1. **未登录不发请求**，直接给登录引导；
- * 2. **与首页同一张卡片**（复用 `PostCard`，`:show-author="false"`）——
+ * 2. **与首页同一张卡片**（复用 `PostCard`，**作者行照常显示** —— `CollectionItemVO.author` 已补）——
  *    这是需求方 2026-09-18 明确要求的"UI 做成一样"，
  *    而**共用组件**是"一样"的唯一可靠保证（复制样式迟早会漂）；
  * 3. 取消收藏**就地移除**，失败插回**原位**（不重拉整页，免得把翻了几页的位置弄丢）。
@@ -134,10 +126,14 @@ const hasMore = ref(false)
 /**
  * 把收藏项转成 `PostCardView`。
  *
- * ⚠️ 这里**没有**"构造假作者"这一步（那会显示出"匿名用户"这种假东西）。
- *    作者行由 `:show-author="false"` 整行不渲染 —— 契约没给的数据就不显示。
- *    `viewCount` 契约里没有 → 填 0，但卡片上浏览量那格**照常显示 0**，
- *    这一点如实写在报告里（收藏列表的浏览量是"未知"，不是"0 次浏览"）。
+ * 契约 `CollectionItemVO` 现在的字段：`postId / boardId / title / coverUrl / imageCount /
+ * imageThumbs / author / likeCount / commentCount / collectCount / createdAt`。
+ * 所以**作者行能显示了**（`author` 是 `UserBriefVO`）—— 这正是需求方要的"收藏跟首页一样有头像"。
+ *
+ * 仍然缺的（都如实处理，不编）：
+ * - **没有版块名**（只给 `boardId`）→ 不显示版块标签；
+ * - **没有 `viewCount`** → 那格显示 0，但这是"未知"不是"0 次浏览"（已在报告里说明）；
+ * - **缩略图地址不可用**（参数顺序导致 403，见 `imageThumbs: []` 的注释）→ 退回单格封面。
  */
 function toRow(c: CollectionView): CollectRow {
   const view = toCollectionViewView(c)
@@ -153,17 +149,35 @@ function toCollectionViewView(c: CollectionView): PostCardView {
     boardName: '',
     title: c.title,
     coverUrl: c.coverUrl,
+    // 作者：契约 `CollectionItemVO.author` 现在有了（`UserBriefVO`）→ 收藏卡片能显示作者行 ✓
+    authorName: c.authorName,
+    authorAvatarUrl: c.authorAvatarUrl,
     imageCount: c.imageCount,
+    /*
+     * 计数：`viewCount` 契约没给 → 0（**这是"未知"，不是"0 次浏览"**，报告里说明了）；
+     * 其余三个都是契约真给的 ✓。
+     */
     viewCount: 0,
     likeCount: c.likeCount,
     commentCount: c.commentCount,
     collectCount: c.collectCount,
-    authorName: '',
-    authorAvatarUrl: '',
-    // 卡片上的时间格用"收藏时间"（这里没有发帖时间可用）—— 底栏另有「收藏于」
-    timeText: c.collectedText,
+    /*
+     * 作者行下面的时间用**收藏时间**（需求方 2026-09-20：「收藏的时间就放在头像旁边」）——
+     * 也就是首页卡片里"发帖时间"的那个位置。这样收藏卡片与首页卡片结构完全一致：
+     * 头像 + 昵称 + 时间 / 标题 / 图 / 版块标签 / 互动行。
+     */
+    timeText: `收藏于 ${c.collectedText}`,
     isTop: false,
     isEssence: false,
+    /*
+     * ⚠️ **这里刻意不给缩略图**（`imageThumbs: []`）→ 卡片退回 `coverUrl` 那一格。
+     * 原因是一次实测出来的后端缺陷：**同一个对象的缩略图，两个接口给的 URL 参数顺序不同** ——
+     *   /api/posts 的 imageThumbs[0]          → `?x-oss-process=…&OSSAccessKeyId=…&Signature=…`  → 200 ✓
+     *   /api/user/collections 的 imageThumbs[0] → `?OSSAccessKeyId=…&Signature=…&x-oss-process=…` → **403** ✗
+     * 而 `CollectionItemVO.coverUrl` 是好的（200 ✓）。与其在收藏页画一堆 403 的灰块，
+     * 不如老老实实显示那一格。已作为 CR-S 登记。
+     */
+    imageThumbs: [],
     /*
      * ⚠️ 只给 `collected: true`（在这个列表里必然是真的），**不给 `liked`** ——
      * `CollectionItemVO` 没有 `liked` 字段，给个 false 会把我确实点过的赞抹掉。

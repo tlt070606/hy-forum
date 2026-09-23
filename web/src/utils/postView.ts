@@ -239,6 +239,12 @@ export interface PostCardView {
   /** 封面地址（空串 = 无图）。**契约里列表字段是 `coverUrl`，不是 `thumbUrl`** */
   coverUrl: string
   imageCount: number
+  /**
+   * **前最多 3 张缩略图**（契约 `imageThumbs`，读时签名）。
+   * 列表用它画真九宫格（需求方 2026-09-18："有多少个就画多少个"）。
+   * ⚠️ 契约只给前 3 张 —— 超过 3 张的部分用 `imageCount` 出「+N」角标表示，**不自己编地址**。
+   */
+  imageThumbs: string[]
   viewCount: number
   likeCount: number
   commentCount: number
@@ -306,6 +312,16 @@ export function toPostCard(post: PostSummaryVO | FeedItemVO): PostCardView {
     title: text(post.title),
     coverUrl,
     imageCount: num(post.imageCount),
+    /*
+     * 缩略图列表：**只挑签名能用的**（`Signature=` 在里面）。
+     * 实测过：同一批 URL 里偶尔混进没签名的（或签名参数位置不对的），
+     * 那种 `<image src>` 会 403、渲染成灰块 —— 与其显示灰块，不如让它退回 `coverUrl` 那一格。
+     */
+    imageThumbs: Array.isArray((post as { imageThumbs?: unknown }).imageThumbs)
+      ? ((post as { imageThumbs: unknown[] }).imageThumbs.filter(
+          (t): t is string => typeof t === 'string' && t.includes('Signature=')
+        ) as string[])
+      : [],
     viewCount: num(post.viewCount),
     likeCount: num(post.likeCount),
     commentCount: num(post.commentCount),
@@ -503,6 +519,10 @@ export interface CollectionView {
   title: string
   coverUrl: string
   imageCount: number
+  /** 作者昵称（契约 `CollectionItemVO.author`）。空串 = 契约没给 */
+  authorName: string
+  /** 作者头像（读时签名）。空串 = 没有头像 */
+  authorAvatarUrl: string
   likeCount: number
   commentCount: number
   collectCount: number
@@ -519,6 +539,8 @@ export function toCollectionView(c: CollectionItemVO): CollectionView {
     title: text(c.title),
     coverUrl: text(c.coverUrl),
     imageCount: num(c.imageCount),
+    authorName: authorName(c.author),
+    authorAvatarUrl: text(c.author?.avatarUrl),
     likeCount: num(c.likeCount),
     commentCount: num(c.commentCount),
     collectCount: num(c.collectCount),

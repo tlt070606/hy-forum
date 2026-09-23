@@ -220,8 +220,13 @@ test('我的收藏：未登录给登录引导且不发请求；登录后可取�
   await page.goto('#/pages/collect/index')
   const card = page.locator('[data-testid="collect-card"]').first()
   await expect(card).toBeVisible({ timeout: 15_000 })
-  // 收藏项契约里没有作者字段 → 卡片**不该**有作者行（也不该显示"匿名用户"这种假东西）
-  await expect(card.locator('[data-testid="post-card-author"]')).toHaveCount(0)
+  /*
+   * ⚠️ 这条断言**反过来了**：`CollectionItemVO.author` 已在契约里补上（L1 2026-09-21），
+   *    所以收藏卡片现在**应当**显示作者行 —— 需求方要的"收藏跟首页一样有头像"就是这个。
+   *    （补字段之前这里断言的是 `toHaveCount(0)`。）
+   */
+  await expect(card.locator('[data-testid="post-card-author"]')).toHaveCount(1)
+  await expect(card.locator('[data-testid="post-card-author"]')).not.toHaveText('')
 
   /*
    * ⚠️ 断言必须写成"**减少恰好 1**"，不能写"变成 0"。

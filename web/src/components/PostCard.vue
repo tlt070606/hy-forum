@@ -39,16 +39,32 @@
     <text class="post-card__title" data-testid="post-card-title">{{ post.title }}</text>
 
     <!--
-      封面。
-      ⚠️ 需求方 2026-09-18：「这个图片能不能不要一下子加载全部？我想要跟九宫格一样，
-         有多少个就加载多少个」—— 通栏大图一下占掉半屏，改成**九宫格里一格的大小**。
-
-      ⚠️ 但**契约限制这里只能画一张**：`PostSummaryVO` 只有 `coverUrl` + `imageCount`，
-         **没有图片列表** → 列表页**做不出真正的九宫格**（详情页有 `images[]` 才做得出来）。
-         所以这里如实画一张 + 右下角标「N 张」说明不止一张，
-         并把"列表需要图片列表"作为 CR 上报（见报告 §Q）。**不自己编造图片地址**。
+      图片区（需求方 2026-09-18：「我要跟九宫格一样，有多少个就画多少个」）。
+      契约 `imageThumbs` **只给前 3 张**（读时签名）→ 所以：
+      - **≥2 张** → 画九宫格（最多 3 格），超过 3 张的用「+N」角标说明
+        （N 由 `imageCount` 算，**不编地址** —— 口径 7）；
+      - **只有 1 张或拿不到缩略图** → 退回一格 + 「N 张」角标。
+      ⚠️ 为什么不画满 9 格：契约明确只返回前 3 张，硬画 9 格就得自己造地址。
     -->
-    <view v-if="post.coverUrl" class="post-card__cover-box">
+    <view v-if="gridImages.length >= 2" class="post-card__grid" data-testid="post-card-grid">
+      <view v-for="(src, i) in gridImages" :key="i" class="post-card__grid-cell">
+        <image
+          class="post-card__grid-img"
+          :src="src"
+          mode="aspectFill"
+          :data-testid="`post-card-thumb-${i}`"
+        />
+        <text
+          v-if="i === gridImages.length - 1 && hiddenCount > 0"
+          class="post-card__grid-more"
+          data-testid="post-card-grid-more"
+        >
+          +{{ hiddenCount }}
+        </text>
+      </view>
+    </view>
+
+    <view v-else-if="post.coverUrl" class="post-card__cover-box">
       <image
         class="post-card__cover"
         :src="post.coverUrl"
@@ -135,7 +151,7 @@
  * 点一下没反应又是更坏的体验。所以这里**只渲染计数**，等 M4 接口到位再接。
  * 「更多」按钮同理，点了会明确说明未交付。
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Avatar from '@/components/Avatar.vue'
 import HyIcon from '@/components/HyIcon.vue'
 import { collectPost, likePost } from '@/api/interaction'
@@ -159,6 +175,11 @@ import { useInteractionStore } from '@/stores/interaction'
 const emit = defineEmits<{
   collectChange: [collected: boolean]
 }>()
+
+/** 九宫格里的图：最多 3 张（契约 `imageThumbs` 的上限，别自己补地址） */
+const gridImages = computed(() => props.post.imageThumbs.slice(0, 3))
+/** 还有几张没显示（用 `imageCount` 算，**不编地址**） */
+const hiddenCount = computed(() => Math.max(0, props.post.imageCount - gridImages.value.length))
 
 const props = withDefaults(
   defineProps<{
@@ -344,6 +365,46 @@ function onMore(): void {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+  }
+
+  /* ---------- 九宫格（多图帖） ---------- */
+  &__grid {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  &__grid-cell {
+    position: relative;
+    /* 三列。用 calc 而不是 gap：小程序旧基础库对 flex gap 支持不全 */
+    width: calc(33.33% - 8px);
+    height: 92px;
+    margin: 0 12px 12px 0;
+
+    /* 每行第三张去掉右边距，保证右边缘对齐 */
+    &:nth-child(3n) {
+      margin-right: 0;
+    }
+  }
+
+  &__grid-img {
+    width: 100%;
+    height: 100%;
+    border-radius: $hy-radius-sm;
+    background-color: $hy-bg-hover;
+  }
+
+  /* 「+N」：盖在最后一格的右下角，说明"还有几张没显示" */
+  &__grid-more {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 16px;
+    color: #ffffff;
+    background-color: rgba(29, 33, 41, 0.55);
+    border-radius: 3px;
   }
 
   &__cover-box {
