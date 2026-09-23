@@ -248,6 +248,12 @@ export interface PostCardView {
   timeText: string
   isTop: boolean
   isEssence: boolean
+  /*
+   * 互动状态，**直接来自读接口**（契约 `PostSummaryVO`/`FeedItemVO` 的 `liked`/`collected`，
+   * 语义：相对于当前请求者、未登录恒 false）。写接口不返回 data，所以状态只能从读接口来。
+   */
+  liked?: boolean
+  collected?: boolean
   /** 点击卡片跳详情 */
   detailUrl: string
   /** 点击版块标签跳版块页 */
@@ -309,6 +315,13 @@ export function toPostCard(post: PostSummaryVO | FeedItemVO): PostCardView {
     timeText: relativeTime(post.createdAt),
     isTop: bool(post.isTop),
     isEssence: bool(post.isEssence),
+    /*
+     * 互动状态：**接口给什么就是什么**（未登录时后端恒返回 false）。
+     * ⚠️ 用 `typeof === 'boolean'` 而不是 `bool()`：后者会把"接口没给这个字段"
+     *    也变成 `false` —— 而"没给"是**未知**，不能拿去覆盖已知的真值。
+     */
+    liked: typeof post.liked === 'boolean' ? post.liked : undefined,
+    collected: typeof post.collected === 'boolean' ? post.collected : undefined,
     detailUrl: `/pages/post/detail?id=${id}`,
     boardUrl: `/pages/board/index?id=${boardId}`,
   }

@@ -33,7 +33,17 @@
     所以 M2 的登录/注册/我的三个页面一行都不用改。
     尺寸预设名也沿用（sm / md / lg / xl），只是单位从 rpx 改成了 px。
   -->
-  <view class="hy-icon" :class="[`hy-icon--${size}`]" :style="{ color: color || undefined }">
+  <!--
+  ⚠️ class 里带上**图标类型**（`hy-icon--heartFilled` 之类）不是为了样式，
+  而是为了让"当前是什么形态"**可断言**：点赞按钮的实心/线框两套形态是
+  L1 验收判据里的核心（"刷新后仍然实心"），E2E 必须能读到它。
+  靠"子元素个数"或"颜色"去判断都太脆（形状数会随绘制方式改、颜色会被主题改）。
+-->
+  <view
+    class="hy-icon"
+    :class="[`hy-icon--${size}`, `hy-icon--${type}`]"
+    :style="{ color: color || undefined }"
+  >
     <view v-for="(shape, index) in shapes" :key="index" class="hy-icon__s" :style="shape" />
   </view>
 </template>

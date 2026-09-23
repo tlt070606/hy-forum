@@ -164,6 +164,12 @@ function toCollectionViewView(c: CollectionView): PostCardView {
     timeText: c.collectedText,
     isTop: false,
     isEssence: false,
+    /*
+     * ⚠️ 只给 `collected: true`（在这个列表里必然是真的），**不给 `liked`** ——
+     * `CollectionItemVO` 没有 `liked` 字段，给个 false 会把我确实点过的赞抹掉。
+     * 这就是 `PostCardView.liked` 是可选的原因。
+     */
+    collected: true,
     detailUrl: c.detailUrl,
     boardUrl: '',
   }

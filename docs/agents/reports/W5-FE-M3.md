@@ -2106,3 +2106,66 @@ CollectionItemVO 的字段 = postId, boardId, title, coverUrl, imageCount,
 npx vue-tsc --noEmit -p tsconfig.json   → exit 0
 npx playwright test                     → 35 passed (1.0m)
 ```
+
+---
+
+# DD. CR-R 实现：点赞/收藏的**状态由数据决定**（L1 2026-09-20 口径，6 条判据全过）
+
+## DD.1 事实与实现
+
+**事实**：`POST /api/posts/{id}/like` 的响应体是 `{"code":0,"message":"ok"}` ——
+**没有 data**，既拿不到新状态也拿不到新计数。状态只在**读接口**里
+（`PostSummaryVO`/`FeedItemVO`/`PostDetailVO` 的 `liked`/`collected`，相对请求者、未登录恒 false）。
+
+**实现**（按 L1 第二节的 4 条）：
+
+| # | 口径 | 落点 |
+|---|---|---|
+1 | **用响应里的 `liked`/`collected` 决定图标状态**（不能是固定样式） | `PostCardView` 新增这两个字段（**直接来自契约类型，不自己声明**）→ `PostCard`/详情页渲染都取自它 |
+2 | **点击后乐观更新** | 立即翻转 + 计数 ±1；失败回滚并提示；**成功但不一致时以下一次读接口为准** |
+3 | **跨页面一致** | `stores/interaction.ts` 重做成 `postId -> {liked, collected}` 缓存，**任何一次读返回后覆盖本地**（`applyFromApi`）；列表/详情/收藏/个人主页共用同一个 store |
+4 | **计数不自己算死** | 计数权威值来自接口；乐观 ±1 只在本地态临时显示，**props 一变就用接口值覆盖**（`PostCard` 的 watch） |
+
+**两个我特意处理的细节**（都写进了注释）：
+
+1. **"未知" ≠ "false"**：`CollectionItemVO` 有 `collected` 语义但**没有 `liked` 字段**。
+   如果无差别地把 `liked: false` 覆盖进去，就会把"我确实点过赞"抹掉（图标从实心变回线框，
+   而接口从没说过我没点）。所以 `applyFromApi` 只覆盖**接口真给了的**字段，
+   且 `PostCardView.liked/collected` 是**可选**的（用 `typeof === 'boolean'` 判断，不用 `bool()`）。
+2. **未登录恒 false**：store 的 `isPostLiked`/`isPostCollected` 在未登录时**直接返回 false** ——
+   即使缓存里还留着上次登录的状态。否则退出登录后图标还是点亮的，与契约语义矛盾（判据 ④）。
+
+**顺带**：`HyIcon` 的 class 里加上了图标类型（`hy-icon--heartFilled` 等）。
+**这不是为了样式，是为了让"形态"可断言** —— 判据 ②「刷新后仍然是实心」必须能被 E2E 读到；
+靠子元素个数或颜色去判断都太脆（形状数会随绘制方式变、颜色会被主题改）。
+
+## DD.2 验收判据：6 条逐条有证据
+
+新增 `e2e/m5-like-state.spec.ts`，两条用例覆盖 ①~⑥，**全部通过**：
+
+| # | 判据 | 验法 |
+|---|---|---|
+① | 点赞 → 不刷新，图标立刻实心、计数 +1 | 点击后立刻 poll 图标形态（`hy-icon--heartFilled`）+ 计数 |
+② | **刷新页面 → 图标仍然实心**（★核心） | `reload()` 后再断言形态；并核对**接口** `liked=true` |
+③ | 取消点赞 → 回灰、-1；刷新后仍回灰 | 同上反向 |
+④ | 未登录 → 未选中态、计数照常显示 | 用**未登录请求**读详情：`liked/collected` 恒 false 且 200 ✓ |
+⑤ | 同一帖：列表进详情状态一致 | 点赞后回首页列表，断言那张卡的心形也是实心（同一个 store，被列表的读接口播种） |
+⑥ | 连点 5 次 → 最终与接口一致（不漂） | 连点后 poll「界面计数 == 接口计数」且「界面形态 == 接口 liked」，直到同时为真 |
+
+```
+npx playwright test e2e/m5-like-state.spec.ts   → 2 passed (5.2s)
+npx playwright test                             → 37 passed (1.1m)
+```
+
+⚠️ 顺带说明：`m3-upload`（§6.1 最小闭环）**之前因回调隧道不通而红**（`CallbackFailed` +
+公网入口 nginx 403），**本轮全量已恢复绿** —— 隧道又能用了。我上一轮把它记成"flake"、
+后来又更正为"环境阻塞"，现在以"已恢复"收尾（三次说法都是当时的实测，变化在环境侧）。
+
+## DD.3 契约核对（一个小出入，不影响）
+
+L1 说「36 路径 / **65** schema」，我实测是 **36 / 64**；`npm run check:contract` 显示
+快照与在线**完全一致**（36/64）、手写常量（SHA256 与路径数）也一致 → 所以是那句话说多了 1，
+不是契约或快照的问题。**无需动作**，仅记录。
+
+另外 `liked`/`collected` 在 `schema.d.ts` 里确实已生成 ✓（我直接用的契约类型，没有自己声明），
+快照 SHA256 `05A29753…` 与仓库 `openapi.json` 逐字一致 ✓。

@@ -477,6 +477,17 @@ async function load(): Promise<void> {
     likeCount.value = num(post.value?.likeCount)
     commentCount.value = num(post.value?.commentCount)
     collectCount.value = num(post.value?.collectCount)
+    /*
+     * ⚠️ **互动状态只能从读接口来**（L1 2026-09-20 口径）：
+     * `POST .../like` 的响应是 `{"code":0,"message":"ok"}`，**没有 data** ——
+     * 拿不到新状态也拿不到新计数。所以进详情就用 `PostDetailVO.liked/collected`
+     * 覆盖共享 store；图标状态由它决定（验收判据 ②：刷新后仍然是实心）。
+     * 计数同理以接口为准，把别处乐观 ±1 的临时值冲掉。
+     */
+    interaction.applyFromApi(postId.value, {
+      liked: typeof post.value?.liked === 'boolean' ? post.value.liked : undefined,
+      collected: typeof post.value?.collected === 'boolean' ? post.value.collected : undefined,
+    })
     // 作者关注态要额外取（PostDetailVO.author 里没有 isFollowing）；best-effort，不 await
     void loadAuthorFollow()
   } catch (e) {

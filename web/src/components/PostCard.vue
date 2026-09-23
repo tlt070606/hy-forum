@@ -188,9 +188,18 @@ const collectCount = ref(num(props.post.collectCount))
 watch(
   () => props.post,
   (p) => {
+    /*
+     * ⚠️ **每一次读接口回来的值都是权威的**（L1 2026-09-20 口径第 1、4 条）：
+     * - 状态（liked/collected）写进共享 store —— 跨页面一致就靠这一步；
+     * - 计数**直接覆盖**本地态，把之前乐观 ±1 的临时值冲掉，
+     *   否则连点几次之后数字会漂（验收判据 ⑥）。
+     */
+    interaction.applyFromApi(p.id, { liked: p.liked, collected: p.collected })
     likeCount.value = num(p.likeCount)
     collectCount.value = num(p.collectCount)
-  }
+  },
+  // immediate：首屏就要用接口值决定图标状态（不能等下一次 props 变化）
+  { immediate: true }
 )
 
 /**
