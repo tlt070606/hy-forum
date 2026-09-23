@@ -2225,3 +2225,91 @@ L1 说「36 路径 / **65** schema」，我实测是 **36 / 64**；`npm run chec
 npx vue-tsc --noEmit -p tsconfig.json   → exit 0
 npx playwright test                     → 38 passed (1.1m)
 ```
+
+---
+
+# FF. M5 前端范围对齐 + CR-S 取证（L1 2026-09-21 的两条口径）
+
+## FF.1 🔴 CR-S 取证结果：**是签名范围问题，不是编码、也不是参数顺序**（前端无责）
+
+L1 让我做两件事，都做了。
+
+**（1）403 的 `<Code>` 与完整 URL**（探针 `.tmp/cr-s-probe.mjs`，证据 `.tmp/cr-s/results.json`）：
+
+```
+<Code> = SignatureDoesNotMatch
+<Message> = The request signature we calculated does not match the signature you provided.
+
+A. 收藏项 thumb（**原样**，x-oss-process 在最后）
+   …olozby.gif?OSSAccessKeyId=<已脱敏>&Expires=1790174353
+                &Signature=P1YMtAL0usPwtLFX2GwzQrUmsgI%3D
+                &x-oss-process=image/resize,m_fill,w_360,h_360/quality,q_80      → 403 SignatureDoesNotMatch
+
+B. 同一条，只把 x-oss-process **挪到最前**（=/api/posts 的形状）
+   …?x-oss-process=image/resize,m_fill,w_360,h_360/quality,q_80
+      &OSSAccessKeyId=…&Expires=…&Signature=P1YMt…                              → **仍然 403**
+
+C. 同一条，**去掉 x-oss-process**（只留签名三件套）
+   …?OSSAccessKeyId=…&Expires=…&Signature=P1YMt…                                → **200 image/gif**
+
+D. 对照：同帖的 coverUrl（它自己的签名，带 x-oss-process）                        → 200
+```
+
+**结论**：B 与 A **同样 403** ⇒ **不是参数顺序**；
+C 用**同一个签名**去掉 `x-oss-process` 就 **200** ⇒ **签名是按"不含 x-oss-process"算的**
+（后端先对裸 URL 签名、再把处理参数拼上去）✗。而 `coverUrl` 是**连处理参数一起签的** ✓ → 200。
+**请 L1 把收藏项缩略图按 `coverUrl` 那种方式签**（签名覆盖 `x-oss-process`）。
+
+**（2）编码自查：前端没有做任何编码** ——
+
+```
+thumb URL 里出现 %2F（斜杠被编码）? false
+thumb URL 里出现 %2C（逗号被编码）? false
+x-oss-process 原值片段 = image/resize,m_fill,w_360,h_360/quality,q_80   ← 原样，未转义
+```
+前端是**把接口给的字符串直接塞进 `<image :src>`**，不拼接、不编码、不重排、不增删参数 ✓
+（`api/oss.ts` 里也没有任何 `encodeURIComponent` 接触这些地址）。
+
+**当前处置**：收藏页仍**刻意不给缩略图**（`imageThumbs: []` → 退回 `coverUrl` 单格，那一路是好的 ✓）。
+后端修好后改成传真实缩略图即可（一行）。
+
+## FF.2 M5 前端范围（L1 补的任务书）：三条逐条对齐
+
+| # | L1 给的范围 | 状态 |
+|---|---|---|
+1 | **通知页**：列表（分页）、未读数徽标（顶栏铃铛）、点开标记已读、全部已读 | ✅ **已交付**（`pages/notifications/index.vue` + `stores/notify.ts` + 顶栏共享未读数；E2E `m5-notify.spec.ts` 4 条） |
+2 | **举报入口**：帖子 + 评论 → `POST /api/report`；**限流要明确文案** | ✅ 入口已交付；**限流文案本轮补上**（见下） |
+3 | **待审核的前台表现**：提交成功但进了待审 → 提示"已提交，审核通过后可见" | ✅ **本轮补上**（见下） |
+
+**第 2 条的限流文案**：举报超限走"业务动作维度"（HTTP 200 + 业务码）。
+⚠️ 我**不能沿用通用文案** —— `2002` 的表文案是「**发帖**太频繁了」，显示在举报上是**错的**。
+所以按 `code` 分支，把限流那类单独认出来说「举报过于频繁，请稍后再试（同一账号每天有次数上限）」。
+契约没写死超限用哪个码，所以**同时认 `429` 与 `2002`**，其余码仍按错误码表/后端 message 走。
+
+**第 3 条的判据**（L1 说"以公告栏为准、不要猜字段"）：公告栏这次没提这件事，
+但**契约本身就写着** —— `PostDetailVO.status` = **0 待审核 / 1 正常 / 2 已屏蔽**，
+且 `POST /api/posts` 的说明是「未命中敏感词直接可见，**命中则进待审队列**」。
+所以判据用 `status === 0`，**这不是猜字段名，是读契约**（若 L1 想换成别的字段，我按公告栏改）。
+发帖与改帖两条都按它提示 ✓。
+
+**发现并修掉一个真实体验 bug**：原先发完帖 **800ms** 就跳详情，而待审提示要显示 2.6 秒 ——
+**提示还没显示完页面就换了**（E2E 抓到的：断言时 toast 已经随页面消失）。
+现在待审时等 2.6 秒再跳（非待审仍是 800ms）。
+
+**⚠️ 一个我做不到的子项**：**评论**的待审提示 —— `CommentReplyVO` **没有 `status` 字段**
+（字段只有 id/postId/rootId/parentId/replyToUserId/replyToNickname/content/likeCount/author/createdAt），
+所以"这条评论是不是进了待审"前端**无从判断** ✗。要补的话请给 `CommentReplyVO`（或发评论的响应）
+一个状态字段，我照抄这一套。
+
+## FF.3 不属于我（属 M6，确认收到）
+
+后台审核队列页面、管理员放行/屏蔽界面 —— 我不碰 ✓（前端 M5 只做上面三条）。
+
+## FF.4 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npx playwright test                     → 39 passed (1.2m)
+    新增 m5-pending.spec.ts：命中占位敏感词 → 接口 status=0 → 界面提示「审核通过后可见」
+    （用占位词触发，验的是**机制**不是词库内容 —— 与 M5 任务书同一口径）
+```

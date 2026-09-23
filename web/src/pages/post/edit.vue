@@ -764,8 +764,14 @@ async function onSubmit(): Promise<void> {
   submitting.value = true
   try {
     if (isEdit.value) {
-      await updatePost(postId.value, buildUpdatePayload())
-      uni.showToast({ title: '已保存，重新进入审核', icon: 'none', duration: 2500 })
+      const updated = await updatePost(postId.value, buildUpdatePayload())
+        // 与发帖同一判据：`status === 0` = 待审（契约里改帖必然重新进审核）
+        const editPending = num(updated?.status) === 0
+        uni.showToast({
+          title: editPending ? '已保存，审核通过后可见' : '已保存',
+          icon: 'none',
+          duration: 2500,
+        })
       /*
        * 保存后**显式跳到详情页**，而不是 `uni.navigateBack()`。
        * 本机实测过：`navigateBack` 依赖"历史栈里确实有上一页"，而编辑页可以从
@@ -778,13 +784,33 @@ async function onSubmit(): Promise<void> {
       }, 1200)
     } else {
       const created = await createPost(buildCreatePayload())
-      uni.showToast({ title: '发布成功', icon: 'success' })
+        /*
+         * 待审提示（L1 给的 M5 前端范围第 3 条）。
+         * 判据来自契约、不是猜的：`PostDetailVO.status` = **0 待审核 / 1 正常 / 2 已屏蔽**，
+         * 而 `POST /api/posts` 的说明写着「未命中敏感词直接可见，命中则进待审队列」。
+         * ⚠️ 必须提示：进待审的内容后端**不会再返回给前台**（M5 口径），
+         *    只看到"发布成功"、回头又找不到自己的帖子，用户会以为发丢了。
+         */
+        const pending = num(created?.status) === 0
+        uni.showToast({
+          title: pending ? '已提交，审核通过后可见' : '发布成功',
+          icon: pending ? 'none' : 'success',
+          duration: pending ? 2600 : 1500,
+        })
 
       /*
        * 跳详情用 `redirectTo` 而不是 `navigateTo`：发帖页在保存后已无价值，
        * 留在栈里会让"从详情返回"又回到一张填满内容的表单，容易重复提交。
        */
       const newId = num(created?.id)
+      /*
+       * ⚠️ 跳详情的时机要**跟着提示语的时长走**：
+       * 待审提示（2.6 秒）比"发布成功"长，而这里原来固定 800ms 就跳走 ——
+       * **提示还没显示完页面就换了**。本机 E2E 抓到的正是这个：
+       * 断言 `审核通过后可见` 时 toast 已经随页面消失（元素都找不到），
+       * 用户同理也根本读不完那句话。所以待审时多等一会儿。
+       */
+      const navDelay = pending ? 2600 : 800
       setTimeout(() => {
         if (newId) {
           uni.redirectTo({ url: `/pages/post/detail?id=${newId}` })
@@ -792,7 +818,7 @@ async function onSubmit(): Promise<void> {
           // 契约里 id 可选，万一没返回也别卡在空页面
           uni.reLaunch({ url: '/pages/index/index' })
         }
-      }, 800)
+      }, navDelay)
     }
   } catch (e) {
     submitError.value = resolveSubmitError(e)

@@ -78,6 +78,7 @@ import { ref, watch } from 'vue'
 import HyIcon from '@/components/HyIcon.vue'
 import { REPORT_REASONS, submitReport } from '@/api/report'
 import { ApiError } from '@/utils/request'
+import { BIZ_CODE } from '@/utils/error-code'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
@@ -149,8 +150,20 @@ async function submit(): Promise<void> {
     emit('update:open', false)
     uni.showToast({ title: '举报已提交，我们会尽快处理', icon: 'none', duration: 2200 })
   } catch (e) {
-    // 失败**不关弹层、也不清空选择** —— 用户可以直接重试，不用重填
-    error.value = e instanceof ApiError ? e.message : '举报提交失败，请稍后重试'
+    /*
+     * 失败**不关弹层、也不清空选择** —— 用户可以直接重试，不用重填。
+     *
+     * ⚠️ **限流要给明确文案**（L1 给的 M5 前端范围第 2 条）：
+     * 举报的超限走"业务动作维度"——**HTTP 200 + 业务码**，不是 429。
+     * 所以这里按 `code` 分支，把限流那一类单独认出来说清楚；
+     * **不能直接沿用通用文案**：`2002` 的表文案是「发帖太频繁了」（那是发帖的动作），
+     * 显示在举报上是**错的**。
+     */
+    if (e instanceof ApiError && (e.code === BIZ_CODE.TOO_MANY_REQUESTS || e.code === BIZ_CODE.POST_TOO_FREQUENT)) {
+      error.value = '举报过于频繁，请稍后再试（同一账号每天有次数上限）'
+    } else {
+      error.value = e instanceof ApiError ? e.message : '举报提交失败，请稍后重试'
+    }
   } finally {
     submitting.value = false
   }
