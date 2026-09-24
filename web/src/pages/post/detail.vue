@@ -657,7 +657,11 @@ async function toggleLike(): Promise<void> {
   interaction.markPostLiked(postId.value, on)
   likeCount.value = Math.max(0, before + (on ? 1 : -1))
   try {
-    await likePost(postId.value, on)
+    const res = await likePost(postId.value, on)
+    // **以服务端返回值为准**（契约 `InteractionStateVO`）：四个字段都是权威值
+    interaction.applyFromApi(postId.value, { liked: res.liked, collected: res.collected })
+    if (typeof res.likeCount === 'number') likeCount.value = res.likeCount
+    if (typeof res.collectCount === 'number') collectCount.value = res.collectCount
   } catch (e) {
     interaction.markPostLiked(postId.value, !on)
     likeCount.value = before
@@ -677,7 +681,11 @@ async function toggleCollect(): Promise<void> {
   interaction.markPostCollected(postId.value, on)
   collectCount.value = Math.max(0, before + (on ? 1 : -1))
   try {
-    await collectPost(postId.value, on)
+    const res = await collectPost(postId.value, on)
+    // 同上：以服务端返回值为准
+    interaction.applyFromApi(postId.value, { liked: res.liked, collected: res.collected })
+    if (typeof res.likeCount === 'number') likeCount.value = res.likeCount
+    if (typeof res.collectCount === 'number') collectCount.value = res.collectCount
   } catch (e) {
     interaction.markPostCollected(postId.value, !on)
     collectCount.value = before

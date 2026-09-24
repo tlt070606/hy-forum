@@ -133,7 +133,7 @@ const hasMore = ref(false)
  * 仍然缺的（都如实处理，不编）：
  * - **没有版块名**（只给 `boardId`）→ 不显示版块标签；
  * - **没有 `viewCount`** → 那格显示 0，但这是"未知"不是"0 次浏览"（已在报告里说明）；
- * - **缩略图地址不可用**（参数顺序导致 403，见 `imageThumbs: []` 的注释）→ 退回单格封面。
+ * - **缩略图**：CR-S 修好后可用（见下方 `imageThumbs` 的注释）。
  */
 function toRow(c: CollectionView): CollectRow {
   const view = toCollectionViewView(c)
@@ -170,14 +170,10 @@ function toCollectionViewView(c: CollectionView): PostCardView {
     isTop: false,
     isEssence: false,
     /*
-     * ⚠️ **这里刻意不给缩略图**（`imageThumbs: []`）→ 卡片退回 `coverUrl` 那一格。
-     * 原因是一次实测出来的后端缺陷：**同一个对象的缩略图，两个接口给的 URL 参数顺序不同** ——
-     *   /api/posts 的 imageThumbs[0]          → `?x-oss-process=…&OSSAccessKeyId=…&Signature=…`  → 200 ✓
-     *   /api/user/collections 的 imageThumbs[0] → `?OSSAccessKeyId=…&Signature=…&x-oss-process=…` → **403** ✗
-     * 而 `CollectionItemVO.coverUrl` 是好的（200 ✓）。与其在收藏页画一堆 403 的灰块，
-     * 不如老老实实显示那一格。已作为 CR-S 登记。
+     * 缩略图：CR-S 修好后**恢复多图**（2026-09-24 实测：收藏项三张缩略图全部 200 且实收字节）。
+     * 契约 CollectionItemVO.imageThumbs（≤3 张，读时签名）→ 卡片会画九宫格。
      */
-    imageThumbs: [],
+    imageThumbs: c.imageThumbs ?? [],
     /*
      * ⚠️ 只给 `collected: true`（在这个列表里必然是真的），**不给 `liked`** ——
      * `CollectionItemVO` 没有 `liked` 字段，给个 false 会把我确实点过的赞抹掉。

@@ -195,6 +195,22 @@ export type FeedType = 'follow' | 'all'
 export type FeedSort = 'latest' | 'hot'
 
 /**
+ * 点赞/收藏**写端点**的返回体（CR-R，2026-09-24 契约变更）。
+ *
+ * ```
+ * { liked, collected, likeCount, collectCount }
+ * ```
+ *
+ * **四个字段都是权威值** —— 调用方拿到后直接覆盖界面，
+ * **不要再本地推算计数**（并发下本地推算会偏）。
+ * `liked`/`collected` 是**相对于当前登录者**（未登录一律 false）。
+ *
+ * ⚠️ 只有**帖子的点赞/收藏**有它；**关注**与**评论点赞**仍是 `ApiResponseVoid`（无返回体），
+ *    而契约里评论也**没有** `liked` 字段 → 评论的点赞态只能"会话内记住"（刷新即丢）。
+ */
+export type InteractionStateVO = Schemas['InteractionStateVO']
+
+/**
  * 帖子列表排序口径。
  *
  * 依据：《技术方案》§6.5 —— `sort=latest|hot|essence`。

@@ -2361,3 +2361,90 @@ jar 文件最后写入  =  09-21 13:28
    不拼接、不编码、不重排、不增删参数 —— 这一点我在 CR-S 取证时也用对照实验证明过
    （去掉 `x-oss-process` 用**同一个签名**就 200 ⇒ 前端确实没有加工过）。
 2. **`avatarUrl` 为空 → 字母头像** ✓ 已实现（并额外加了"图加载失败也降级成字母头像"，防灰块）。
+
+---
+
+# HH. 接 2026-09-24 契约（L1「可以接了」）：写端点响应值 / 通知跳转 / 收藏多图
+
+## HH.1 先核 SHA（L1 要求"核 SHA 变了再动手"）
+
+```
+openapi.json SHA256 = 7A6A6C6DF7C999D9E31CD278A736B0882F22C696200C66E0606870925CBB2804  ← 与 L1 给的一致 ✅
+前端快照 SHA256     = 同值 ✅（不必再单独更新）
+paths=36  schemas=66
+```
+
+**三处新形状实测确认**（不是照通告写，是照契约写）：
+
+```
+① POST/DELETE /api/posts/{id}/like|collect -> ApiResponseInteractionStateVO
+   InteractionStateVO = { liked:boolean, collected:boolean, likeCount:integer, collectCount:integer }
+   实测 POST /like -> {"code":0,"data":{"liked":true,"collected":true,"likeCount":3,"collectCount":17}}
+② NotificationVO 新增 postId / commentId（带语义说明：点赞/评论→postId 有值；回复→两者都有；关注→都空）
+③ CollectionItemVO 有 author / imageThumbs
+★ CR-S 已修：收藏项三张缩略图 **全部 200 且实收字节**（11106 / 15096 / 11674 字节）
+```
+
+## HH.2 ① 写端点响应值优先（CR-R）
+
+- `api/interaction.ts`：`likePost`/`collectPost` 改为返回 `InteractionStateVO`（用 `expectObject` 收敛形状）；
+- **四个调用点**（`PostCard` 的赞/藏、详情页的赞/藏）全部改成"**拿到返回值就覆盖界面**"：
+  状态写进共享 store（跨页面一致），计数直接覆盖本地值；
+- 本地的 ±1 **只保留为往返期间的占位显示**，返回值一到就被真值冲掉 ⇒ **连点不会漂**；
+- ⚠️ 计数只在"真的是数字"时才覆盖（生成类型字段是可选的）—— **不用 `num()` 兜成 0**，
+  那会把"接口没给"变成"0 次"，与既有的"未知 ≠ false"是同一条纪律；
+- ⚠️ **关注**与**评论点赞**仍是 `ApiResponseVoid`（契约只给帖子赞/藏加了返回体）→ 保持原做法；
+  而评论**也没有 `liked` 字段** → 评论点赞态只能"会话内记住"（刷新即丢），这是剩余缺口。
+
+## HH.3 ② 通知按 `postId` 跳转（CR-N）
+
+`utils/notifyView.ts` 的跳转判定改为：
+
+| 情形 | 跳转 |
+|---|---|
+有 `postId`（点赞 / 评论 / 回复） | `/pages/post/detail?id={postId}&openComments=1`（回复类再带 `&commentId=` 供定位高亮） |
+关注类（两个都空） | 对方主页 `/pages/user/index?id={fromUserId}` |
+都没有 | 如实写"这条通知没有可跳转的目标"（不假装能跳） |
+
+**帖子已删的情形不做前端特判** —— 详情页读不到就是 404，会渲染友好页（L1 已裁）。
+同时删掉了文件头那句已过期的"契约里没有 `postId`，已作为 CR 登记"（留着就是假话）。
+
+## HH.4 ③ 收藏卡片恢复多图（CR-S 已修）
+
+后端把签名范围修好之后（先签裸地址再拼 `x-oss-process` ✗ → 现在两者一起签 ✓），
+把之前那处 **`imageThumbs: []` 的降级兜底改回真实缩略图** ✓
+（`CollectionView` 补了 `imageThumbs` 字段与映射），卡片现在**作者行 + 九宫格**齐全。
+
+## HH.5 ★ 真取字节的验证（L1 明确要求的那条）
+
+新增 `e2e/m5-contract-0924.spec.ts`，三条用例逐条对应上面三件：
+
+| 用例 | 关键断言 |
+|---|---|
+① 写端点响应值 | 点一次后，**界面计数 == 响应体里的 `likeCount`**（不是 == 本地推算） |
+② 通知跳转 | 用"A 发帖 + B 点赞"构造 → 先断言通知**带 `postId`** → 点开落到**帖子详情**（有标题，不是用户主页/消息页） |
+③ 收藏多图 | 接口层断言有 `author` 与 `imageThumbs`；**逐张 `fetch` 缩略图断言 200 且 `byteLength > 0`**；界面层断言作者行 + 九宫格 |
+
+> **为什么必须"真取字节"**：CR-S 那种"签名与 URL 形状不一致 → 403"的故障，
+> **只看 DOM 查不出来**（界面只显示成灰块），看状态码也可能被缓存骗过。
+> 把字节真的读下来才算验过。
+
+**顺带修一条我自己写错的用例前提**：点赞通知的收件人是**帖子作者**，
+我第一版随手拿了信息流第一篇帖子 —— A 根本不是作者，所以收不到通知（**假失败**）。
+改成"A 先发一篇再让 B 点赞"，并把这条语义写进注释（它本身就是通知语义的一部分）。
+
+## HH.6 验证
+
+```
+npx vue-tsc --noEmit -p tsconfig.json   → exit 0
+npm run check:contract                  → ✓ 契约一致（快照 36/66 ↔ 在线 36/66）
+npx playwright test                     → 42 passed (1.3m)
+```
+
+## HH.7 仍未交付/仍待确认（不含含糊糊带过）
+
+- **评论的点赞态**：契约没有评论的 `liked` 字段 → 只能会话内记住（刷新即丢）；
+- **评论的待审提示**：`CommentReplyVO` 没有 `status` → 前端无从判断；
+- **"跳到帖子并定位到那条评论"**：目前做到"打开评论区 + 带 `commentId` 传参"，
+  **跨页评论的精确滚动定位**还没有（评论是分页的，目标可能不在已加载的那一页）——
+  要做得先有一个"按 id 取评论"的能力，或接受"只高亮已加载页内的那条"。

@@ -6,11 +6,9 @@
  * ==========================================================================
  * 契约 `NotificationVO` 给的是 `targetType`(1 帖子 / 2 评论) + `targetId`：
  * - `targetType = 1`（帖子）→ `targetId` 就是**帖子 id** → 能跳详情页 ✓
- * - `targetType = 2`（评论）→ `targetId` 是**评论 id**，而**契约里没有 postId**，
- *   也没有"由评论 id 查帖子"的接口 → **前端无法定位到那条评论所在的帖子**。
- *   所以这类通知**不做假跳转**（跳到一个猜出来的地址比不跳更糟），
- *   点击只标记已读并明确告知原因。**已作为 CR 登记**（建议 `NotificationVO` 补 `postId`）。
- * - 关注类（type=4）没有目标内容，但**可以从 `fromUserId` 跳到对方主页** ✓
+ * - **2026-09-24 起**：`NotificationVO` 补了 **`postId`** 与 **`commentId`**（CR-N 已落地）——
+ *   所以"评论类通知点不进去"这个缺口**没有了**：有 `postId` 就跳帖子（回复类还能带上 `commentId` 定位）。
+ *   帖子已删的情形不用前端特判：详情页读不到就是 404，会渲染友好页。 * - 关注类（type=4）没有目标内容，但**可以从 `fromUserId` 跳到对方主页** ✓
  */
 
 import type { NotificationVO } from '@/api/types'
@@ -103,22 +101,29 @@ export function toNotificationView(n: NotificationVO): NotificationView {
   let targetUrl = ''
   let unreachableReason = ''
 
-  if (targetType === NOTIFY_TARGET.POST && targetId > 0) {
-    targetUrl = `/pages/post/detail?id=${targetId}`
-  } else if (targetType === NOTIFY_TARGET.COMMENT) {
-    /*
-     * ⚠️ 评论通知**跳不了**：契约只给评论 id，没有 postId，也没有反查接口。
-     * 不去猜地址 —— 猜错会把用户带到一篇无关的帖子，比"点了没反应"更糟。
-     * 这里把原因带给页面，由页面明确告知（而不是静默无响应）。
-     */
-    unreachableReason = '这条通知针对一条评论，但接口没给帖子 id（契约缺字段），暂时无法跳转'
+  /*
+   * 跳转（CR-N，2026-09-24 契约）：`NotificationVO` 现在给了 **`postId`** 与 **`commentId`**。
+   * - 点赞 / 评论 → `postId` 有值（评论类 `commentId` 可能为空）
+   * - **回复 → 两者都有** → 跳到帖子**并定位到那条评论**
+   * - 关注 → 两者都空 → 跳对方主页
+   *
+   * ⚠️ 这条替换掉了原来那句"评论类跳不了、契约缺 postId"的兜底 —— 缺口已经补上了。
+   * ⚠️ 帖子已被删的情形**不需要前端特判**：详情页读不到就是 404，它会渲染友好页
+   *    （L1 已裁：不加"内容是否还在"的字段）。
+   */
+  const postId = num(n.postId)
+  const commentId = num(n.commentId)
+
+  if (postId > 0) {
+    // `openComments=1` 让详情页直接展开评论区；有 commentId 时再带上它用于**定位高亮**
+    targetUrl =
+      `/pages/post/detail?id=${postId}&openComments=1` + (commentId > 0 ? `&commentId=${commentId}` : '')
   } else if (type === NOTIFY_TYPE.FOLLOW && fromUserId > 0) {
-    // 关注类没有"内容目标"，但可以去看对方的主页
+    // 关注类没有内容目标，但可以去看对方的主页
     targetUrl = `/pages/user/index?id=${fromUserId}`
   } else {
     unreachableReason = '这条通知没有可跳转的目标'
   }
-
   return {
     id: num(n.id),
     type,

@@ -520,6 +520,8 @@ export interface CollectionView {
   coverUrl: string
   imageCount: number
   /** 作者昵称（契约 `CollectionItemVO.author`）。空串 = 契约没给 */
+  /** 前最多 3 张缩略图（契约 `CollectionItemVO.imageThumbs`，读时签名） */
+  imageThumbs: string[]
   authorName: string
   /** 作者头像（读时签名）。空串 = 没有头像 */
   authorAvatarUrl: string
@@ -540,6 +542,7 @@ export function toCollectionView(c: CollectionItemVO): CollectionView {
     coverUrl: text(c.coverUrl),
     imageCount: num(c.imageCount),
     authorName: authorName(c.author),
+    imageThumbs: Array.isArray(c.imageThumbs) ? c.imageThumbs.filter((t) => typeof t === 'string') : [],
     authorAvatarUrl: text(c.author?.avatarUrl),
     likeCount: num(c.likeCount),
     commentCount: num(c.commentCount),

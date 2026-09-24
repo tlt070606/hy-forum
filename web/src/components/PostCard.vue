@@ -242,7 +242,15 @@ async function toggleLike(): Promise<void> {
   interaction.markPostLiked(props.post.id, on)
   likeCount.value = Math.max(0, before + (on ? 1 : -1))
   try {
-    await likePost(props.post.id, on)
+    const res = await likePost(props.post.id, on)
+    /*
+     * **以服务端返回值为准**（契约 `InteractionStateVO`，2026-09-24）：
+     * {liked, collected, likeCount, collectCount} 都是权威值 —— 不再本地推算计数。
+     * 上面那几行 ±1 只是**往返期间**的占位显示，这里立刻用真值覆盖掉。
+     */
+    interaction.applyFromApi(props.post.id, { liked: res.liked, collected: res.collected })
+    if (typeof res.likeCount === 'number') likeCount.value = res.likeCount
+    if (typeof res.collectCount === 'number') collectCount.value = res.collectCount
   } catch (e) {
     interaction.markPostLiked(props.post.id, !on)
     likeCount.value = before
@@ -258,7 +266,11 @@ async function toggleCollect(): Promise<void> {
   interaction.markPostCollected(props.post.id, on)
   collectCount.value = Math.max(0, before + (on ? 1 : -1))
   try {
-    await collectPost(props.post.id, on)
+    const res = await collectPost(props.post.id, on)
+    // 同上：以服务端返回值为准
+    interaction.applyFromApi(props.post.id, { liked: res.liked, collected: res.collected })
+    if (typeof res.likeCount === 'number') likeCount.value = res.likeCount
+    if (typeof res.collectCount === 'number') collectCount.value = res.collectCount
     // 成功后才通知外界（失败会回滚，那种情况下"状态变了"是假消息）
     emit('collectChange', on)
   } catch (e) {
