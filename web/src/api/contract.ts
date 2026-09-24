@@ -16,7 +16,20 @@
  * - **不提供** `diskUrl` 于列表（产品裁决：网盘链接是资源帖核心价值，放列表会截留用户；
  *   "复制链接"只放详情页）。
  * - `gender`：语义已写进契约；`level` 若为 reserved（恒 0），**不要渲染成"等级 0"**。
- * - 通知类契约里**尚无** `postId` / `commentId` —— 已裁批准、**尚未实现**，别先写。
+ * - ✅ **已实现（2026-09-24，契约 SHA `7A6A6C6D…`）—— 按下面写：**
+ *   - **点赞/收藏的四个写端点现在返回状态**（此前只有 `{}`）：
+ *     `POST|DELETE /api/posts/{id}/like`、`POST|DELETE /api/posts/{id}/collect`
+ *     → `data: { liked, collected, likeCount, collectCount }`。
+ *     **不要再本地推算计数**（并发下会偏），以返回值为准；`liked`/`collected` 是
+ *     **相对于当前登录者**，未登录一律 false。**优先用返回值更新界面**，失败再回滚。
+ *   - **通知有了跳转信息**：`NotificationVO` 新增 `postId`、`commentId`（都可空）。
+ *     点赞/评论 → `postId` 有值；**回复 → 两个都有**；关注 → 两个都空。
+ *     点通知跳帖子；**该帖已删 → 404 友好页**（不加"内容是否还在"的字段）。
+ *   - **收藏卡片补齐**：`CollectionItemVO` 新增 `author`（UserBriefVO，含 avatarUrl）
+ *     与 `imageThumbs`（≤3 张）。
+ *   - 提醒两条渲染纪律：① `url`/`thumbUrl`/`coverUrl`/`imageThumbs[]`/`avatarUrl`
+ *     **一律原样使用**（不拼接、不编码、不重排参数）—— 它们都带读时签名，加工必 403；
+ *     ② `avatarUrl` 为 null 是**正确行为**（那位用户没设过头像），显示字母头像即可。
  *
  * > **前端怎么用**：每次拿到"L1 已推送"的消息（或隔一段时间），**读这一段**即可。
  * > 若你发现契约里有这一段没提到的新字段/新端点 —— **那说明 L1 漏写了，请提出来**（这本身就是有用的反馈）。
@@ -77,7 +90,7 @@
  *    它与快照不符会直接报漂移。改快照就必须改这里，反之亦然。
  */
 export const OPENAPI_SNAPSHOT_SHA256 =
-  '05a29753483143f0bd02c9a7506617104238abb76036b157d1348468fa177f2d'
+  '7a6a6c6df7c999d9e31cd278a736b0882f22c696200c66e0606870925cbb2804'
 
 /** 快照对应的后端版本，便于人肉核对这场快照是什么时候的。 */
 export const OPENAPI_SNAPSHOT_VERSION = '0.0.1'

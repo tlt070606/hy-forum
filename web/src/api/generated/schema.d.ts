@@ -951,11 +951,28 @@ export interface components {
             /** @description 提取码，可选 */
             diskCode?: string;
         };
-        ApiResponseVoid: {
+        ApiResponseInteractionStateVO: {
             /** Format: int32 */
             code?: number;
             message?: string;
-            data?: Record<string, never>;
+            data?: components["schemas"]["InteractionStateVO"];
+        };
+        /** @description 点赞/收藏操作后的互动状态（供前端直接更新按钮与计数） */
+        InteractionStateVO: {
+            /** @description 操作后，当前用户是否已点赞 */
+            liked?: boolean;
+            /** @description 操作后，当前用户是否已收藏 */
+            collected?: boolean;
+            /**
+             * Format: int32
+             * @description 帖子当前点赞数（库里读，非本地推算）
+             */
+            likeCount?: number;
+            /**
+             * Format: int32
+             * @description 帖子当前收藏数（库里读，非本地推算）
+             */
+            collectCount?: number;
         };
         ApiResponseOssCallbackResultVO: {
             /** Format: int32 */
@@ -969,6 +986,12 @@ export interface components {
             id?: number;
             url?: string;
             thumbUrl?: string;
+        };
+        ApiResponseVoid: {
+            /** Format: int32 */
+            code?: number;
+            message?: string;
+            data?: Record<string, never>;
         };
         /** @description 发表评论 */
         CommentCreateRequest: {
@@ -1378,6 +1401,16 @@ export interface components {
             isRead?: boolean;
             /** Format: date-time */
             createdAt?: string;
+            /**
+             * Format: int64
+             * @description CR-N：关联的帖子 id（评论/回复类由评论反查得到；无关联为 null）
+             */
+            postId?: number;
+            /**
+             * Format: int64
+             * @description CR-N：关联的评论 id（仅评论/回复类有；点赞/关注类为 null）
+             */
+            commentId?: number;
         };
         PageResultNotificationVO: {
             list?: components["schemas"]["NotificationVO"][];
@@ -1731,7 +1764,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseVoid"];
+                    "*/*": components["schemas"]["ApiResponseInteractionStateVO"];
                 };
             };
         };
@@ -1753,7 +1786,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseVoid"];
+                    "*/*": components["schemas"]["ApiResponseInteractionStateVO"];
                 };
             };
         };
@@ -1775,7 +1808,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseVoid"];
+                    "*/*": components["schemas"]["ApiResponseInteractionStateVO"];
                 };
             };
         };
@@ -1797,7 +1830,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ApiResponseVoid"];
+                    "*/*": components["schemas"]["ApiResponseInteractionStateVO"];
                 };
             };
         };
