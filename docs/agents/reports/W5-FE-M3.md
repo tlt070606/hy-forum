@@ -2313,3 +2313,51 @@ npx playwright test                     → 39 passed (1.2m)
     新增 m5-pending.spec.ts：命中占位敏感词 → 接口 status=0 → 界面提示「审核通过后可见」
     （用占位词触发，验的是**机制**不是词库内容 —— 与 M5 任务书同一口径）
 ```
+
+---
+
+# GG. 契约更新核对（L1 2026-09-24 通告）：**三处一致，新字段尚未落地** → 按纪律不先写
+
+L1 通告「契约已重导：like/collect 写端点返回 `{liked,collected,likeCount,collectCount}`；
+`NotificationVO` 新增 `postId`/`commentId`；`CollectionItemVO` 补 `author`/`imageThumbs`」。
+
+**我核对了四处，结论是：第三条已在（且我已用上），前两条还没到。** 证据：
+
+| 看哪里 | like / collect 写端点 | NotificationVO |
+|---|---|---|
+**线上 8080**（导出的源头） | `ApiResponseVoid`（无 data）✗ | 无 `postId` / `commentId` ✗ |
+**仓库 `openapi.json`**（SHA `05A29753…`，36 路径 / 64 schema） | 同上 ✗ | 同上 ✗ |
+**`web/src/api/generated/schema.d.ts`**（由快照生成，快照与仓库逐字一致） | 同上 ✗ | 同上 ✗ |
+**`contract.ts` 顶部「契约变更公告栏」**（L1 指定的通道） | — | 仍写着「**尚无** postId / commentId —— 已裁批准、**尚未实现**，**别先写**」✗ |
+
+**一条有用的根因线索**（本项目早期踩过同一个坑，见 §N.2）：
+
+```
+8080 进程 PID=42820  启动于 09-24 20:35
+jar 文件最后写入  =  09-21 13:28
+→ 进程比 jar 新 ⇒ 跑的是**最新的那个 jar**；但**那个 jar 本身早于本次改动**
+⇒ 后端的改动**还没构建进 jar**（不是"跑了旧构建"那种情况，而是"新构建还没做"）
+```
+
+**所以我没有动代码** —— 依据是项目纪律里那条：
+**"判定某端点是否已交付永远以 `openapi.json` 为准"**，而**公告栏（L1 自己的通道）也还写着"别先写"**。
+在字段真的出现之前照通告写代码，就是**照着不存在的契约写**（这正是"零分叉/不编造契约"要防的事）。
+
+**给 L1 的下一步**（三件按顺序）：① 把后端改动**构建**（`mvn package`）→ ② **重启 8080**（带三个环境变量）→
+③ **重导 `openapi.json` 并更新快照**（`scripts/export_openapi.ps1` + 覆盖 `web/src/api/generated/openapi.snapshot.json`）
+→ 然后我会：写端点的响应值优先于乐观推算、通知按 `postId` 跳转、并在公告栏读到确认。
+
+## GG.1 顺带核到的两件事
+
+- **CR-S 仍未修**：收藏项 `imageThumbs[0]` 现在**仍然 403**（本轮实测）→ 所以收藏页继续保留
+  `imageThumbs: []`（退回 `coverUrl` 单格，那一路是好的 ✓）。后端按 `coverUrl` 的方式签好之后，
+  我把这一处改成传真实缩略图即可（一行）。
+- **`CollectionItemVO.author` 确实已到位** ✓（`{id, nickname, avatarUrl}`，我实测 `nickname='adm'`），
+  且**我已经用上了** ✓（收藏卡片已显示作者行，见 §EE.1）→ 通告第三条是**已完成**的。
+
+## GG.2 两条渲染纪律：确认照做
+
+1. **`url`/`thumbUrl`/`coverUrl`/`imageThumbs[]`/`avatarUrl` 一律"后端给什么就用什么"** ✓
+   不拼接、不编码、不重排、不增删参数 —— 这一点我在 CR-S 取证时也用对照实验证明过
+   （去掉 `x-oss-process` 用**同一个签名**就 200 ⇒ 前端确实没有加工过）。
+2. **`avatarUrl` 为空 → 字母头像** ✓ 已实现（并额外加了"图加载失败也降级成字母头像"，防灰块）。
