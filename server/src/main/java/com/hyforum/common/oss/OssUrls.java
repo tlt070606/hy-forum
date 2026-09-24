@@ -91,13 +91,33 @@ public class OssUrls {
             if (result.size() >= max) {
                 break;
             }
-            String bareOriginal = sign(original);
-            if (bareOriginal == null) {
+            if (original == null || original.isBlank()) {
                 continue;
             }
-            // 注意顺序：**先推导缩略图地址，再签名**（derive 处理的是裸 URL 的 query 拼接；
-            // 对已签名的 URL 再 derive 会把签名参数搞乱）
-            result.add(sign(OssThumbnailUrls.derive(bareOriginal)));
+            // ★★ 顺序是**唯一正确**的：先 derive（把 x-oss-process 拼进 query），再 sign。
+            //
+            //   CR-S 缺陷就出在这两行的顺序上，而且**极其隐蔽**：
+            //   第一版写的是 `sign(derive(sign(original)))` —— 最内层先把**裸地址**签掉，
+            //   `derive` 再把 `&x-oss-process=...` 追加到那个**已带签名**的 URL 后面。
+            //   于是签名算的是"不含 x-oss-process"的 CanonicalizedResource，
+            //   而实际请求带上了它 —— OSS 侧重算不一致 → **403 SignatureDoesNotMatch**。
+            //
+            //   为什么"看起来没问题"：返回的 URL 里 **OSSAccessKeyId / Expires / Signature 三个参数齐全**，
+            //   所以"URL 里有三个签名参数"这类断言**全部放过去了**
+            //   （CR-S 之前的护栏就是这么漏的）。而现象是"大图能看、缩略图 403"。
+            //
+            //   与 `PostService` 的 `thumbUrl` 对照就能看出差别：那条路的库里**存的就是**
+            //   带 `x-oss-process` 的 thumb_url，直接对它签名 → 签名覆盖了处理参数 → 正常。
+            //   本类是从**原图**推导，因此**必须 derive 在前、sign 在后**。
+            //
+            //   `x-oss-process` 是 OSS V1 的 SIGNED_PARAMETERS 之一，会进入
+            //   CanonicalizedResource（见 V1OssReadUrlSigner.canonicalSubResources）——
+            //   所以只要它在 URL 里，就必须在签名**之前**存在。
+            String thumbUrl = OssThumbnailUrls.derive(original);
+            if (thumbUrl == null) {
+                continue;
+            }
+            result.add(sign(thumbUrl));
         }
         return result;
     }

@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 帖子点赞与收藏接口（docs/技术方案.md §6.5、§8.1）。
  *
@@ -32,39 +34,74 @@ public class PostInteractionController {
 
     private final InteractionService interactionService;
 
-    public PostInteractionController(InteractionService interactionService) {
+    /**
+     * CR-R：操作后要把**当前计数**读回来给前端。
+     *
+     * <p>直接在接入层读 {@code domain} 的 Mapper 是允许的（铁律 3 只约束业务包之间；
+     * {@code domain} 是共享层）。这里刻意<b>不</b>去改 {@code InteractionService} 的职责 ——
+     * 它的职责是"改动关系与计数"，"把当前状态读出来"是展示层的事。</p>
+     */
+    private final com.hyforum.domain.post.mapper.PostMapper postMapper;
+
+    public PostInteractionController(InteractionService interactionService,
+                                     com.hyforum.domain.post.mapper.PostMapper postMapper) {
         this.interactionService = interactionService;
+        this.postMapper = postMapper;
+    }
+
+    /**
+     * 读回操作后的互动状态（CR-R）。
+     *
+     * @param userId 当前登录用户（状态是"相对于请求者"的）
+     * @param postId 帖子 id
+     */
+    private com.hyforum.interaction.vo.InteractionStateVO stateOf(long userId, long postId) {
+        com.hyforum.domain.post.entity.Post post = postMapper.selectById(postId);
+        boolean liked = interactionService.likedPostIds(userId, List.of(postId)).contains(postId);
+        boolean collected = interactionService.collectedPostIds(userId, List.of(postId)).contains(postId);
+        return new com.hyforum.interaction.vo.InteractionStateVO(
+                liked, collected,
+                post == null || post.getLikeCount() == null ? 0 : post.getLikeCount(),
+                post == null || post.getCollectCount() == null ? 0 : post.getCollectCount());
     }
 
     /** 点赞（§6.5）：幂等。 */
     @PostMapping("/api/posts/{id}/like")
     @Operation(summary = "点赞帖子", description = "幂等：重复点赞返回成功，post.like_count 只加一次")
-    public ApiResponse<Void> like(@PathVariable long id) {
-        interactionService.likePost(CurrentUser.requireId(), id);
-        return ApiResponse.ok();
+    public ApiResponse<com.hyforum.interaction.vo.InteractionStateVO> like(@PathVariable long id) {
+        long userId = CurrentUser.requireId();
+        interactionService.likePost(userId, id);
+        // CR-R：返回操作后的状态与计数，前端据此直接更新按钮，不必再查一次
+        return ApiResponse.ok(stateOf(userId, id));
     }
 
     /** 取消点赞（§6.5）：幂等，计数不为负。 */
     @DeleteMapping("/api/posts/{id}/like")
     @Operation(summary = "取消点赞", description = "幂等：重复取消返回成功，计数不会减到负数")
-    public ApiResponse<Void> unlike(@PathVariable long id) {
-        interactionService.unlikePost(CurrentUser.requireId(), id);
-        return ApiResponse.ok();
+    public ApiResponse<com.hyforum.interaction.vo.InteractionStateVO> unlike(@PathVariable long id) {
+        long userId = CurrentUser.requireId();
+        interactionService.unlikePost(userId, id);
+        // CR-R 顺带：取消也返回状态 —— 否则"取消"后前端仍要自己猜按钮状态
+        return ApiResponse.ok(stateOf(userId, id));
     }
 
     /** 收藏（§6.5）：幂等。 */
     @PostMapping("/api/posts/{id}/collect")
     @Operation(summary = "收藏帖子", description = "幂等：重复收藏返回成功，post.collect_count 只加一次")
-    public ApiResponse<Void> collect(@PathVariable long id) {
-        interactionService.collectPost(CurrentUser.requireId(), id);
-        return ApiResponse.ok();
+    public ApiResponse<com.hyforum.interaction.vo.InteractionStateVO> collect(@PathVariable long id) {
+        long userId = CurrentUser.requireId();
+        interactionService.collectPost(userId, id);
+        // CR-R：同上
+        return ApiResponse.ok(stateOf(userId, id));
     }
 
     /** 取消收藏（§6.5）：幂等，计数不为负。 */
     @DeleteMapping("/api/posts/{id}/collect")
     @Operation(summary = "取消收藏", description = "幂等：重复取消返回成功，计数不会减到负数")
-    public ApiResponse<Void> uncollect(@PathVariable long id) {
-        interactionService.uncollectPost(CurrentUser.requireId(), id);
-        return ApiResponse.ok();
+    public ApiResponse<com.hyforum.interaction.vo.InteractionStateVO> uncollect(@PathVariable long id) {
+        long userId = CurrentUser.requireId();
+        interactionService.uncollectPost(userId, id);
+        // CR-R 顺带：同上
+        return ApiResponse.ok(stateOf(userId, id));
     }
 }

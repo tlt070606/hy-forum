@@ -8,6 +8,7 @@ import com.hyforum.common.oss.AvatarUrlResolver;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.notify.NotificationPublisher;
 import com.hyforum.common.notify.NotificationType;
+import com.hyforum.domain.interaction.entity.Comment;
 import com.hyforum.domain.notify.entity.Notification;
 import com.hyforum.domain.notify.mapper.NotificationMapper;
 import com.hyforum.domain.user.entity.User;
@@ -56,14 +57,22 @@ public class NotificationService implements NotificationPublisher {
     private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
 
+    /**
+     * CR-N：评论类通知要反查"评论属于哪个帖子"（评论行里存着 post_id）。
+     * 属于 {@code domain} 共享层，铁律 3 允许。
+     */
+    private final com.hyforum.domain.interaction.mapper.CommentMapper commentMapper;
+
     /** 头像 URL 的唯一装配入口（CR-Q）：通知发送者的头像也必须带读时签名。 */
     private final AvatarUrlResolver avatarResolver;
 
     public NotificationService(NotificationMapper notificationMapper, UserMapper userMapper,
-                               AvatarUrlResolver avatarResolver) {
+                               AvatarUrlResolver avatarResolver,
+                               com.hyforum.domain.interaction.mapper.CommentMapper commentMapper) {
         this.notificationMapper = notificationMapper;
         this.userMapper = userMapper;
         this.avatarResolver = avatarResolver;
+        this.commentMapper = commentMapper;
     }
 
     // ==================================================================
@@ -170,11 +179,68 @@ public class NotificationService implements NotificationPublisher {
 
         List<Notification> rows = result.getRecords();
         Map<Long, User> senders = loadSenders(rows);
+        // CR-N：批量算出每条通知的 postId / commentId（一次查询，不逐条查 —— 否则一页 20 条就是 20 次）
+        Map<Long, Comment> commentsById = loadTargetComments(rows);
         List<NotificationVO> items = new ArrayList<>(rows.size());
         for (Notification row : rows) {
-            items.add(NotificationVO.from(row, senders.get(row.getFromUserId()), avatarResolver));
+            Long[] ids = resolveTargetIds(row, commentsById);
+            items.add(NotificationVO.from(row, senders.get(row.getFromUserId()), avatarResolver,
+                    ids[0], ids[1]));
         }
         return PageResult.of(items, result.getTotal(), pageNo, pageSize);
+    }
+
+    /**
+     * 一次把本页通知里"目标为评论"的那些评论查出来（CR-N）。
+     *
+     * <p>为什么要查：评论类通知的 {@code targetId} 是<b>评论 id</b>，
+     * 而前端要跳转需要<b>帖子 id</b>（评论页要靠帖子定位）——
+     * 评论行里存着 {@code post_id}，所以要反查一次。</p>
+     */
+    private Map<Long, Comment> loadTargetComments(List<Notification> rows) {
+        List<Long> commentIds = rows.stream()
+                .filter(row -> row.getTargetType() != null
+                        && row.getTargetType() == Notification.TARGET_COMMENT)
+                .map(Notification::getTargetId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (commentIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Comment> comments = new HashMap<>();
+        for (Comment comment : commentMapper.selectBatchIds(commentIds)) {
+            comments.put(comment.getId(), comment);
+        }
+        return comments;
+    }
+
+    /**
+     * 算出一条通知的 {@code (postId, commentId)}（CR-N）。
+     *
+     * <p>四种类型的口径（L1 的裁决：评论/回复类<b>两个都有</b>，点赞/关注类 {@code commentId} 为空）：</p>
+     * <ul>
+     *   <li>点赞（targetType=帖子）→ {@code postId = targetId}，{@code commentId = null}；</li>
+     *   <li>评论（targetType=帖子）→ 同上；</li>
+     *   <li>回复（targetType=评论）→ {@code commentId = targetId}，
+     *       {@code postId} 由该评论的 {@code post_id} 反查；</li>
+     *   <li>关注（targetType 为 null）→ 两个都是 {@code null}（关注的对象是人，没有可跳转的内容）。</li>
+     * </ul>
+     */
+    private static Long[] resolveTargetIds(Notification row, Map<Long, Comment> commentsById) {
+        Integer targetType = row.getTargetType();
+        Long targetId = row.getTargetId();
+        if (targetType == null || targetId == null) {
+            return new Long[]{null, null};
+        }
+        if (targetType == Notification.TARGET_COMMENT) {
+            Comment comment = commentsById.get(targetId);
+            // 评论已被删除 / 查不到时：commentId 仍给出（前端可据此提示"内容已删除"），
+            // postId 为 null。**不因此丢掉整条通知** —— 通知是"当时发生过"的记录（§5 第 3 条）。
+            return new Long[]{comment == null ? null : comment.getPostId(), targetId};
+        }
+        // 目标为帖子（点赞 / 评论）
+        return new Long[]{targetId, null};
     }
 
     private Map<Long, User> loadSenders(List<Notification> rows) {

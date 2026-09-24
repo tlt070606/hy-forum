@@ -47,7 +47,11 @@ public record NotificationVO(
         Long targetId,
         String content,
         Boolean isRead,
-        LocalDateTime createdAt) {
+        LocalDateTime createdAt,
+        @Schema(description = "CR-N：关联的帖子 id（评论/回复类由评论反查得到；无关联为 null）")
+        Long postId,
+        @Schema(description = "CR-N：关联的评论 id（仅评论/回复类有；点赞/关注类为 null）")
+        Long commentId) {
 
     /**
      * 发起人已注销时的占位昵称。
@@ -61,9 +65,17 @@ public record NotificationVO(
     /**
      * 实体 → VO。
      *
+     * <p><b>CR-N</b>：新增 {@code postId} / {@code commentId}，让前端能<b>直接跳转</b>到
+     * "被点赞的帖子 / 被回复的评论"。这两个值由调用方算好传进来 ——
+     * 本类只做形状转换，**不查库**（VO 工厂不该有 IO，否则每页 20 条就是 20 次额外查询）。</p>
+     *
      * @param sender 发起人；可能为 {@code null}（已注销，或系统通知）
+     * @param postId 关联帖子 id；可为 {@code null}
+     * @param commentId 关联评论 id；仅评论/回复类有，点赞/关注类为 {@code null}
      */
-    public static NotificationVO from(Notification notification, User sender, com.hyforum.common.oss.AvatarUrlResolver avatarResolver) {
+    public static NotificationVO from(Notification notification, User sender,
+                                      com.hyforum.common.oss.AvatarUrlResolver avatarResolver,
+                                      Long postId, Long commentId) {
         if (notification == null) {
             return null;
         }
@@ -77,6 +89,10 @@ public record NotificationVO(
                 notification.getTargetId(),
                 notification.getContent(),
                 notification.getIsRead() != null && notification.getIsRead() == 1,
-                notification.getCreatedAt());
+                notification.getCreatedAt(),
+                // CR-N：两个"可跳转 id"由调用方算好传进来（本类只做形状转换，不查库 ——
+                // 否则每页 20 条就是 20 次额外查询，而 VO 工厂不该有 IO）
+                postId,
+                commentId);
     }
 }
