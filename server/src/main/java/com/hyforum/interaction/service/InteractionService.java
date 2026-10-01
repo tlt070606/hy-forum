@@ -356,8 +356,11 @@ public class InteractionService {
      *   <li>{@code comment} 表本身采用<b>逻辑删除</b>（{@code @TableLogic}，实测
      *       {@code CommentMapper.delete} 生成的是 {@code UPDATE comment SET is_deleted=1}），
      *       因此这里也是逻辑删除。那个等式对评论的正确形式是
-     *       {@code comment_count == COUNT(comment WHERE is_deleted = 0)}
-     *       —— 计数递减的是<b>可见</b>评论数，与逻辑删除并不矛盾。
+     *       {@code comment_count == COUNT(comment WHERE is_deleted = 0 AND status = 1)}
+     *       —— 计数只算<b>可见</b>评论（2026-10-01 需求方裁定：待审/已屏蔽不进计数），
+     *       与逻辑删除并不矛盾。本方法删除该帖<b>全部</b>评论行（含隐藏行），
+     *       可见行只是其子集，因此"按删掉的总行数扣、下限 0"在这个口径下依然精确：
+     *       帖子删除后所有评论都不可见，扣到下限 0 即为正确终态。
      *       刻意<b>不</b>为此改成物理删除：对本项目"评论从不物理删除"这条一致性
      *       更重要，而且软删的评论行还能给 M5/M6 的审核追溯留证据（`is_deleted` 语义
      *       是全表统一的，为一个边缘场景破例会让"为什么这张表不一样"无从回答）。</li>

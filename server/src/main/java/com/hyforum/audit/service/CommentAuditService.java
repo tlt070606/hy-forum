@@ -80,14 +80,16 @@ public class CommentAuditService {
     /**
      * 评论审核处理（§6.11 {@code PUT /api/admin/comments/{id}/status}）：放行 or 屏蔽。
      *
-     * <p>顺序刻意是「<b>先校验 → 再改状态 → 再留痕</b>」，且全在同一事务里：</p>
+     * <p>顺序刻意是「<b>先校验 → 再改状态 → 再同步计数 → 再留痕</b>」，且全在同一事务里：</p>
      * <ol>
      *   <li>校验目标评论存在；</li>
      *   <li>校验目标状态合法（只接受 1 放行 / 2 屏蔽 —— 不接受把评论改回 0"待审"，
      *       那等于把一个已经处置过的东西重新塞回队列，没有任何业务含义）；</li>
      *   <li>屏蔽时校验理由必填（合规要求可追溯处置依据）；</li>
      *   <li>改 {@code comment.status}；</li>
-     *   <li>写留痕行。留痕失败 → 整个事务回滚，状态改动一并撤销。</li>
+     *   <li>按状态迁移同步 {@code post.comment_count}／主楼 {@code reply_count}
+     *       （{@link #adjustCommentCounts}，2026-10-01 口径裁定）；</li>
+     *   <li>写留痕行。留痕失败 → 整个事务回滚，状态改动与计数一并撤销。</li>
      * </ol>
      *
      * @param adminId  操作管理员 id（由 Controller 从后台登录态取，不来自请求体）
@@ -124,7 +126,65 @@ public class CommentAuditService {
                 .eq(Comment::getId, commentId)
                 .set(Comment::getStatus, status));
 
+        // 状态变化同步冗余计数（2026-10-01 口径裁定）：可见 ↔ 不可见的切换必须反映到
+        // post.comment_count / 主楼 reply_count 上，否则帖子显示"3 条评论"点进去只有 1 条。
+        adjustCommentCounts(comment, previous, status);
+
         return writeLog(adminId, commentId, previous, status, normalizedReason, ip);
+    }
+
+    /**
+     * 审核状态变化同步冗余计数（2026-10-01 裁定：评论数只算可见评论）。
+     *
+     * <p>口径与 {@code CommentService} 严格一致（两处注释互为指认）：</p>
+     * <pre>
+     *   post.comment_count == COUNT(comment WHERE post_id = ? AND is_deleted = 0 AND status = 1)
+     *   主楼.reply_count   == COUNT(comment WHERE root_id = ? AND is_deleted = 0 AND status = 1)
+     * </pre>
+     *
+     * <p>此前的实现<b>不改计数</b>：屏蔽一条可见评论后帖子仍显示原评论数，
+     * 用户点进去却少一条；放行一条待审评论则反过来"数字比可见的少"。
+     * 状态迁移对计数的影响：</p>
+     * <ul>
+     *   <li>放行（0 → 1）：从不可见变可见 → comment_count +1；若是楼中楼，其主楼 reply_count +1；</li>
+     *   <li>屏蔽可见（1 → 2）：反之 -1（下限 0）；</li>
+     *   <li>屏蔽待审（0 → 2）：两边都不可见，计数不动；</li>
+     *   <li>重复处置（previous == status）：计数不动。</li>
+     * </ul>
+     *
+     * <p>屏蔽一条<b>主楼</b>只减它自己那一行：它的楼中楼仍是可见行、仍算在帖子的
+     * 评论数里 —— 口径是"行数"而不是"楼层树可见性"，这样等式永远可以用一条
+     * {@code COUNT} 对账，不需要按树遍历。</p>
+     */
+    private void adjustCommentCounts(Comment comment, int previous, int current) {
+        if (previous == current) {
+            return;
+        }
+        boolean wasVisible = previous == Comment.STATUS_NORMAL;
+        boolean nowVisible = current == Comment.STATUS_NORMAL;
+        if (wasVisible == nowVisible) {
+            return;
+        }
+        boolean isReply = comment.getParentId() != null && comment.getParentId() != Comment.ROOT_MARKER;
+        if (nowVisible) {
+            postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                    .setSql("comment_count = comment_count + 1")
+                    .eq(Post::getId, comment.getPostId()));
+            if (isReply) {
+                commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
+                        .setSql("reply_count = reply_count + 1")
+                        .eq(Comment::getId, comment.getRootId()));
+            }
+        } else {
+            postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                    .setSql("comment_count = IF(comment_count > 0, comment_count - 1, 0)")
+                    .eq(Post::getId, comment.getPostId()));
+            if (isReply) {
+                commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
+                        .setSql("reply_count = IF(reply_count > 0, reply_count - 1, 0)")
+                        .eq(Comment::getId, comment.getRootId()));
+            }
+        }
     }
 
     /**

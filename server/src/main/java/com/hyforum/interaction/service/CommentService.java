@@ -62,6 +62,11 @@ import java.util.Objects;
  *   <li>所有计数（{@code post.comment_count}、{@code comment.reply_count}、
  *       {@code comment.like_count}）都在<b>同一事务</b>内随关系表增减，
  *       且递减一律带下限 0（任务书 §5.3：计数不得为负）。</li>
+ *   <li><b>评论数口径（2026-10-01 需求方裁定）</b>：
+ *       {@code comment_count / reply_count == COUNT(comment WHERE is_deleted = 0 AND status = 1)}
+ *       —— 待审与已屏蔽的评论不进计数（前台可见什么，数字就是什么）。
+ *       审核放行/屏蔽时的计数增减由 {@code CommentAuditService#adjustCommentCounts} 负责，
+ *       两处口径严格一致；对账等式与脚本见 {@code scripts/deploy/recount_fake_counters.sql} 头注。</li>
  * </ul>
  */
 @Service
@@ -232,15 +237,25 @@ public class CommentService {
         comment.setCreatedAt(LocalDateTime.now());
         commentMapper.insert(comment);
 
-        // 同一事务内维护冗余计数（§8.2）
-        if (rootId != Comment.ROOT_MARKER) {
-            commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
-                    .setSql("reply_count = reply_count + 1")
-                    .eq(Comment::getId, rootId));
+        // 同一事务内维护冗余计数（§8.2）。
+        //
+        // 口径（2026-10-01 需求方裁定）：**计数只算"可见"评论** ——
+        //   post.comment_count / comment.reply_count == COUNT(comment WHERE is_deleted = 0 AND status = 1)。
+        // 待审（status=0）与已屏蔽（status=2）的评论对前台不可见、也不进计数；
+        // 它被放行时由 {@code CommentAuditService.reviewComment} 补 +1。
+        // 不这么做的话，用户会看到"3 条评论"点进去只有 1 条 ——
+        // 因为下面的列表查询本来就只出 status=1 的行。
+        // 与 {@code CommentAuditService#adjustCommentCounts} 的口径严格一致，两处注释互为指认。
+        if (comment.getStatus() != null && comment.getStatus() == Comment.STATUS_NORMAL) {
+            if (rootId != Comment.ROOT_MARKER) {
+                commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
+                        .setSql("reply_count = reply_count + 1")
+                        .eq(Comment::getId, rootId));
+            }
+            postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                    .setSql("comment_count = comment_count + 1")
+                    .eq(Post::getId, post.getId()));
         }
-        postMapper.update(null, Wrappers.<Post>lambdaUpdate()
-                .setSql("comment_count = comment_count + 1")
-                .eq(Post::getId, post.getId()));
 
         // ★ M5 触发点：评论/回复成功 → 写通知（同一事务内，§5 第 1 条）。
         //
@@ -323,12 +338,27 @@ public class CommentService {
             throw new BizException(ErrorCode.FORBIDDEN, "只能删除自己的评论");
         }
 
-        // ① 主楼：先连带逻辑删除其楼中楼，并取回真正被删掉的行数
-        long removedChildren = 0;
+        // 被删评论此前是否"可见"（is_deleted=0 AND status=1 的口径，2026-10-01 裁定）。
+        // 隐藏行（待审/已屏蔽）本来就不进计数，删除它们不能扣计数。
+        boolean rootVisible = comment.getStatus() != null && comment.getStatus() == Comment.STATUS_NORMAL;
+
+        // ① 主楼：先连带逻辑删除其楼中楼。分两批删是为了让"影响行数"按可见性分开：
+        //    可见楼中楼的行数才是要扣的计数；待审/已屏蔽楼中楼的行数不能扣。
+        //    （status 列是 NOT NULL，这里仍对 NULL 做兜底匹配，避免任何边缘行漏删。）
+        long removedVisibleChildren = 0;
+        long removedHiddenChildren = 0;
         if (isRoot(comment)) {
-            removedChildren = commentMapper.delete(Wrappers.<Comment>lambdaQuery()
+            removedVisibleChildren = commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
                     .eq(Comment::getRootId, comment.getId())
-                    .ne(Comment::getParentId, Comment.ROOT_MARKER));
+                    .ne(Comment::getParentId, Comment.ROOT_MARKER)
+                    .eq(Comment::getStatus, Comment.STATUS_NORMAL)
+                    .set(Comment::getIsDeleted, 1));
+            removedHiddenChildren = commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
+                    .eq(Comment::getRootId, comment.getId())
+                    .ne(Comment::getParentId, Comment.ROOT_MARKER)
+                    .and(w -> w.isNull(Comment::getStatus)
+                            .or().ne(Comment::getStatus, Comment.STATUS_NORMAL))
+                    .set(Comment::getIsDeleted, 1));
         }
 
         // ② 删自己：影响行数是"这次是否真的删掉了"的唯一依据
@@ -336,23 +366,36 @@ public class CommentService {
                 .eq(Comment::getId, commentId)
                 .set(Comment::getIsDeleted, 1);
         int affected = commentMapper.update(null, updateWrapper)
-                + (int) removedChildren;
+                + (int) (removedVisibleChildren + removedHiddenChildren);
         if (affected == 0) {
             // 并发下另一请求已经删掉了它：幂等成功，不动计数
             log.debug("删除评论：并发下已被删除，按幂等成功处理 commentId={}", commentId);
             return;
         }
 
-        // ③ 计数递减（同一事务，且下限 0）
+        // ③ 计数递减（同一事务，且下限 0）。只扣"本次真正从可见变为删除"的行：
+        //    主楼自己可见 +1 行；可见楼中楼按实际影响行数。
+        //    参数走 {0} 占位而不是字符串拼接 —— affected 是 int 拼接并无注入风险，
+        //    但 PostMapper 的注释口径是"本项目 SQL 无任何字符串拼接"，这里对齐它。
         if (!isRoot(comment)) {
             long rootId = comment.getRootId();
-            commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
-                    .setSql("reply_count = IF(reply_count > 0, reply_count - 1, 0)")
-                    .eq(Comment::getId, rootId));
+            if (rootVisible) {
+                commentMapper.update(null, Wrappers.<Comment>lambdaUpdate()
+                        .setSql("reply_count = IF(reply_count > 0, reply_count - 1, 0)")
+                        .eq(Comment::getId, rootId));
+                postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                        .setSql("comment_count = IF(comment_count > 0, comment_count - {0}, 0)", 1)
+                        .eq(Post::getId, comment.getPostId()));
+            }
+            // 不可见的楼中楼被删：不扣任何计数（它本来就不在计数里）
+        } else {
+            long visibleDelta = removedVisibleChildren + (rootVisible ? 1 : 0);
+            if (visibleDelta > 0) {
+                postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                        .setSql("comment_count = IF(comment_count > 0, comment_count - {0}, 0)", visibleDelta)
+                        .eq(Post::getId, comment.getPostId()));
+            }
         }
-        postMapper.update(null, Wrappers.<Post>lambdaUpdate()
-                .setSql("comment_count = IF(comment_count > 0, comment_count - " + affected + ", 0)")
-                .eq(Post::getId, comment.getPostId()));
 
         // 评论点赞关系一并清掉：评论已不可见，关系行只会让
         // "comment.like_count == comment_like 行数" 这个等式在后续永远不成立

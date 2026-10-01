@@ -361,17 +361,17 @@ class M4CommentTest extends M4ApiTestSupport {
     // 小工具
     // ==================================================================
 
-    /** 未删除的楼中楼行数。 */
+    /** 可见的楼中楼行数（口径：is_deleted = 0 AND status = 1，与计数口径一致）。 */
     private int aliveReplies(long rootId) {
         Integer count = scalar("SELECT COUNT(*) FROM comment WHERE root_id = ? AND parent_id <> 0 "
-                + "AND is_deleted = 0", Integer.class, rootId);
+                + "AND is_deleted = 0 AND status = 1", Integer.class, rootId);
         return count == null ? 0 : count;
     }
 
-    /** 该帖未删除的评论行数（主楼 + 楼中楼）。 */
+    /** 该帖可见的评论行数（主楼 + 楼中楼；口径：is_deleted = 0 AND status = 1，2026-10-01 裁定）。 */
     private int aliveComments(long postId) {
-        Integer count = scalar("SELECT COUNT(*) FROM comment WHERE post_id = ? AND is_deleted = 0",
-                Integer.class, postId);
+        Integer count = scalar("SELECT COUNT(*) FROM comment WHERE post_id = ? "
+                + "AND is_deleted = 0 AND status = 1", Integer.class, postId);
         return count == null ? 0 : count;
     }
 }
