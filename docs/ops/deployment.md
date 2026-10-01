@@ -1,20 +1,30 @@
 # 部署方案（单一配置）
 
 > 本文件是部署的**唯一依据**。
-> 核心原则：**本地开发为基准、上线前先升配；只维护一份构建产物与一份配置，不存在部署档位。**
-> 版本 **v2.0**（2026-09-14）。**v2.0 是一次结构性变更**：取消部署双档位（`lowmem` / `standard`），改为单一配置；性能基准由「2 vCPU / 2 GiB」改为「本地开发」；原 2C2G 的参数核算**未丢弃**，降为[附录 A](#附录-a若最终目标仍为-2-vcpu--2-gib)备用。
-> 决策依据：`docs/review/2026-09-14-方案评审记录.md` §10 **D4**（2026-09-14）与 [`../adr/0010-部署以本地开发为基准并取消档位.md`](../adr/0010-部署以本地开发为基准并取消档位.md)。**本文档取代 [`../adr/0004-部署双档位.md`](../adr/0004-部署双档位.md)。**
+> 核心原则：**只维护一份构建产物与一份配置，不存在部署档位。**
+> 版本 **v3.0**（2026-10-01）。**v3.0 是一次"回填现实"的修订**：v2.0 写于上线之前（2026-09-14），
+> 假想的部署形态是 docker-compose + 域名 + HTTPS；而 **2026-09-24 的实际上线**（见
+> [`上线记录-2026-09-24.md`](上线记录-2026-09-24.md)）最终采用的是 **systemd 裸机 + apt 原生 MySQL/Redis + Nginx 反代，
+> 以 IP + HTTP 访问**。v3.0 把 §2/§4/§7 按**线上真实参数与步骤**重写，消除"唯一依据说假话"的状态
+> （此前 §2 的 MySQL 512M/Redis 256mb/-Xmx1g 与线上真实的 64M/64mb/256m 全部不符，
+> 真实参数只活在 `scripts/deploy/*.sh` 的 heredoc 里 —— 那正是本文件失职的地方）。
+>
+> **演示站裁定（需求方 2026-10-01，路线 A）**：本站定位为**个人作品集/练习站点**，
+> **不做域名注册与 ICP 备案，不上 HTTPS**，以 `http://8.138.237.212/` 访问。
+> 因此：**本站只接受演示数据，任何输入的口令都应视为经明文链路传输（视同公开）**。
+> 该裁定对应的**代码级补偿**已落地（见 §2.1）；由此放弃的保障与残余风险登记在 `docs/PLAN.md` 风险登记册 R2。
+> 决策依据：[`../adr/0010-部署以本地开发为基准并取消档位.md`](../adr/0010-部署以本地开发为基准并取消档位.md)（D4）。**本文档取代 [`../adr/0004-部署双档位.md`](../adr/0004-部署双档位.md)。**
 
 ---
 
 ## 0. 设计原则
 
-1. **单一产物、单一配置**：一份 JAR、一份前端 `dist/`、一份 `docker-compose.yml`、一份 `.env`。不存在 `docker-compose.lowmem.yml` 之类的档位文件，也不存在 `APP_PROFILE` 开关。
+1. **单一产物、单一配置**：一份 JAR、一份前端 `dist/`、一套环境变量。不存在档位文件，也不存在 `APP_PROFILE` 开关。
 2. **本地优先**：开发期以本地运行为准，**不预先用低配内存约束限制设计与实现**。理由：先证明「功能与性能可以做到」，再在真实规格上做取舍；反过来（先按最低配写死）会把大量精力花在微调上，且容易掩盖真正的性能问题。
 3. **上线前一次性定规格**：上线前必须先回填目标服务器规格，并按 §6 复算参数、回填 §2。**不允许"拿一份来路不明的参数直接上生产"**。
 4. **不预先自我设限，但不放弃自觉**：不限内存 ≠ 可以写低效代码。§5 的性能实践与规格无关，一律遵守。
 
-> **与铁律的关系**：`AGENTS.md` 铁律 2（零代码分叉）在单一配置下**自动满足**（只有一份产物、一份配置）；铁律 6（禁止在服务器上构建）**继续有效**，其理由是构建期内存峰值（`mvn package` / `npm run build` 均超 1G）会打挂低配服务器，与档位机制无关。本次 D4 决策**不修改 `AGENTS.md`**。
+> **与铁律的关系**：`AGENTS.md` 铁律 2（零代码分叉）在单一配置下**自动满足**（只有一份产物、一份配置）；铁律 6（禁止在服务器上构建）**继续有效**，其理由是构建期内存峰值（`mvn package` / `npm run build` 均超 1G）会打挂低配服务器，与档位机制无关。
 
 ---
 
@@ -22,11 +32,12 @@
 
 | 阶段 | 环境 | 内存约束 | 状态 |
 |---|---|---|---|
-| **开发期（当前）** | 本地开发机 | **不设约束** | 立即开始 |
+| **开发期** | 本地开发机 | **不设约束** | 持续 |
 | **测试 / 演示** | 本地或局域网 | 不设约束 | 可选 |
-| **上线** | **升配后的阿里云服务器** | 规格待定 → **上线前回填并复算** | 待定，见 §4 |
+| **线上** | **阿里云 2 vCPU / 2 GiB（未升配，直接上线）** | 见 §2 线上真实参数 | **2026-09-24 已上线**：`http://8.138.237.212/` |
 
-现有服务器为阿里云 **2 vCPU / 2 GiB**、Ubuntu 22.04、ESSD 40 GiB、公网 IP 8.138.237.212、到期 **2027-01-06**。按 D4 决策，**它不再是本期部署目标**（其参数核算保留在附录 A）；是否续费、是否变配，需在到期前决定。
+现有服务器为阿里云 **2 vCPU / 2 GiB**、Ubuntu 22.04、ESSD 40 GiB、公网 IP 8.138.237.212、到期 **2027-01-06**。
+按 2026-09-24 的实际上线决策，**未升配、未换机，就在这台 2C2G 上以裸机 systemd 形态上线**（v2.0 曾计划"升配后再上线"，未执行；是否续费/变配，到期前决定）。
 
 ---
 
@@ -83,22 +94,44 @@ docker start mysql redis nacos seata-server rabbitmq nginx
 >
 > **另**：`~/.ssh/config` 中另有 `myserver → 8.138.237.212`（即 `PLAN.md` A1 那台阿里云 ECS，2 vCPU / 2 GiB），可直连。按 **D4 决策**（[`../adr/0010`](../adr/0010-部署以本地开发为基准并取消档位.md)），**上线推迟到升配之后**，当前不部署到该机器。
 
-## 2. 统一参数（开发与上线共用一份）
+## 2. 线上真实参数（2026-09-24 上线实测，v3.0 回填）
 
-> 下表是**唯一的一份参数**。本地开发与上线使用同一份配置，仅通过 `.env` 注入不同环境的值（数据库地址、OSS Bucket、域名等**环境相关**项），而**容量类参数不再分档**。
+> 下表是**线上正在生效的参数**，与 `scripts/deploy/install_stack.sh`、`finish_setup.sh`、`finish_deploy.sh` 中的 heredoc 一一对应 —— **改参数必须两处同步**（脚本 + 本表），否则视为缺陷。
+> 开发期不受这些约束（见 §3）；附录 A 保留为"若重装/换机仍为 2 GiB"的核算依据。
 
 | 组件 | 参数 | 说明 |
 |---|---|---|
-| MySQL | `innodb_buffer_pool_size=512M` | 8–16G 开发机与 4C8G 服务器均可承受；1000–10000 条帖子的数据集完全装得下 |
-| MySQL | `max_connections=100` | 与 Hikari `maximum-pool-size=20` 匹配（单后端实例 + 定时任务，100 留足余量） |
-| MySQL | `performance_schema=OFF` | 本项目无细粒度性能分析需求，关闭以省内存；需要时可临时开启 |
-| MySQL | **binlog 保持开启** | 保留按时间点恢复（PITR）能力；不再使用 `skip-log-bin` |
-| Redis | `maxmemory=256mb`、`maxmemory-policy=allkeys-lru` | 500 用户规模的登录态 + 缓存总量在 10M 量级，256mb 余量充足 |
-| backend | `-Xms512m -Xmx1g -XX:MaxMetaspaceSize=256m -XX:MaxDirectMemorySize=128m -XX:+UseG1GC` | G1GC 适配 1G 以上堆；元空间与直接内存**必须显式设上限**，否则 native 内存无界 |
-| backend | Tomcat `server.tomcat.threads.max=200`、Hikari `spring.datasource.hikari.maximum-pool-size=20` | **必须显式设置**。不写会依赖框架默认值，历史上"漏写上限"正是内存预算失控的根因 |
-| nginx | 不限 | 静态资源 gzip 与缓存头 |
+| MySQL（apt 原生） | `innodb_buffer_pool_size=64M` | 1000 条量级数据集够用；`max_connections` 走默认 151（Hikari 只用 10） |
+| MySQL | `bind-address=127.0.0.1`；应用账号限 `hyforum@127.0.0.1`；口令 600 权限文件 | 数据库不对公网暴露 |
+| Redis（apt 原生） | `maxmemory=64mb`、`maxmemory-policy=allkeys-lru`、`bind 127.0.0.1` | ⚠️ **登录态 token 与业务缓存同实例**：内存压力下 LRU 可能逐出 token（表现：用户掉线）。`evicted_keys` 要盯着（附录 A.3 同款风险） |
+| backend（systemd） | `-Xms128m -Xmx256m -XX:MaxMetaspaceSize=160m -XX:MaxDirectMemorySize=48m`（真实值以 `finish_deploy.sh` 的 systemd 单元为准） | 2 GiB 裸机预算内的取值 |
+| backend | Tomcat / Hikari 用代码内默认值（Hikari `maximum-pool-size=10`） | |
+| nginx | `client_max_body_size 20m`；`/api/` 反代 `127.0.0.1:8080`；静态直出 `/var/www/hy-forum` | 配置全文见 `scripts/deploy/finish_deploy.sh` |
+| 备份 | cron 每天 03:30 `mysqldump` → `/var/backups/hy-forum`，保留 7 天；产物做**大小 + 可解压**双重校验 | 2026-10-01 修复：此前 `mysql`（交互客户端）被误当导出工具用，备份是 20 字节空文件（上线记录 §5）；修复后每次运行自校验，失败退出码非 0 |
 
-**JVM 参数的单一来源**：`JAVA_OPTS` 只在 `.env` 中定义一次，`docker-compose.yml` 引用它，**技术方案与各 ADR 一律不复述具体数值**。v1.3 曾出现 `deployment.md` 漏写 `-XX:MaxDirectMemorySize` 而技术方案写了的漂移；v1.4 起以本条为修复手段。
+### 2.1 演示站裁定的代码级补偿（2026-10-01，路线 A）
+
+全站 HTTP 明文（见文首裁定）接受的残余风险，用以下已在代码层落地的措施封顶损失：
+
+| 措施 | 落点 |
+|---|---|
+| 限流取 IP 只信 Nginx 覆盖写入的 `X-Real-IP`，不读可伪造的 `X-Forwarded-For`（否则限流可一击绕过） | `AuthController#clientIp`、`AdminAuthController#clientIp` |
+| 管理员登录 IP 限流（此前是全站唯一无限流的认证端点，可在线爆破） | `hy.rate-limit.admin-login-per-minute`（默认 10/分钟） |
+| 发表评论用户限流（此前发帖有限流、评论没有） | `hy.rate-limit.comment-per-hour`（默认 20/小时，§8.7 原文） |
+| token 有效期 7 天 → **2 天**（被窃听后的损失窗口封顶） | `application.yml` sa-token.timeout |
+| 备份产物自校验（空备份即失败） | `scripts/deploy/install_backup_and_check.sh` |
+
+**未落地（登记为待办，需要服务器操作权限时执行）**：Nginx 对 `/api/admin/` 加 IP 白名单或仅允许 SSH 隧道访问 —— 管理员 token 走 HTTP 是全站最值钱的窃听目标，白名单能把这个面收窄到管理员自己的出口 IP。
+
+```nginx
+# 待应用（加入 /etc/nginx/sites-available/hy-forum 的 server 块，location /api/ 之前）：
+# location ^~ /api/admin/ {
+#     allow <管理员出口IP>;   # 动态 IP 场景改用 WireGuard/SSH 隧道
+#     deny all;
+#     proxy_pass http://127.0.0.1:8080;
+#     include /etc/nginx/proxy_params_hy.conf;  # 与 /api/ 同款 proxy_set_header
+# }
+```
 
 ---
 
@@ -156,29 +189,37 @@ java '-Dstdout.encoding=UTF-8' -jar target\toolchain-check-1.0.0.jar
 
 ---
 
-## 4. 上线（升配后）
+## 4. 线上部署（实际形态：systemd 裸机，无 Docker）
 
-### 4.1 上线前的必要动作（按顺序）
+> 2026-09-24 上线时未采用 v2.0 设想的 docker-compose 路线（全仓库不存在任何 compose 文件/Dockerfile），
+> 改用 **apt 原生 MySQL/Redis + systemd 跑 jar + Nginx 反代**。步骤以 `scripts/deploy/` 为准：
 
-1. **确定服务器规格**并回填本节；按 §6 复算 §2 参数，**回填本文档**（含容器上限与实测值）。
-2. 决定现有 2C2G 实例的去向：续费／变配／退订（到期 **2027-01-06**）。
-3. 域名注册 + ICP 备案 + 公安联网备案 + 论坛社区备案咨询 —— **这是最大时间瓶颈，本应在 M0 起并行启动**，详见 `docs/PLAN.md` §3 与 §6。
-4. 完成 `docs/PLAN.md` §6 的待确认事项（含带宽规格，决定图片是否必须上 CDN）。
+### 4.1 首次装机（`install_stack.sh` + `finish_setup.sh`）
 
-### 4.2 部署步骤
+1. apt 安装 openjdk-21、mysql-server、redis-server、nginx；配置 2G swap。
+2. MySQL：`bind-address=127.0.0.1`、`innodb_buffer_pool_size=64M`、建 `hy_forum` 库与应用账号（口令随机、600 权限文件）。
+3. Redis：`maxmemory=64mb` + `allkeys-lru` + 仅本机。
 
-1. 服务器初始化：创建普通用户、禁用 root 远程登录、配置 SSH 密钥。
-2. 安装 Docker Engine 与 Docker Compose Plugin。
-3. **在本地或 CI 构建产物**：`hy-forum.jar` 与前端 `dist/`，并构建 / 导出 backend 与 nginx 镜像。
-   **绝不在服务器上构建**（铁律 6）。镜像分发方式（`docker save`／`load` 或镜像仓库）必须在部署前确定，否则本步骤无法执行。
-4. 上传产物、`docker-compose.yml`、`nginx.conf` 与 `.env`。
-5. `docker compose up -d`。
-6. 配置 Nginx 与 HTTPS（阿里云免费 DV 证书或 Let's Encrypt 自动续期）。
-7. 配置 MySQL 每日 `mysqldump` 备份并上传至 OSS，保留 7 天；**并验证过一次真实恢复**。
-8. 配置日志轮转：**访问日志保留 ≥ 6 个月**（不写 180 天 —— 跨 31 天的月份 180 天不足 6 个月）；**应用日志保留 30 天，仅用于排障，不承担合规留痕**。
-9. 配置 `admin_operation_log`（审核留痕）的留存策略：**只增不改不删**，仅按 `created_at` 滚动清理 ≥ 6 个月之前的数据；确认后台全部写操作已接入留痕（合规 C9，见技术方案 §6.11、§10）。
-10. 配置内存与磁盘告警（含容器 `memory.events` 与 Redis `evicted_keys`）；验证 `docker stats` 与 `free -m` 在正常水位。
-11. 若目标规格内存紧张（可用内存 < 4 GiB，例如最终仍用 2 GiB），**必须**先执行附录 A 的全部条款（swap、容器上限、JVM 参数整体替换为附录 A 的那一套）。
+### 4.2 每次发布（本机构建 → 上传 → 重启；**铁律 6：服务器上零构建**）
+
+```bash
+# 本机：
+mvn -DskipTests package                 # 产物 server/target/*.jar
+cd web && npm run build:h5              # 产物 web/dist/
+scp server/target/hy-forum-*.jar myserver:/opt/hy-forum/app.jar
+tar -czf h5.tar.gz -C web dist && scp h5.tar.gz myserver:/root/
+# 服务器：
+systemctl restart hy-forum              # systemd 单元见 finish_deploy.sh 的 heredoc
+```
+
+健康检查：`curl http://8.138.237.212/api/feed`（或按 `finish_deploy.sh` 末尾的自检清单）。
+
+### 4.3 遗留待办
+
+- ~~每日备份~~ 已装（`install_backup_and_check.sh`，2026-10-01 修复并加产物校验）；**恢复演练仍未做过**。
+- 生产关闭 Knife4j / springdoc 调试页（评审 P1-8，**未做**）：当前 `/v3/api-docs`、`/swagger-ui.html` 公网可匿名访问。
+- `/api/admin/` IP 白名单（见 §2.1）。
+- 日志轮转与 `admin_operation_log` 留存策略（§7.2）仍为纸面项。
 
 ---
 
@@ -211,27 +252,24 @@ java '-Dstdout.encoding=UTF-8' -jar target\toolchain-check-1.0.0.jar
 
 ### 7.1 开发期
 
-- [ ] `docker compose up -d mysql redis` 可正常启动，参数取 §2
-- [ ] 后端可本地启动，前端 `npm run dev` 可代理到后端
-- [ ] 图片上传走**服务端签名直传**（MinIO 或 OSS 测试 Bucket），前端代码中**无任何 AccessKey**
-- [ ] 全链路（注册 → 登录 → 发帖带图 → 评论 → 收藏）在本地可跑通
+- [x] MySQL（Windows 原生 3306）与 Redis（VM 6380）可用，参数见 §3
+- [x] 后端可本地启动，前端 `npm run dev` 可代理到后端
+- [x] 图片上传走**服务端签名直传**（OSS），前端代码中**无任何 AccessKey**
+- [x] 全链路（注册 → 登录 → 发帖带图 → 评论 → 收藏）在本地可跑通
 
-### 7.2 上线前（规格回填后）
+### 7.2 上线核对（2026-09-24 实际执行情况）
 
-- [ ] 目标服务器规格已回填 §1，§2 全部容量参数**已按 §6 复算并回填**
-- [ ] 各容器已设置 `mem_limit`，与 §2／附录 A 一致
-- [ ] JVM 参数由 `.env` 的 `JAVA_OPTS` **单一来源**注入（技术方案与 ADR 中无复述数值）
-- [ ] Tomcat `threads.max`、Hikari `maximum-pool-size` 已显式生效，非框架默认值
-- [ ] backend 容器内已用 `jcmd <pid> VM.metaspace` 实测元空间占用并回填参数表
-- [ ] 若目标内存 < 4 GiB：附录 A 的 swap、`vm.swappiness`、`memswap_limit` 条款全部执行
-- [ ] 构建产物来自本地 / CI，服务器上无构建工具链产出；**镜像分发方式已落实**
-- [ ] HTTPS 证书有效期与自动续期已确认
-- [ ] 数据库每日备份已跑通并**验证过恢复**（含 `admin_operation_log` 表）
-- [ ] 日志轮转已配置：访问日志 ≥ 6 个月，应用日志 30 天
-- [ ] `admin_operation_log` 留存策略已配置（只增不改不删，保留 ≥ 6 个月）
-- [ ] 生产环境 Knife4j / springdoc 调试页已关闭
-- [ ] 内存与磁盘告警已接入（含容器 cgroup OOM 事件与 Redis `evicted_keys`）
-- [ ] 备份策略已写明 **RPO / RTO**（评审遗留项 P1-10）
+- [x] 服务器规格与 §2 一致（2C2G 未升配，参数按附录 A 口径收紧）
+- [x] 构建产物来自本地（jar + H5 tar），服务器上无构建工具链产出（铁律 6）
+- [x] ~~HTTPS 证书~~ → **不适用**（演示站裁定，见文首）
+- [x] 数据库每日备份 cron 已装、产物自校验已通过（2026-10-01 修复后）
+- [ ] **备份恢复演练仍未做过**（P1-10 的 RPO/RTO 亦未写明）
+- [x] Tomcat / Hikari 上限显式（Hikari 10）
+- [ ] 日志轮转：访问日志 ≥ 6 个月，应用日志 30 天 —— **未配置**
+- [ ] `admin_operation_log` 留存策略（只增不改不删，≥ 6 个月）—— **未配置**
+- [ ] 生产环境 Knife4j / springdoc 调试页**未关闭**（P1-8，公网可匿名访问）
+- [ ] `/api/admin/` IP 白名单 —— **未应用**（§2.1 有现成配置）
+- [ ] 内存告警 / Redis `evicted_keys` 监控 —— **未配置**（2 GiB + allkeys-lru 下这条是实风险）
 
 ---
 
@@ -281,6 +319,7 @@ v1.3 的原值（backend 640M / Redis 160M / 合计 1726M / 余量 320M）是「
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| v2.0 | 2026-09-14 | **结构性变更**：取消部署双档位，改为单一配置；基准由 2 vCPU / 2 GiB 改为本地开发；新增 §3 本地开发、§4 上线（升配后）流程；原 2C2G 参数核算降为附录 A。依据 D4 决策（见评审记录 §10）与 ADR-0010 |
+| **v3.0** | **2026-10-01** | **回填上线现实 + 演示站裁定**：§1/§2/§4/§7 按线上真实形态（systemd 裸机、IP+HTTP、真实内存参数）重写，消除与 2026-09-24 上线事实的漂移；文首记入需求方"演示站、不做域名/HTTPS"裁定（路线 A）与五项代码级补偿；备份脚本修复记录入 §2。v2.0 假想的 compose 路线作废 |
+| v2.0 | 2026-09-14 | 结构性变更：取消部署双档位，改为单一配置；基准由 2 vCPU / 2 GiB 改为本地开发；新增 §3 本地开发、§4 上线（升配后）流程；原 2C2G 参数核算降为附录 A。依据 D4 决策（见评审记录 §10）与 ADR-0010 |
 | v1.4 | 2026-09-14 | 方案评审后按进程峰值重算 §2 内存预算、统一 JVM 参数单一来源、补齐 Tomcat/Hikari 上限、明确 swap 与容器换出策略、修订日志与留痕留存期 |
 | v1.3 | 2026-09-14 | 按服务器实际规格（2 vCPU / 2 GiB）重写，引入「部署双档位」 |
