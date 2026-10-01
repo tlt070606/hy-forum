@@ -69,6 +69,15 @@ import static org.assertj.core.api.Assertions.assertThat;
         "hy.post.new-user-post-limit=3",
         "hy.post.post-per-hour-limit=10",
         "hy.rate-limit.ip-per-minute=50",
+        // ★ 2026-10-01 新增的两条限流在本基线里**压高**（形同关闭）：
+        //   共享基线被几十个测试类使用，任何一个都可能登录管理员/发评论，
+        //   若按生产值（10 次/分钟、20 条/小时），清表重置自增 id 后
+        //   新用户继承旧 id 的配额、或同批用例合计超过限额，都会造成
+        //   "与被测行为无关"的偶发红。限流行为本身由两个专用用例钉死：
+        //   AdminLoginRateLimitTest（压到 3/分钟）与 CommentRateLimitTest（压到 3/小时），
+        //   它们各自在自己的 @TestPropertySource 里覆盖这条基线。
+        "hy.rate-limit.admin-login-per-minute=100",
+        "hy.rate-limit.comment-per-hour=1000",
         // ★ M4 特有：把浏览量的回写周期压到 1 秒，好让
         //   M4_view_count_flushed_after_interval **真的等一个周期**而不是手动触发。
         //   生产值 300000ms（§7）不改：这份配置只在测试 profile 生效。
@@ -183,7 +192,8 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
      * <p>键格式与技术方案 §7 的 {@code hy:rl:{action}:{userId 或 ip}} 一致：
      * {@code login-ip-1m} 取自 {@code AuthController.RL_LOGIN}；
      * {@code 127.0.0.1} 是 RestAssured 打本机时 {@code request.getRemoteAddr()} 的值
-     * （该实现优先取 {@code X-Forwarded-For}/{@code X-Real-IP}，本类都不发这两个头）。</p>
+     * （clientIp 只认 Nginx 覆盖写入的 {@code X-Real-IP} —— 本类不发这个头，
+     * 也不发 {@code X-Forwarded-For}：2026-10-01 起 XFF 不再被读取）。</p>
      *
      * <p><b>为什么清它是正当的、而清 {@code hy:rl:*} 不是</b>：这一条键就是本类自己那 50 次/分钟
      * 的配额，清它属于"测试自清理"；而通配符清的是**别人的配额**，

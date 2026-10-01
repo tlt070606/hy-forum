@@ -173,21 +173,30 @@ public class AuthController {
     /**
      * 取客户端 IP。
      *
-     * <p>先看 {@code X-Forwarded-For}：生产环境前面有 Nginx（技术方案 §12），
-     * 若不取该头，所有限流都会记在 Nginx 的 IP 上，等于全局限流。</p>
+     * <p>只信 {@code X-Real-IP}，其次 {@code request.getRemoteAddr()}，
+     * <b>刻意不读 {@code X-Forwarded-For}</b>（2026-10-01 安全整改）。</p>
      *
-     * <p>注意：{@code X-Forwarded-For} 可被伪造，因此它只能用于限流这类"稍宽松也无妨"的场景；
-     * 不能用于安全判定（例如"同 IP 才能做的操作"）。M1 只用于限流，符合该约束。</p>
+     * <h2>为什么不读 X-Forwarded-For（这条是修正，不是偏好）</h2>
+     * <p>XFF 是"每一跳往后追加"的约定，<b>第一段永远来自客户端可任意伪造的头</b>：
+     * 攻击者每次请求随机换一个 {@code X-Forwarded-For}，限流桶就每次换一个键，
+     * 等于没有限流。本实现此前取 XFF 第一段，正是这个可被一击绕过的形态。</p>
+     *
+     * <h2>为什么 X-Real-IP 可信</h2>
+     * <p>生产链路里 {@code X-Real-IP} 由<b>我们自己的 Nginx</b> 用
+     * {@code proxy_set_header X-Real-IP $remote_addr} 覆盖写入（{@code scripts/deploy/finish_deploy.sh}），
+     * {@code proxy_set_header} 是<b>覆盖</b>不是追加 —— 经过 Nginx 的请求，这个头
+     * 恒等于 TCP 对端地址，客户端伪造不了。前提是 8080 不对公网开放
+     * （部署按"安全组只放行 80"执行，绕过 Nginx 直连后端不在威胁模型内）。</p>
+     *
+     * <p>没经过 Nginx 的环境（本地开发、测试、探针直连 8080）：没有可信的代理头，
+     * 一律落回 {@code getRemoteAddr()} —— 直连时它就是真实对端地址。
+     * 后果是"反代存在但没配 X-Real-IP 时全站共享一个限流桶"，
+     * 那是<b>把限流收得更紧</b>（fail-safe），而不是旧实现那种"被伪造头绕过"（fail-open）。</p>
      *
      * <p>取不到时返回字面量 {@code "unknown"} 而不是 null：所有无法解析来源的请求共享一个桶，
      * 这样在测试（MockMvc/REST Assured 无真实 remoteAddr）与探针场景下行为是确定的。</p>
      */
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            int comma = forwarded.indexOf(',');
-            return (comma > 0 ? forwarded.substring(0, comma) : forwarded).trim();
-        }
         String realIp = request.getHeader("X-Real-IP");
         if (realIp != null && !realIp.isBlank()) {
             return realIp.trim();

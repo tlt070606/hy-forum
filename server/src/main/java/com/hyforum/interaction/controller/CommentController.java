@@ -1,7 +1,11 @@
 package com.hyforum.interaction.controller;
 
 import com.hyforum.common.api.ApiResponse;
+import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
+import com.hyforum.common.config.RateLimitProperties;
+import com.hyforum.common.exception.BizException;
+import com.hyforum.common.redis.RateLimiter;
 import com.hyforum.common.security.AllowAnonymous;
 import com.hyforum.common.security.CurrentUser;
 import com.hyforum.interaction.dto.CommentCreateRequest;
@@ -16,9 +20,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
 
 /**
  * 评论接口（docs/技术方案.md §6.6）。
@@ -41,15 +46,29 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p><b>写接口一律不标注解</b>：走拦截器 → {@code CurrentUser.requireId()}。
  * 这样"谁能写"由拦截器统一保证，业务代码不可能忘记校验登录态。</p>
+ *
+ * <p><b>限流（2026-10-01 安全整改）</b>：发表评论按<b>用户</b>维度限流
+ * （§8.7 原文「评论 20/h」）。此前的状态是"发帖有限流、发评论没有"——
+ * 发帖要过验证码+敏感词+双重限流，评论却能被登录用户脚本无限刷，
+ * 刷的直接受害者是通知表（每条评论/回复都写一条通知）。</p>
  */
 @RestController
 @Tag(name = "评论", description = "主楼列表（含前 2 条楼中楼预览）/ 楼中楼 / 发表 / 删除 / 点赞")
 public class CommentController {
 
-    private final CommentService commentService;
+    /** 限流动作标识：发表评论（用户维度，1 小时窗口）。 */
+    private static final String RL_COMMENT_USER_1H = "comment-user-1h";
 
-    public CommentController(CommentService commentService) {
+    private final CommentService commentService;
+    private final RateLimiter rateLimiter;
+    private final RateLimitProperties rateLimitProperties;
+
+    public CommentController(CommentService commentService,
+                             RateLimiter rateLimiter,
+                             RateLimitProperties rateLimitProperties) {
         this.commentService = commentService;
+        this.rateLimiter = rateLimiter;
+        this.rateLimitProperties = rateLimitProperties;
     }
 
     /**
@@ -95,9 +114,20 @@ public class CommentController {
      */
     @PostMapping("/api/comments")
     @Operation(summary = "发表评论",
-            description = "parentId=0 为主楼；回复楼中楼时归并到其主楼（parent_id 恒等于 root_id）")
+            description = "parentId=0 为主楼；回复楼中楼时归并到其主楼（parent_id 恒等于 root_id）；用户限流 20 条/小时")
     public ApiResponse<CommentReplyVO> create(@Valid @RequestBody CommentCreateRequest request) {
-        return ApiResponse.ok(commentService.create(CurrentUser.requireId(), request));
+        long userId = CurrentUser.requireId();
+        RateLimiter.Decision decision = rateLimiter.check(
+                RL_COMMENT_USER_1H, String.valueOf(userId),
+                rateLimitProperties.commentPerHour(), Duration.ofHours(1));
+        if (!decision.allowed()) {
+            // 与登录限流同一形态：HTTP 429 + Retry-After 头（GlobalExceptionHandler 统一写头）。
+            // 限流放在参数校验之后、业务校验之前：刷子不该消耗"加载被回复评论"那几次查询。
+            throw new BizException(ErrorCode.TOO_MANY_REQUESTS,
+                    ErrorCode.TOO_MANY_REQUESTS.message() + "，评论太频繁，请 " + decision.retryAfter() + " 秒后再试",
+                    decision.retryAfter());
+        }
+        return ApiResponse.ok(commentService.create(userId, request));
     }
 
     /** 删除评论（§6.6）：仅作者，逻辑删除；重复删除幂等成功。 */
