@@ -56,6 +56,15 @@ public class AdminOperationLog {
     /** 2 评论。 */
     public static final int TARGET_COMMENT = 2;
 
+    /** 3 用户。 */
+    public static final int TARGET_USER = 3;
+
+    /** 4 系统配置。 */
+    public static final int TARGET_CONFIG = 4;
+
+    /** 5 邀请码。 */
+    public static final int TARGET_INVITE_CODE = 5;
+
     // ---------- getter / setter ----------
 
     public Long getId() {

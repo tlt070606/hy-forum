@@ -41,6 +41,17 @@ public class InviteCode {
 
     private LocalDateTime usedAt;
 
+    // ---------- 状态常量（与 schema 列注释一致：0未使用 1已使用 2已失效） ----------
+
+    /** 0 未使用。 */
+    public static final int STATUS_UNUSED = 0;
+
+    /** 1 已使用。 */
+    public static final int STATUS_USED = 1;
+
+    /** 2 已失效（手动作废）。 */
+    public static final int STATUS_DISABLED = 2;
+
     public Long getId() {
         return id;
     }
