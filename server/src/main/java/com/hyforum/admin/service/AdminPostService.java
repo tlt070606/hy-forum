@@ -7,6 +7,8 @@ import com.hyforum.common.api.ErrorCode;
 import com.hyforum.common.api.PageResult;
 import com.hyforum.common.exception.BizException;
 import com.hyforum.domain.admin.entity.AdminOperationLog;
+import com.hyforum.domain.board.entity.Board;
+import com.hyforum.domain.board.mapper.BoardMapper;
 import com.hyforum.domain.post.entity.Post;
 import com.hyforum.domain.post.mapper.PostMapper;
 import com.hyforum.domain.user.entity.User;
@@ -44,19 +46,25 @@ public class AdminPostService {
 
     /** 动作编码（schema 表 16 的 action 列注释枚举之一）。 */
     public static final String ACTION_POST_STATUS = "POST_STATUS";
+    public static final String ACTION_POST_TOP = "POST_TOP";
+    public static final String ACTION_POST_ESSENCE = "POST_ESSENCE";
+    public static final String ACTION_POST_DELETE = "POST_DELETE";
 
     /** 理由长度上限，与 {@code admin_operation_log.reason} 的 VARCHAR(200) 一致。 */
     private static final int MAX_REASON_LENGTH = 200;
 
     private final PostMapper postMapper;
     private final UserMapper userMapper;
+    private final BoardMapper boardMapper;
     private final AdminOperationLogger operationLogger;
 
     public AdminPostService(PostMapper postMapper,
                             UserMapper userMapper,
+                            BoardMapper boardMapper,
                             AdminOperationLogger operationLogger) {
         this.postMapper = postMapper;
         this.userMapper = userMapper;
+        this.boardMapper = boardMapper;
         this.operationLogger = operationLogger;
     }
 
@@ -152,6 +160,100 @@ public class AdminPostService {
             result.put(user.getId(), user.getNickname());
         }
         return result;
+    }
+
+    /**
+     * 置顶 / 取消置顶（§6.11 {@code PUT /api/admin/posts/{id}/top}）。
+     *
+     * <p>{@code is_top} 参与版块列表的排序索引（{@code idx_board_list} 的 DESC 列），
+     * 置顶帖在版块内排在最前。列表页的排序由前台接口负责，这里只改值 + 留痕。</p>
+     *
+     * @return 留痕行 id
+     */
+    @Transactional
+    public long setTop(long adminId, long postId, boolean top, String ip) {
+        Post post = requirePost(postId);
+        int previous = post.getIsTop() == null ? 0 : post.getIsTop();
+        int target = top ? 1 : 0;
+        postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                .eq(Post::getId, postId)
+                .set(Post::getIsTop, target));
+        return operationLogger.log(adminId, ACTION_POST_TOP,
+                AdminOperationLog.TARGET_POST, postId, null,
+                "is_top:" + previous + "->" + target, ip);
+    }
+
+    /**
+     * 加精 / 取消加精（§6.11 {@code PUT /api/admin/posts/{id}/essence}）。
+     *
+     * @return 留痕行 id
+     */
+    @Transactional
+    public long setEssence(long adminId, long postId, boolean essence, String ip) {
+        Post post = requirePost(postId);
+        int previous = post.getIsEssence() == null ? 0 : post.getIsEssence();
+        int target = essence ? 1 : 0;
+        postMapper.update(null, Wrappers.<Post>lambdaUpdate()
+                .eq(Post::getId, postId)
+                .set(Post::getIsEssence, target));
+        return operationLogger.log(adminId, ACTION_POST_ESSENCE,
+                AdminOperationLog.TARGET_POST, postId, null,
+                "is_essence:" + previous + "->" + target, ip);
+    }
+
+    /**
+     * 管理端删除帖子（§6.11 {@code DELETE /api/admin/posts/{id}}）：reason <b>必填</b>。
+     *
+     * <p><b>刻意与 M3 作者删帖（{@code PostService.delete}）同一形态</b>：
+     * 逻辑删除 + 回退 {@code user.post_count}/{@code board.post_count}（下限 0 用 IF 写法，
+     * 见 PostService 里 CR-M4-3 的注释）。</p>
+     *
+     * <h2>互动收尾为什么不在这里做（如实登记，不是遗漏）</h2>
+     * <p>点赞/收藏/评论关系的清理入口是 {@code InteractionService.onPostDeleted}
+     * （M4 建好），但"删帖前先收尾"的接线（CR-M4-2）<b>至今未落</b> ——
+     * 作者删帖路径同样没有接。admin → interaction 是铁律 3 禁止的依赖，
+     * 本方法不得为了"做得更全"去跨包调用。因此本端点的行为与作者删帖<b>完全一致</b>：
+     * 帖子不可见，互动关系行保留，计数由对账脚本（{@code recount_fake_counters.sql}）
+     * 兜底校准。要真正接线，需要把 {@code onPostDeleted} 下沉为 common 端口 ——
+     * 那是一次独立的架构变更，登记在任务书里，不属于本批次。</p>
+     *
+     * @return 留痕行 id
+     */
+    @Transactional
+    public long deletePost(long adminId, long postId, String reason, String ip) {
+        Post post = requirePost(postId);
+        String normalizedReason = blankToNull(reason);
+        if (normalizedReason == null) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "删除帖子必须提供 reason（合规 C9：处置依据可追溯）");
+        }
+        if (normalizedReason.length() > MAX_REASON_LENGTH) {
+            throw new BizException(ErrorCode.BAD_REQUEST,
+                    "reason 不能超过 " + MAX_REASON_LENGTH + " 字符");
+        }
+
+        // 逻辑删除（@TableLogic → UPDATE ... SET is_deleted = 1），与作者删帖一致
+        postMapper.deleteById(postId);
+        userMapper.update(null, Wrappers.<User>lambdaUpdate()
+                .setSql("post_count = IF(post_count > 0, post_count - 1, 0)")
+                .eq(User::getId, post.getUserId()));
+        boardMapper.update(null, Wrappers.<Board>lambdaUpdate()
+                .setSql("post_count = IF(post_count > 0, post_count - 1, 0)")
+                .eq(Board::getId, post.getBoardId()));
+
+        long logId = operationLogger.log(adminId, ACTION_POST_DELETE,
+                AdminOperationLog.TARGET_POST, postId, normalizedReason,
+                "post:is_deleted=1", ip);
+        log.info("管理端删帖留痕：adminId={} postId={}，reason={}", adminId, postId, normalizedReason);
+        return logId;
+    }
+
+    /** 取帖子（含逻辑删除过滤）；不存在一律 404。 */
+    private Post requirePost(long postId) {
+        Post post = postMapper.selectById(postId);
+        if (post == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "帖子不存在");
+        }
+        return post;
     }
 
     private static String blankToNull(String value) {

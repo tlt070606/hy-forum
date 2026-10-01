@@ -471,14 +471,16 @@ public class PostService {
         // 逻辑删除：MyBatis-Plus 的 @TableLogic 把它翻译成 UPDATE ... SET is_deleted = 1
         postMapper.deleteById(postId);
 
-        // 冗余计数回退，GREATEST(...,0) 兜底：post_count 是 UNSIGNED，
-        // 一旦减到负数 MySQL 会报错，而"计数偏小"远比"删帖报 500"轻
-        // （§8.2 留了管理员手动校准任务处理计数漂移）
+        // 冗余计数回退。⚠️ 必须用 IF(col > 0, col - 1, 0) 而不是 GREATEST(col - 1, 0)：
+        // post_count 是 UNSIGNED，GREATEST 会先在无符号域算出 col - 1，col=0 时直接抛
+        // 1690（BIGINT UNSIGNED value is out of range）→ 删帖 500（CR-M4-3，已登记的缺陷）。
+        // IF 的条件为假时**不做减法**，这才是真的"下限 0"——与 InteractionService
+        // 点赞计数的同一写法（那边有完整的实测对照注释）。
         userMapper.update(null, Wrappers.<User>lambdaUpdate()
-                .setSql("post_count = GREATEST(post_count - 1, 0)")
+                .setSql("post_count = IF(post_count > 0, post_count - 1, 0)")
                 .eq(User::getId, post.getUserId()));
         boardMapper.update(null, Wrappers.<Board>lambdaUpdate()
-                .setSql("post_count = GREATEST(post_count - 1, 0)")
+                .setSql("post_count = IF(post_count > 0, post_count - 1, 0)")
                 .eq(Board::getId, post.getBoardId()));
 
         // 已逻辑删除的帖子不再展示，浏览量增量无意义；但**不主动删 Redis 键** ——

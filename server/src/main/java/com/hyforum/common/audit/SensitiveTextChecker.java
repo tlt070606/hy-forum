@@ -28,4 +28,13 @@ public interface SensitiveTextChecker {
      * @return true 表示命中敏感词，调用方应拒绝并返回 2001
      */
     boolean containsSensitive(String text);
+
+    /**
+     * 重新加载词库快照（M6 起：后台增删敏感词后<b>必须</b>调用，否则内存快照与表漂移）。
+     *
+     * <p>声明在接口上是为了让 {@code admin} 包经 common 端口触发刷新 ——
+     * 铁律 3 禁止 admin 直接依赖 audit 包的实现类。实现方（audit 包）保证
+     * 本方法与 {@code containsSensitive} 并发安全（无锁快照切换）。</p>
+     */
+    void refresh();
 }

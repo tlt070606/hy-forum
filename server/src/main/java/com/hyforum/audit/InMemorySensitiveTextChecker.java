@@ -63,7 +63,13 @@ public class InMemorySensitiveTextChecker implements SensitiveTextChecker {
         }
     }
 
-    /** 重新加载词库。后台增删敏感词后必须调用。 */
+    /** 重新加载词库（M6 起对外走接口的 {@link #refresh()}）。 */
+    @Override
+    public void refresh() {
+        reload();
+    }
+
+    /** 重新加载词库实现体。后台增删敏感词后必须调用。 */
     public void reload() {
         List<SensitiveWord> rows = sensitiveWordMapper.selectList(
                 Wrappers.<SensitiveWord>lambdaQuery().select(SensitiveWord::getWord));

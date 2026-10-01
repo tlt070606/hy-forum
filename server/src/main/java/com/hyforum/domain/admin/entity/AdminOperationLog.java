@@ -65,6 +65,12 @@ public class AdminOperationLog {
     /** 5 邀请码。 */
     public static final int TARGET_INVITE_CODE = 5;
 
+    /** 6 敏感词。 */
+    public static final int TARGET_SENSITIVE_WORD = 6;
+
+    /** 7 版块。 */
+    public static final int TARGET_BOARD = 7;
+
     // ---------- getter / setter ----------
 
     public Long getId() {

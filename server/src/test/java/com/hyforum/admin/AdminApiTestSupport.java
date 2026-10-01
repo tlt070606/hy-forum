@@ -44,7 +44,7 @@ public abstract class AdminApiTestSupport extends M4ApiTestSupport {
     @Override
     protected String[] tablesToClean() {
         return new String[]{
-                "admin_operation_log", "notification", "invite_code",
+                "admin_operation_log", "notification", "invite_code", "report",
                 "comment_like", "comment", "post_like", "post_collect", "follow",
                 "post_image", "post", "board", "user", "admin"
         };

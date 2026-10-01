@@ -74,6 +74,57 @@ public class AdminPostController {
     }
 
     /**
+     * 置顶 / 取消置顶（M6 批次二）。
+     */
+    @PutMapping("/posts/{id}/top")
+    @Operation(summary = "帖子置顶/取消置顶", description = "is_top=1/0；留痕 POST_TOP")
+    public ApiResponse<Long> setTop(@PathVariable long id,
+                                    @RequestBody FlagRequest request,
+                                    HttpServletRequest http) {
+        Boolean top = request == null ? null : request.top();
+        if (top == null) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "top 不能为空（true 置顶 / false 取消）");
+        }
+        return ApiResponse.ok(adminPostService.setTop(
+                StpAdminUtil.currentAdminId(), id, top, clientIp(http)));
+    }
+
+    /**
+     * 加精 / 取消加精（M6 批次二）。
+     */
+    @PutMapping("/posts/{id}/essence")
+    @Operation(summary = "帖子加精/取消加精", description = "is_essence=1/0；留痕 POST_ESSENCE")
+    public ApiResponse<Long> setEssence(@PathVariable long id,
+                                        @RequestBody FlagRequest request,
+                                        HttpServletRequest http) {
+        Boolean essence = request == null ? null : request.essence();
+        if (essence == null) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "essence 不能为空（true 加精 / false 取消）");
+        }
+        return ApiResponse.ok(adminPostService.setEssence(
+                StpAdminUtil.currentAdminId(), id, essence, clientIp(http)));
+    }
+
+    /**
+     * 管理端删除帖子（M6 批次二）：逻辑删除 + post_count/board.post_count 回退；
+     * reason 必填。互动关系清理与作者删帖一致（CR-M4-2 未接线，见服务注释）。
+     */
+    @org.springframework.web.bind.annotation.DeleteMapping("/posts/{id}")
+    @Operation(summary = "删除帖子（管理端）",
+            description = "逻辑删除；reason 必填（C9）。行为与作者删帖一致（CR-M4-2 互动收尾未接线）")
+    public ApiResponse<Long> deletePost(@PathVariable long id,
+                                        @RequestBody ReviewRequest request,
+                                        HttpServletRequest http) {
+        String reason = request == null ? null : request.reason();
+        return ApiResponse.ok(adminPostService.deletePost(
+                StpAdminUtil.currentAdminId(), id, reason, clientIp(http)));
+    }
+
+    /** 置顶/加精请求体。 */
+    public record FlagRequest(Boolean top, Boolean essence) {
+    }
+
+    /**
      * 取操作来源 IP（留痕要记，45 字符以兼容 IPv6）。
      *
      * <p>与 {@code AdminAuthController}/{@code AdminCommentController} 的 clientIp 同一口径：
