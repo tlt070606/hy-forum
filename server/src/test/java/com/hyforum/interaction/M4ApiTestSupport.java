@@ -373,6 +373,13 @@ public abstract class M4ApiTestSupport extends WebIntegrationTestBase {
         assertThat(id).as("造帖子后必须能查到 id").isNotNull();
         // 记下来，供 @BeforeEach 精确清理该帖的浏览量键（**只清自己的键**，见那里的说明）
         lastPostId = id;
+        // ⚠️ 此刻必须立刻清掉这个帖子 id 的浏览量键（2026-10-01 补）：
+        // 清表会重置自增 id，本帖拿到的 id 很可能与**上一次运行**的某帖相同，
+        // 而 Redis 里的 `hy:post:view:{id}` 不随清表消失 —— 残留增量会在
+        // M4ViewCountFlushTest 这类断言里表现为"DB 计数凭空多出 N"。
+        // 原来 @BeforeEach 只能在建帖**之前**删（那时还不知道 id，只能删随机值），
+        // 漏掉的正是"同 id 残留"这条路径；在拿到 id 的此刻补删才真正闭环。
+        stringRedisTemplate.delete(VIEW_KEY_PREFIX + id);
         return id;
     }
 
