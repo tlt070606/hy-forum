@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
  * @param authorId       作者 id
  * @param authorNickname 作者昵称（批量装配，避免 N+1）
  * @param status         0 待审核 / 1 正常 / 2 已屏蔽
+ * @param isTop          1 置顶（M6 批次三补：管理端按钮需要知道当前态）
+ * @param isEssence      1 加精
  * @param createdAt      发布时间
  */
 public record AdminPostVO(
@@ -19,5 +21,7 @@ public record AdminPostVO(
         long authorId,
         String authorNickname,
         int status,
+        int isTop,
+        int isEssence,
         LocalDateTime createdAt) {
 }

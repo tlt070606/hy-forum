@@ -206,11 +206,20 @@ java '-Dstdout.encoding=UTF-8' -jar target\toolchain-check-1.0.0.jar
 # 本机：
 mvn -DskipTests package                 # 产物 server/target/*.jar
 cd web && npm run build:h5              # 产物 web/dist/
+cd admin-web && npm run build           # 产物 admin-web/dist/（M6 管理后台，base=/admin/）
 scp server/target/hy-forum-*.jar myserver:/opt/hy-forum/app.jar
 tar -czf h5.tar.gz -C web dist && scp h5.tar.gz myserver:/root/
+tar -czf admin.tar.gz -C admin-web dist && scp admin.tar.gz myserver:/root/
 # 服务器：
+mkdir -p /var/www/hy-forum/admin
+tar -xzf /root/admin.tar.gz -C /var/www/hy-forum/admin --strip-components=1
 systemctl restart hy-forum              # systemd 单元见 finish_deploy.sh 的 heredoc
 ```
+
+**管理后台的 Nginx 路由**（M6）：`location /admin/` 独立直出 `/var/www/hy-forum/admin`
+（配置在 `finish_deploy.sh` 的 nginx heredoc 内）。管理端用 hash 路由，无 SPA 回退依赖。
+访问地址 `http://8.138.237.212/admin/`；建议按 §2.1 对 `/api/admin/` 加 IP 白名单时
+把 `/admin/` 一起圈进去。
 
 健康检查：`curl http://8.138.237.212/api/feed`（或按 `finish_deploy.sh` 末尾的自检清单）。
 

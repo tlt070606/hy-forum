@@ -106,6 +106,15 @@ server {
     }
 
     # H5 是 hash 路由（#/pages/...），静态直出即可；再给一层 SPA 回退兜底
+    # 管理后台（M6）：独立产物 admin-web/dist，hash 路由所以只需静态直出；
+    # /admin/ 不进 H5 的 SPA 回退（否则会被上面的 try_files 吃掉变成前台页面）。
+    # 管理端仅限管理员使用，上线后建议按 deployment.md §2.1 加 IP 白名单。
+    location /admin/ {
+        alias /var/www/hy-forum/admin/;
+        index index.html;
+        try_files $uri $uri/ /admin/index.html;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

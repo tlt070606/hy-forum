@@ -95,6 +95,8 @@ public class AdminPostService {
                         post.getUserId(),
                         authors.getOrDefault(post.getUserId(), ""),
                         post.getStatus() == null ? 0 : post.getStatus(),
+                        post.getIsTop() == null ? 0 : post.getIsTop(),
+                        post.getIsEssence() == null ? 0 : post.getIsEssence(),
                         post.getCreatedAt()))
                 .toList();
         return PageResult.of(items, result.getTotal(), pageNo, pageSize);
