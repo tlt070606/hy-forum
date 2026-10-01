@@ -40,14 +40,18 @@ import java.util.Objects;
  * <h2>跨模块依赖的边界（铁律 3）</h2>
  * <ul>
  *   <li>帖子列表<b>不</b>调 {@code PostService.listPosts}：那会创建 {@code user → post}
- *       的业务包依赖，ArchUnit 的 {@code ARCH_no_cross_module_dependency} 会当场判违规。
+ *       的业务包依赖，ArchUnit 的 {@code ARCH_no_cross_module_dependency} 会当场判违规
+ *       （2026-10-01 守卫重写后此断言为真；重写前守卫名单缺 user 包，本注释曾断言
+ *       "会被判违规"而守卫实际看不见 —— 那是一次真实的假绿，已随守卫重写整改）。
  *       这里只用 {@code domain} 的实体与 Mapper；</li>
  *   <li>它<b>只读</b>，不写任何 {@code post} 行 —— 任务书 §3 第 1 条"读可以，写不行"；</li>
- *   <li>与 {@code interaction} 包的关系：本类调用 {@code FollowService}，
- *       而两个包由<b>同一次交付</b>创建、同属 M4（{@code interaction} 承载关注关系这个
- *       写权在 M4 的能力，{@code user} 只是它的读者）。铁律 3 约束的是业务<b>模块</b>之间，
- *       这里属于同一模块的两块代码。若 L1 认为该依赖仍应收紧，
- *       改法是把关注查询下沉到 {@code domain} 的 Mapper，已在报告中登记为可选项。</li>
+ *   <li>与 {@code interaction} 包的关系：本类调用 {@code FollowService} 与 interaction 的 VO，
+ *       这是一条<b>显式登记的豁免边</b>（CR-004 裁定；2026-10-01 守卫重写时从
+ *       "守卫看不见"改成"守卫豁免清单里的一条"）。理由：依赖方向单向、无环
+ *       （interaction 不依赖 user），个人主页的互动数据聚合天然是 interaction 的写权、
+ *       user 只是读者；豁免面收窄在 interaction 的 <b>service/vo</b> 两层。
+ *       要扩大豁免面，必须先改 {@code ArchitectureRulesTest} 的 CR-004 豁免注释并给出
+ *       新的裁定编号 —— 让放宽守卫成为一件显式的事，而不是顺手加一个 import。</li>
  * </ul>
  *
  * <h2>一个容易漏的可见性规则</h2>

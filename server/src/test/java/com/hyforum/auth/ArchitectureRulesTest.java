@@ -1,15 +1,16 @@
 package com.hyforum.auth;
 
+import com.tngtech.archunit.core.domain.Dependency;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
-import com.tngtech.archunit.library.Architectures;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,14 +19,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 架构约束 —— 铁律 3（禁止跨模块调用）与铁律 7（禁止重组件）。
  *
  * <p>对应验收项：{@code ARCH_no_cross_module_dependency}、{@code ARCH_no_heavy_components}。
- * 口径来源：docs/技术方案.md §3.3 的 <b>v1.8 补充</b>（七个业务包互不依赖，
- * 只允许依赖 {@code common} 与 {@code domain}）与 AGENTS.md 铁律 3 / 7。</p>
+ * 口径来源：docs/技术方案.md §3.3 的 <b>v1.8 补充</b>（业务包互不依赖，
+ * 只允许依赖 {@code common} 与 {@code domain}）与 AGENTS.md 铁律 3 / 7；
+ * 豁免边与守卫的重写依据见 {@link #KNOWN_BUSINESS_MODULES} 与 CR-004 豁免的注释。</p>
  *
  * <h2>为什么铁律 3 需要机器校验而不是靠人记</h2>
  * <p>单模块工程里"模块"只体现为包名，编译期没有任何东西阻止
  * {@code post} 直接 {@code import com.hyforum.interaction.service.XxxService}。
  * 一旦发生，后续想把 post 抽成独立 Maven 模块（v1.8 明确说过"包名不变、代码不动"）
  * 就会立刻失败，而且这种依赖往往是"顺手引用一下"造成的，代码评审很容易漏。</p>
+ *
+ * <h2>2026-10-01 守卫重写（user 包盲区事故的整改）</h2>
+ * <p>业务包名单曾由本测试手工维护，M4 新增 {@code user} 包时名单没更新，
+ * {@code user → interaction} 的真实依赖对规则不可见（规则绿、守卫瞎）。
+ * 重写后业务包从编译产物自动推导（新增包自动入守卫），
+ * CR-004 的豁免边从"没被守卫看见"变成"显式登记的一条豁免"。
+ * 手工清单降级为<b>下限兜底</b>：已知包消失必须显式失败。</p>
  *
  * <h2>ARCH_no_heavy_components 为什么要真的去解析依赖树</h2>
  * <p>铁律 7 禁的是 <b>依赖</b>（Elasticsearch / RabbitMQ / Kafka / 注册中心客户端）。
@@ -37,31 +46,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("架构约束 · 铁律 3 / 铁律 7")
 class ArchitectureRulesTest {
 
-    /** 七个业务包（技术方案 §3.3 v1.8 的定值，一个不多一个不少）。 */
-    private static final List<String> BUSINESS_MODULES = List.of(
+    /**
+     * 已知业务包的<b>下限清单</b>（2026-10-01 起只作兜底，不再作白名单）。
+     *
+     * <p>历史教训（本清单重写的直接原因）：它曾同时充当白名单 ——"七个业务包，
+     * 一个不多一个不少"（技术方案 §3.3 v1.8 的定值）。M4 新建 {@code user} 包时
+     * 没有人更新它，结果 {@code user → interaction} 的真实跨模块依赖对守卫
+     * <b>完全不可见</b>：规则照常绿，守卫却瞎了。更糟的是 {@code UserService} 的注释
+     * 还断言"user→post 会被本测试当场判违规" —— 那个断言是错的，来自对守卫能力的
+     * 错误假设。这正是本项目最忌讳的"假绿"，而且这一次的假绿是守卫自己的清单造成的。</p>
+     *
+     * <p>现在的业务包列表由编译产物<b>自动推导</b>（见 {@link #deriveBusinessModules}）：
+     * 新增业务包自动纳入守卫，清单只回答"这些包必须仍然存在" ——
+     * 某个包被改名/合并而没同步这里，测试会红并逼人显式确认。
+     * 方向从此是"<b>清单过期必须显式失败</b>"，而不是"<b>清单过期悄悄漏检</b>"。</p>
+     */
+    private static final List<String> KNOWN_BUSINESS_MODULES = List.of(
             "com.hyforum.auth",
             "com.hyforum.post",
             "com.hyforum.media",
             "com.hyforum.interaction",
             "com.hyforum.audit",
             "com.hyforum.notify",
-            "com.hyforum.admin");
+            "com.hyforum.admin",
+            "com.hyforum.user");
 
     /**
-     * 每个业务包在本次架构规则里的"图层名"。
+     * CR-004 豁免边（2026-10-01 随守卫重写一并<b>显式化</b>）：
+     * {@code user} 包允许依赖 {@code interaction} 包的 <b>service 与 vo</b> 两层。
      *
-     * <p>包级 {@code PackageMarker} 单独成层并声明为"可被所有业务包依赖"的叶子：
-     * 它是为了让空包真实存在于编译产物里（否则 ArchUnit 无从校验）而存在的纯声明类，
-     * 不含任何逻辑。若不显式豁免它，"引用包名常量"这种无害行为会被判成跨模块依赖 ——
-     * 那样的规则会因为噪音太大而被人为忽略，反而失去作用。</p>
+     * <p>理由（CR-004 原裁定 + 2026-10-01 复核维持）：个人主页 / 收藏列表的互动数据聚合
+     * （关注关系、点赞态、Feed、收藏项）是 {@code interaction} 的写权，
+     * {@code user} 只是读者；依赖方向单向、无环，拆掉它需要把 FollowService 整体搬包，
+     * 在当前规模下收益不值重构成本。</p>
+     *
+     * <p>豁免面刻意收窄到这两个子包：{@code user} 不得碰 {@code interaction} 的
+     * controller/dto，也不得依赖其它任何业务包；其余业务包（含 interaction 自己）
+     * 不得依赖 {@code user}。若豁免面需要扩大，必须先改这条注释并给出新的裁定编号 ——
+     * 让"放宽守卫"成为一件显式的事，而不是顺手加一个 import。</p>
      */
-    private static String layerName(int index) {
-        return "MODULE_" + index;
-    }
-
-    private static String markerLayerName(int index) {
-        return "MARKER_" + index;
-    }
 
     /** 铁律 7 的禁用依赖：groupId / artifactId 特征（小写子串匹配）。 */
     private static final List<String> FORBIDDEN_DEPENDENCY_KEYWORDS = List.of(
@@ -83,58 +106,98 @@ class ArchitectureRulesTest {
     void ARCH_no_cross_module_dependency() {
         JavaClasses classes = importMainClasses();
 
-        // 前置自检：七个业务包必须都真实存在。
-        // 若某个包没有任何类，规则会"通过"但什么都没检查 —— 那是假绿，必须显式失败。
-        for (String module : BUSINESS_MODULES) {
-            assertThat(hasClassesInPackage(classes, module))
-                    .as("业务包 %s 在编译产物里不存在，ArchUnit 规则会变成空转（假绿）。"
-                            + "请确认该包内至少有包级声明类。", module)
-                    .isTrue();
-        }
+        // 业务包从编译产物自动推导；KNOWN_BUSINESS_MODULES 是下限兜底（见其注释）
+        Set<String> modules = deriveBusinessModules(classes);
+        assertThat(modules)
+                .as("推导出的业务包必须覆盖全部已知包：缺一个说明该包被改名/删除，"
+                        + "请显式更新 KNOWN_BUSINESS_MODULES（这是'清单过期必须显式失败'的防线）")
+                .containsAll(KNOWN_BUSINESS_MODULES);
 
-        Architectures.LayeredArchitecture architecture = Architectures.layeredArchitecture()
-                .consideringOnlyDependenciesInLayers()
-                .withOptionalLayers(true);
-
-        for (int i = 0; i < BUSINESS_MODULES.size(); i++) {
-            String module = BUSINESS_MODULES.get(i);
-            // 本模块自身：只允许访问 自己 / common / domain / 各模块的包级声明
-            architecture = architecture
-                    .layer(layerName(i)).definedBy(module + "..")
-                    .whereLayer(layerName(i)).mayOnlyBeAccessedByLayers(accessibleByLayers(i));
-            // 包级声明类：叶子层，任何人都可以引用它的常量
-            architecture = architecture
-                    .layer(markerLayerName(i)).definedBy(module + ".PackageMarker")
-                    .whereLayer(markerLayerName(i)).mayOnlyBeAccessedByLayers(accessibleByLayers(i));
-        }
-
-        // LayeredArchitecture 本身就是一条 ArchRule，直接 check
-        architecture.as("七个业务包之间禁止相互依赖（只允许依赖 common 与 domain）").check(classes);
+        List<String> violations = collectCrossModuleViolations(classes, modules);
+        assertThat(violations)
+                .as("铁律 3：业务包之间禁止互相依赖（只允许依赖 common 与 domain）。"
+                        + "唯一的豁免边是 user → interaction 的 service/vo（CR-004，"
+                        + "见类注释的豁免说明）。新增跨模块引用前请先在那里登记裁定。")
+                .isEmpty();
     }
 
     /**
-     * 判断某个包下是否真的有类。
-     *
-     * <p>用包名精确匹配（{@code pkg.equals(module) || pkg.startsWith(module + ".")}），
-     * 而不是 {@code getPackageName().startsWith(module)} —— 后者会把
-     * {@code com.hyforum.authx} 误判成 {@code com.hyforum.auth}，规则就悄悄漏掉一个模块。</p>
+     * 从编译产物推导业务包：{@code com.hyforum} 的直接子包里，除 {@code common} 与
+     * {@code domain} 外全部算业务包。新增业务包因此<b>自动</b>进入守卫范围，
+     * 不再有"建了包忘了登记"的盲区（user 包事故的直接整改）。
      */
-    private static boolean hasClassesInPackage(JavaClasses classes, String module) {
-        return classes.stream().anyMatch(javaClass -> {
-            String pkg = javaClass.getPackageName();
-            return pkg.equals(module) || pkg.startsWith(module + ".");
-        });
+    private static Set<String> deriveBusinessModules(JavaClasses classes) {
+        Set<String> modules = new java.util.TreeSet<>();
+        for (JavaClass clazz : classes) {
+            String pkg = clazz.getPackageName();
+            if (!pkg.startsWith("com.hyforum.")) {
+                continue;
+            }
+            String rest = pkg.substring("com.hyforum.".length());
+            int dot = rest.indexOf('.');
+            String top = dot < 0 ? rest : rest.substring(0, dot);
+            if (!top.isBlank() && !top.equals("common") && !top.equals("domain")) {
+                modules.add("com.hyforum." + top);
+            }
+        }
+        return modules;
+    }
+
+    /** 类所在包对应的业务模块；不属于任何业务包（common/domain 等）返回 null。 */
+    private static String moduleOf(String packageName, Set<String> modules) {
+        return modules.stream()
+                .filter(module -> packageName.equals(module) || packageName.startsWith(module + "."))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** 包级声明类（{@code PackageMarker}）：纯常量声明，互相引用不算跨模块依赖。 */
+    private static boolean isPackageMarker(JavaClass clazz) {
+        return clazz.getSimpleName().equals("PackageMarker");
+    }
+
+    /** CR-004 豁免边：{@code user → interaction} 的 service/vo（含子包）。 */
+    private static boolean isBlessedByCr004(String sourceModule, JavaClass target) {
+        if (!sourceModule.equals("com.hyforum.user")) {
+            return false;
+        }
+        String pkg = target.getPackageName();
+        return pkg.equals("com.hyforum.interaction.service")
+                || pkg.startsWith("com.hyforum.interaction.service.")
+                || pkg.equals("com.hyforum.interaction.vo")
+                || pkg.startsWith("com.hyforum.interaction.vo.");
     }
 
     /**
-     * 某个模块的图层"允许被谁访问"。
+     * 逐条依赖检查业务包之间的引用，返回违规清单（空 = 合规）。
      *
-     * <p>注意 ArchUnit 的 {@code mayOnlyBeAccessedByLayers} 表达的是
-     * "谁可以访问我"，因此这里回答的问题是：
-     * 「模块 i 的代码除了被自己访问，还能被谁访问？」—— 答案是<b>只有它自己</b>。</p>
+     * <p>刻意用 {@code getDirectDependenciesFromSelf()} 逐条枚举而不是
+     * {@code LayeredArchitecture}：豁免边（CR-004）是"某条具体方向的依赖"，
+     * 分层规则表达不了"这一条允许、其余全禁"，硬套会把豁免面放大到整层。
+     * 逐条枚举的违规消息直接给出 源类 → 目标类，改起来不用再猜。</p>
      */
-    private static String[] accessibleByLayers(int index) {
-        return new String[]{layerName(index)};
+    private static List<String> collectCrossModuleViolations(JavaClasses classes, Set<String> modules) {
+        List<String> violations = new java.util.ArrayList<>();
+        for (JavaClass clazz : classes) {
+            String sourceModule = moduleOf(clazz.getPackageName(), modules);
+            if (sourceModule == null || isPackageMarker(clazz)) {
+                continue;
+            }
+            for (Dependency dependency : clazz.getDirectDependenciesFromSelf()) {
+                JavaClass target = dependency.getTargetClass();
+                String targetModule = moduleOf(target.getPackageName(), modules);
+                if (targetModule == null || targetModule.equals(sourceModule) || isPackageMarker(target)) {
+                    continue;
+                }
+                if (isBlessedByCr004(sourceModule, target)) {
+                    continue;
+                }
+                violations.add(sourceModule + " → " + targetModule + "："
+                        + clazz.getName() + " -> " + target.getName()
+                        + "（" + dependency.getDescription() + "）");
+            }
+        }
+        return violations;
     }
 
     /**
