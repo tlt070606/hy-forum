@@ -7,10 +7,39 @@ mkdir -p /var/backups/hy-forum
 cat >/usr/local/bin/hy-forum-backup.sh <<'EOF'
 #!/usr/bin/env bash
 # Hy论坛每日备份：mysqldump 到 /var/backups/hy-forum，保留最近 7 天
+#
+# ⚠️ 2026-10-01 修复：上一版写的是 `mysql -uroot hy_forum | gzip` —— `mysql` 是
+#    **交互式客户端**不是导出工具，它从 stdin 读命令、stdout 几乎什么都不出，
+#    于是"备份成功"产出的 gzip 只有约 20 字节（空流）。上线记录 §5 判定过这个问题，
+#    但脚本本身一直没修 —— 兜底工具坏了没人知道，直到需要它的那天。
+#    正确工具是 `mysqldump`，并且导出后必须**校验产物**（大小 + 可解压），
+#    把"备份是好的"从假设变成每跑一次就验证一次的事实。
 set -uo pipefail
 D=/var/backups/hy-forum
 mkdir -p "$D"
-mysql -uroot hy_forum | gzip > "$D/hy_forum-$(date +%F).sql.gz"
+OUT="$D/hy_forum-$(date +%F).sql.gz"
+
+# --single-transaction：InnoDB 一致性快照，备份期间不锁写（论坛白天也可能跑）
+# --quick：逐行取，避免把整库缓到内存（2G 小机禁不起）
+# --routines --triggers：留全，将来加存储过程/触发器不至于静默丢
+if ! mysqldump -uroot --single-transaction --quick --routines --triggers hy_forum | gzip > "$OUT"; then
+  echo "[backup][ERROR] mysqldump 失败，删除损坏产物：$OUT" >&2
+  rm -f "$OUT"
+  exit 1
+fi
+
+# 产物校验 ①：小于 1KB 视为空备份（空库也不止这个数；上次事故就是 20 字节）
+if [ "$(stat -c%s "$OUT")" -lt 1024 ]; then
+  echo "[backup][ERROR] 备份文件小于 1KB，疑似空备份：$OUT" >&2
+  exit 1
+fi
+# 产物校验 ②：gzip 必须能完整解压且末尾有数据（防"写了一半的文件"）
+if ! gzip -t "$OUT" 2>/dev/null || [ -z "$(gzip -dc "$OUT" | tail -c 200)" ]; then
+  echo "[backup][ERROR] 备份文件解压校验失败：$OUT" >&2
+  exit 1
+fi
+
+echo "[backup] OK $(date +%F) size=$(stat -c%s "$OUT") -> $OUT"
 # 保留最近 7 个
 ls -1t "$D"/hy_forum-*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
 EOF
