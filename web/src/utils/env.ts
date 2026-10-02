@@ -163,8 +163,11 @@ export function getApiBaseUrl(): string {
 
   const protocol = `${urlMatch[1].toLowerCase()}:`
 
-  // 生产构建必须是 https（H5 已在上面提前返回，故此处只覆盖小程序 / App）
-  if (IS_PROD && protocol !== 'https:') {
+  // 生产构建必须是 https（H5 已在上面提前返回，故此处只覆盖小程序 / App）。
+  // 例外（2026-10-02 演示 APK）：VITE_ALLOW_INSECURE_BASE=1 时显式允许 http ——
+  // 仅用于本地演示包指向演示站（http://8.138.237.212，HTTP 明文本就是演示站
+  // 裁定 PLAN R2 的现状）。小程序发布构建绝不设置该开关（C2 要求 https）。
+  if (IS_PROD && protocol !== 'https:' && import.meta.env.VITE_ALLOW_INSECURE_BASE !== '1') {
     throw new Error(
       `[env] 生产构建要求 https，当前为 "${protocol}"。\n` +
         '原因：小程序端只允许已备案 HTTPS 域名；安卓端默认拒绝明文 http。\n' +
