@@ -98,3 +98,6 @@ Desktop.ini
 # `docs/` 下的文档与 `scripts/*.ps1` 必须入库（它们是项目的唯一事实来源）。
 # 注意：`.ps1` 文件必须保持 UTF-8 with BOM（见 docs/agents/README.md §7.1），
 #       git 的 autocrlf 可能影响行尾 —— 本仓库统一使用 LF。
+
+# ---------- HBuilderX 工程元数据（M7 期间生成）----------
+web/.hbuilderx/
