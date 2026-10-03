@@ -122,13 +122,5 @@
     "navigationBarTitleText": "Hy论坛",
     "navigationBarBackgroundColor": "#ffffff",
     "backgroundColor": "#f7f7fb"
-  },
-
-  "tabBar": {
-    "color": "#86909c",
-    "selectedColor": "#6b4bc4",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "black",
-    "list": []
   }
 }
