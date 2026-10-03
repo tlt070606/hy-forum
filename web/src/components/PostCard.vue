@@ -113,11 +113,15 @@
         data-testid="post-card-like"
         @click.stop="toggleLike"
       >
-        <HyIcon :type="interaction.isPostLiked(post.id) ? 'heartFilled' : 'heartOutline'" size="xl" />
+        <HyIcon
+          :type="interaction.isPostLiked(post.id) ? 'heartFilled' : 'heartOutline'"
+          :color="interaction.isPostLiked(post.id) ? ICON_ON.like : ICON_ON.regular"
+          size="xl"
+        />
         <text class="metric__text">{{ likeCount }}</text>
       </view>
       <view class="metric" data-testid="post-card-comment" @click.stop="openComments">
-        <HyIcon type="comment" size="xl" />
+        <HyIcon type="comment" :color="ICON_ON.regular" size="xl" />
         <text class="metric__text">{{ compactCount(post.commentCount) }}</text>
       </view>
       <view
@@ -128,13 +132,14 @@
       >
         <HyIcon
           :type="interaction.isPostCollected(post.id) ? 'bookmarkFilled' : 'bookmark'"
+          :color="interaction.isPostCollected(post.id) ? ICON_ON.collect : ICON_ON.regular"
           size="xl"
         />
         <text class="metric__text">{{ collectCount }}</text>
       </view>
       <!-- 浏览量属于"参考信息"，比三个操作小一档，不抢注意力 -->
       <view class="metric metric--trailing" data-testid="post-card-view">
-        <HyIcon type="eye" size="lg" />
+        <HyIcon type="eye" :color="ICON_ON.secondary" size="lg" />
         <text class="metric__text metric__text--muted">{{ compactCount(post.viewCount) }}</text>
       </view>
     </view>
@@ -197,6 +202,24 @@ const props = withDefaults(
 
 const auth = useAuthStore()
 const interaction = useInteractionStore()
+
+/*
+ * ⚠️ 互动图标的颜色**必须用 prop 显式传给 HyIcon**，不能靠父级 CSS（:deep）——
+ * 这是 K1 事故的根因：小程序端组件样式隔离会挡住 :deep() 规则
+ * （H5/App 靠父作用域属性能命中），于是点赞红/收藏紫在小程序端
+ * 全部退成 HyIcon 自己的默认灰。`color` prop 走内联样式，三端无阻。
+ *
+ * 色值**必须与 styles/variables.scss 保持一致**（SCSS 变量进不了模板表达式，
+ * 只能在这里镜像一份；改 variables 时记得同步这里）：
+ * regular=$hy-text-regular  secondary=$hy-text-secondary
+ * like=$hy-color-danger     collect=$hy-color-primary
+ */
+const ICON_ON = {
+  regular: '#4e5969',
+  secondary: '#86909c',
+  like: '#f53f3f',
+  collect: '#6b4bc4',
+} as const
 
 /*
  * 点赞/收藏数的**本地态**。
@@ -508,23 +531,16 @@ function onMore(): void {
   margin-right: 44px;
 
   /*
-   * 图标一起加深（需求方：「字体的颜色可以深一点」）。
-   * ⚠️ 只在这条互动行里加深，**不动全局的 `$hy-icon-color`** ——
-   * 那个变量所有页面都在用，为一个局部观感去改全局值，别处会跟着变。
-   * 已点赞/已收藏时由下面的 `--on`（多一个类名，优先级更高）覆盖成红/紫。
+   * ⚠️ 图标颜色**不走这里**（历史上有过 `:deep(.hy-icon)` 规则，K1 事故后已删）：
+   * 小程序端组件样式隔离会挡住 :deep()，图标永远拿不到这里的颜色。
+   * 现在颜色由模板里的 `color` prop 显式传入（见脚本区 ICON_ON），三端一致。
+   * 计数文字在组件自身作用域内，CSS 正常生效，仍走这里。
    */
-  :deep(.hy-icon) {
-    color: $hy-text-regular;
-  }
 
   /* 浏览量靠右：`margin-left: auto` 把它推到行尾，同时不影响左边三项的位置 */
   &--trailing {
     margin-left: auto;
     margin-right: 0;
-
-    :deep(.hy-icon) {
-      color: $hy-text-secondary;
-    }
   }
 
   &__text {
@@ -545,26 +561,18 @@ function onMore(): void {
   }
 
   /*
-   * 已点赞 / 已收藏。
+   * 已点赞 / 已收藏：只负责**计数文字**的点亮色。
    * 点赞用**红色**（需求方要求"点亮的爱心要变红"），收藏用**主色紫** ——
-   * 两个都红会分不清哪个是哪个。`:deep` 是必须的：HyIcon 在自己的 scoped 样式里
-   * 写了 `color: $hy-icon-color`，只改外层颜色图标不会跟着变。
+   * 两个都红会分不清哪个是哪个。图标自身的点亮色在模板里用 color prop 传
+   * （见脚本区 ICON_ON 与其上的 K1 说明）。
    */
   &--on.metric--like {
-    :deep(.hy-icon) {
-      color: $hy-color-danger;
-    }
-
     .metric__text {
       color: $hy-color-danger;
     }
   }
 
   &--on.metric--collect {
-    :deep(.hy-icon) {
-      color: $hy-color-primary;
-    }
-
     .metric__text {
       color: $hy-color-primary;
     }
