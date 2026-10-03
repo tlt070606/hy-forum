@@ -10,6 +10,8 @@
     "build:h5": "uni build",
     "build:mp-weixin": "uni build -p mp-weixin",
     "build:app": "uni build -p app",
+    "check:app-artifact": "node scripts/check-app-artifact.mjs",
+    "package:app": "npm run build:app && npm run check:app-artifact",
     "type-check": "vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "gen:api": "openapi-typescript src/api/generated/openapi.snapshot.json -o src/api/generated/schema.d.ts",
     "check:contract": "node scripts/check-contract.mjs",
